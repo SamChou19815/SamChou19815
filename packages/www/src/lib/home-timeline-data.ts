@@ -28,7 +28,7 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
     title: "Facebook SWE",
     time: "Feburary 2022",
     image: Flow,
-    detail: "Working on Flow's type system.",
+    detail: "Working on Flow's type system, IDE, and performance.",
     links: [
       { name: "Website", url: "https://flow.org" },
       { name: "GitHub", url: "https://github.com/facebook/flow" },
