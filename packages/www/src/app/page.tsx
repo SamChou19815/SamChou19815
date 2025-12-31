@@ -20,8 +20,8 @@ function ButtonLink({
   children: ReactNode;
 }): React.JSX.Element {
   const classes = [
-    "button bg-transparent border-0 cursor-pointer px-6 py-1.5 font-bold text-sm text-center",
-    "hover:bg-blue-500 hover:bg-opacity-10",
+    "button bg-transparent border-0 cursor-pointer px-6 py-1.5 font-bold text-sm text-center rounded",
+    "hover:bg-blue-500 hover:bg-opacity-10 transition-colors duration-200",
   ];
   if (className != null) {
     classes.push(className);
@@ -37,7 +37,8 @@ function Card({
   className,
   children,
 }: { className?: string; children: ReactNode }): React.JSX.Element {
-  const CardBaseCSS = "flex flex-col bg-white rounded filter drop-shadow";
+  const CardBaseCSS =
+    "flex flex-col bg-white rounded filter drop-shadow hover:drop-shadow-lg transition-all duration-300 ease-out";
   const classes = className != null ? `${CardBaseCSS} ${className}` : CardBaseCSS;
   return <div className={classes}>{children}</div>;
 }
