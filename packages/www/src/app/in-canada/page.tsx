@@ -3,7 +3,7 @@ import NavBar from "../../lib/NavBar";
 
 const START_DATE = new Date("2025-01-24");
 
-const MISSING_DAYS: string[] = process.env.IN_CANADA_MISSING_DAYS
+const MISSING_DAYS: string[] = process.env.NEXT_PUBLIC_IN_CANADA_MISSING_DAYS
   ? process.env.NEXT_PUBLIC_IN_CANADA_MISSING_DAYS.split("\n").map((d) => d.trim())
   : [];
 
