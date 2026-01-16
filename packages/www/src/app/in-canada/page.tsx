@@ -1,4 +1,6 @@
-import type { Metadata } from "next";
+"use client";
+
+import { useEffect, useState } from "react";
 import NavBar from "../../lib/NavBar";
 
 const START_DATE = new Date("2025-01-24");
@@ -146,14 +148,14 @@ function Calendar({ today }: { today: Date }): React.JSX.Element {
   );
 }
 
-export const metadata: Metadata = {
-  title: "In-Canada Days Counter | Developer Sam",
-  description: "Track days spent in Canada",
-};
-
 export default function CanadaPage(): React.JSX.Element {
-  const today = new Date();
-  const { totalDays, daysInCanada, missingDaysCount } = countDaysInCanada(today);
+  const [today, setToday] = useState<Date | null>(null);
+
+  useEffect(() => {
+    setToday(new Date());
+  }, []);
+
+  const stats = today ? countDaysInCanada(today) : null;
   const startDateFormatted = START_DATE.toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
@@ -169,12 +171,12 @@ export default function CanadaPage(): React.JSX.Element {
           <p className="text-center text-gray-500 mb-8">Counting since {startDateFormatted}</p>
 
           <div className="flex flex-row justify-around mb-8">
-            <StatBox label="Days in Canada" value={daysInCanada} />
-            <StatBox label="Days Away" value={missingDaysCount} />
-            <StatBox label="Total Days" value={totalDays} />
+            <StatBox label="Days in Canada" value={stats?.daysInCanada ?? "—"} />
+            <StatBox label="Days Away" value={stats?.missingDaysCount ?? "—"} />
+            <StatBox label="Total Days" value={stats?.totalDays ?? "—"} />
           </div>
 
-          <Calendar today={today} />
+          {today && <Calendar today={today} />}
         </Card>
       </div>
     </>
