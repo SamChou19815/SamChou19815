@@ -219,9 +219,8 @@ export default function IndexPage(): React.JSX.Element {
           __html: `{"@context":"http://schema.org","@type":"Person","name":"Developer Sam","url":"https://developersam.com","sameAs":[
   "https://www.developersam.com",
   "https://blog.developersam.com",
-  "https://www.facebook.com/SamChou19815",
-  "https://twitter.com/SamChou19815",
   "https://github.com/SamChou19815",
+  "https://bsky.app/profile/developersam.com",
   "https://www.linkedin.com/in/sam-zhou-30b91610b/"]}`,
         }}
       />
