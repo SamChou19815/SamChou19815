@@ -13,6 +13,7 @@ export const metadata: Metadata = {
     "web apps",
     "open source",
     "programming language",
+    "rust",
   ],
   metadataBase: new URL("https://developersam.com"),
   manifest: "/manifest.json",
