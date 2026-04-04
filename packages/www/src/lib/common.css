@@ -20,22 +20,22 @@
     @apply my-4 font-semibold;
   }
   a {
-    @apply text-blue-500 transition-colors duration-200 hover:text-blue-600;
+    @apply text-blue-500 transition-colors duration-200 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300;
   }
   blockquote {
-    @apply border-l-4 border-l-gray-300 pl-2;
+    @apply border-l-4 border-l-gray-300 pl-2 dark:border-l-gray-600;
   }
   body {
     color: #1c1e21;
     background: #f7f7f7;
     word-wrap: break-word;
-    @apply antialiased;
+    @apply antialiased dark:bg-[#1a1a1a] dark:text-gray-200;
   }
   html {
     @apply scroll-smooth;
   }
   pre {
-    @apply ml-0 mr-0 mt-4 mb-4 p-2 rounded-md text-sm;
+    @apply ml-0 mr-0 mt-4 mb-4 p-2 rounded-md text-sm dark:bg-[#2a2a2a];
   }
 }
 
@@ -64,6 +64,12 @@
   padding: 0.1rem;
 }
 
+@media (prefers-color-scheme: dark) {
+  .markdown code {
+    background-color: #2a2a2a;
+  }
+}
+
 :root {
   --prism-code-block-plain-color: rgb(56, 72, 79);
   --prism-code-block-background-color: #f7f7f7;
@@ -73,6 +79,36 @@
   --prism-code-block-string-color: rgb(26, 143, 82);
   --prism-code-block-function-color: rgb(213, 34, 98);
   --prism-code-block-comment-color: rgb(100, 100, 100);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --prism-code-block-plain-color: rgb(200, 210, 215);
+    --prism-code-block-background-color: #2a2a2a;
+    --prism-code-block-keyword-color: rgb(110, 165, 255);
+    --prism-code-block-property-color: rgb(200, 120, 220);
+    --prism-code-block-number-color: rgb(240, 120, 100);
+    --prism-code-block-string-color: rgb(80, 200, 130);
+    --prism-code-block-function-color: rgb(240, 100, 150);
+    --prism-code-block-comment-color: rgb(150, 150, 150);
+  }
+}
+
+.code-block {
+  color: var(--pre-fg);
+  background-color: var(--pre-bg);
+}
+.code-token {
+  color: var(--token-color);
+}
+@media (prefers-color-scheme: dark) {
+  .code-block {
+    color: var(--pre-fg-dark);
+    background-color: var(--pre-bg-dark);
+  }
+  .code-token {
+    color: var(--token-color-dark);
+  }
 }
 
 .prism-code {
