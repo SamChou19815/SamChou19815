@@ -31,7 +31,7 @@ function countDaysInCanada(today: Date): {
 
 function Card({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <div className="flex flex-col bg-white rounded filter drop-shadow hover:drop-shadow-lg transition-all duration-300 ease-out p-6">
+    <div className="flex flex-col bg-white rounded filter drop-shadow hover:drop-shadow-lg transition-all duration-300 ease-out p-6 dark:bg-[#242424] dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.3)] dark:hover:drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]">
       {children}
     </div>
   );
@@ -40,8 +40,8 @@ function Card({ children }: { children: React.ReactNode }): React.JSX.Element {
 function StatBox({ label, value }: { label: string; value: number | string }): React.JSX.Element {
   return (
     <div className="text-center">
-      <div className="text-4xl font-bold text-blue-500">{value}</div>
-      <div className="text-gray-500 mt-1">{label}</div>
+      <div className="text-4xl font-bold text-blue-500 dark:text-blue-400">{value}</div>
+      <div className="text-gray-500 mt-1 dark:text-gray-400">{label}</div>
     </div>
   );
 }
@@ -99,7 +99,7 @@ function MonthCalendar({
 
     let className = "w-5 h-5 text-xs flex items-center justify-center rounded ";
     if (isOutOfRange) {
-      className += "text-gray-300";
+      className += "text-gray-300 dark:text-gray-600";
     } else if (isMissing) {
       className += "bg-red-400 text-white font-medium";
     } else {
@@ -115,7 +115,7 @@ function MonthCalendar({
 
   return (
     <div className="flex flex-col items-center">
-      <div className="text-xs font-medium text-gray-600 mb-1">
+      <div className="text-xs font-medium text-gray-600 mb-1 dark:text-gray-400">
         {monthName} {year}
       </div>
       <div className="grid grid-cols-7 gap-0.5">{days}</div>
@@ -127,16 +127,16 @@ function Calendar({ today }: { today: Date }): React.JSX.Element {
   const months = getMonthsInRange(START_DATE, today);
 
   return (
-    <div className="border-t pt-4 mt-4">
-      <h4 className="text-gray-700 mb-4">Calendar View</h4>
+    <div className="border-t pt-4 mt-4 dark:border-t-gray-600">
+      <h4 className="text-gray-700 mb-4 dark:text-gray-300">Calendar View</h4>
       <div className="flex items-center gap-4 mb-4 text-xs">
         <div className="flex items-center gap-1">
           <div className="w-3 h-3 rounded bg-green-400" />
-          <span className="text-gray-500">In Canada</span>
+          <span className="text-gray-500 dark:text-gray-400">In Canada</span>
         </div>
         <div className="flex items-center gap-1">
           <div className="w-3 h-3 rounded bg-red-400" />
-          <span className="text-gray-500">Outside Canada</span>
+          <span className="text-gray-500 dark:text-gray-400">Outside Canada</span>
         </div>
       </div>
       <div className="flex flex-wrap gap-4 justify-center">
@@ -168,7 +168,9 @@ export default function CanadaPage(): React.JSX.Element {
       <div className="mx-auto max-w-4xl px-4 py-12">
         <Card>
           <h1 className="text-center mb-2">In-Canada Days Counter</h1>
-          <p className="text-center text-gray-500 mb-8">Counting since {startDateFormatted}</p>
+          <p className="text-center text-gray-500 mb-8 dark:text-gray-400">
+            Counting since {startDateFormatted}
+          </p>
 
           <div className="flex flex-row justify-around mb-8">
             <StatBox label="Days in Canada" value={stats?.daysInCanada ?? "—"} />

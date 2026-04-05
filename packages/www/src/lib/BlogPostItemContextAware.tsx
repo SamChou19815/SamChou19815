@@ -16,10 +16,10 @@ function PaginationNavItem({
 }): React.JSX.Element {
   return (
     <Link
-      className="flex-grow rounded-md border border-solid border-gray-300 p-4 leading-tight hover:border-blue-500"
+      className="flex-grow rounded-md border border-solid border-gray-300 p-4 leading-tight hover:border-blue-500 dark:border-gray-600 dark:hover:border-blue-400"
       href={permalink}
     >
-      <div className="mb-1 text-sm font-medium text-gray-500">
+      <div className="mb-1 text-sm font-medium text-gray-500 dark:text-gray-400">
         {isLeft ? "Newer Post" : "Older Post"}
       </div>
       <div className="break-words font-bold">{isLeft ? `« ${title}` : `${title} »`}</div>

@@ -10,11 +10,11 @@ export default function NavBar({
   navItems: ReadonlyArray<{ readonly name: string; readonly link: string }>;
 }): React.JSX.Element {
   return (
-    <nav className="sticky top-0 z-40 flex h-16 bg-white pr-4 drop-shadow-sm filter">
+    <nav className="sticky top-0 z-40 flex h-16 bg-white pr-4 drop-shadow-sm filter dark:bg-[#242424] dark:drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]">
       <div className="flex w-full flex-wrap justify-between">
         <div className="flex min-w-0 flex-auto items-center">
           <Link
-            className="mr-8 flex min-w-0 items-center text-gray-900 transition-opacity duration-200 hover:opacity-80"
+            className="mr-8 flex min-w-0 items-center text-gray-900 transition-opacity duration-200 hover:opacity-80 dark:text-gray-100"
             href={titleLink}
           >
             <img
@@ -29,7 +29,7 @@ export default function NavBar({
           {navItems.map(({ name, link }) => (
             <Link
               key={link}
-              className="rounded px-3 py-1 font-medium text-gray-900 transition-colors duration-200 hover:bg-gray-100 hover:text-blue-500"
+              className="rounded px-3 py-1 font-medium text-gray-900 transition-colors duration-200 hover:bg-gray-100 hover:text-blue-500 dark:text-gray-100 dark:hover:bg-gray-800 dark:hover:text-blue-400"
               href={link}
             >
               {name}

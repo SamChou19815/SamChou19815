@@ -21,7 +21,7 @@ function ButtonLink({
 }): React.JSX.Element {
   const classes = [
     "button bg-transparent border-0 cursor-pointer px-6 py-1.5 font-bold text-sm text-center rounded",
-    "hover:bg-blue-500 hover:bg-opacity-10 transition-colors duration-200",
+    "hover:bg-blue-500 hover:bg-opacity-10 transition-colors duration-200 dark:text-blue-400 dark:hover:bg-blue-400 dark:hover:bg-opacity-10",
   ];
   if (className != null) {
     classes.push(className);
@@ -38,7 +38,7 @@ function Card({
   children,
 }: { className?: string; children: ReactNode }): React.JSX.Element {
   const CardBaseCSS =
-    "flex flex-col bg-white rounded filter drop-shadow hover:drop-shadow-lg transition-all duration-300 ease-out";
+    "flex flex-col bg-white rounded filter drop-shadow hover:drop-shadow-lg transition-all duration-300 ease-out dark:bg-[#242424] dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.3)] dark:hover:drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]";
   const classes = className != null ? `${CardBaseCSS} ${className}` : CardBaseCSS;
   return <div className={classes}>{children}</div>;
 }
@@ -165,11 +165,11 @@ class Main {
 const TimelineSection = (
   <section>
     <div className="relative flex flex-row flex-wrap items-center justify-center">
-      <div className="lg:left-[calc(50%-255px)] absolute top-8 bottom-36 hidden w-0.5 bg-blue-500 lg:block" />
+      <div className="lg:left-[calc(50%-255px)] absolute top-8 bottom-36 hidden w-0.5 bg-blue-500 lg:block dark:bg-blue-400" />
       {DATASET_TIMELINE.map((item) => (
         <CardContainer key={`${item.title}-${item.time}`} className="mb-4 w-full">
           <div className="mx-auto my-0 flex w-full content-start items-start justify-center">
-            <span className="connector-dot mt-6 ml-2 mr-4 hidden h-2 w-2 rounded bg-blue-500 lg:block" />
+            <span className="connector-dot mt-6 ml-2 mr-4 hidden h-2 w-2 rounded bg-blue-500 lg:block dark:bg-blue-400" />
             <Card className="lg:w-[500px] ml-0 w-11/12">
               {item.image != null && <LazyCardMedia image={item.image} title={item.title} />}
               <CardHeader title={item.title} subheader={item.time} />
