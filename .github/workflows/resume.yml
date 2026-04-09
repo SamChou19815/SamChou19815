@@ -1,0 +1,22 @@
+name: Resume
+on:
+  push:
+    paths:
+      - "resume/**"
+
+jobs:
+  resume:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          touch resume/authorized_keys
+          docker build -t resume-builder resume/
+      - name: Compile resume PDF
+        run: docker run --rm -v "${{ github.workspace }}/resume:/workspace" resume-builder pdflatex -output-directory /workspace main.tex
+      - name: Upload resume PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: resume-pdf
+          path: resume/main.pdf
