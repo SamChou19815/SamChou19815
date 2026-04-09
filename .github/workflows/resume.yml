@@ -14,7 +14,7 @@ jobs:
           touch resume/authorized_keys
           docker build -t resume-builder resume/
       - name: Compile resume PDF
-        run: docker run --rm -v "${{ github.workspace }}/resume:/workspace" resume-builder pdflatex -output-directory /workspace main.tex
+        run: docker run --rm -v "${{ github.workspace }}/resume:/workspace" resume-builder xelatex -output-directory /workspace main.tex
       - name: Upload resume PDF
         uses: actions/upload-artifact@v4
         with:
