@@ -1,0 +1,8 @@
+authorized_keys
+*.aux
+*.log
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.pdf
