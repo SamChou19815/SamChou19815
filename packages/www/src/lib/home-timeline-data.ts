@@ -1,3 +1,5 @@
+import { PROJECTS, WORK } from "./site-data";
+
 type NamedLink = { readonly name: string; readonly url: string };
 type TimelineItem = {
   readonly title: string;
@@ -28,10 +30,10 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
     title: "Facebook SWE",
     time: "Feburary 2022",
     image: Flow,
-    detail: "Working on Flow's type system, IDE, and performance.",
+    detail: WORK.flow.tagline,
     links: [
-      { name: "Website", url: "https://flow.org" },
-      { name: "GitHub", url: "https://github.com/facebook/flow" },
+      { name: "Website", url: WORK.flow.website },
+      { name: "GitHub", url: WORK.flow.github },
     ],
   },
   {
@@ -56,8 +58,8 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
     image: Flow,
     detail: "Working on the Flow team. Implemented the extraction code action for Flow LSP.",
     links: [
-      { name: "Website", url: "https://flow.org" },
-      { name: "GitHub", url: "https://github.com/facebook/flow" },
+      { name: "Website", url: WORK.flow.website },
+      { name: "GitHub", url: WORK.flow.github },
       { name: "Tech Talk", url: "/flow-ide-presentation.pdf" },
     ],
   },
@@ -83,8 +85,8 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
     image: CoursePlan,
     detail: "Developer on CoursePlan",
     links: [
-      { name: "Product", url: "https://courseplan.io" },
-      { name: "GitHub", url: "https://github.com/cornell-dti/course-plan" },
+      { name: "Product", url: PROJECTS.coursePlan.product },
+      { name: "GitHub", url: PROJECTS.coursePlan.github },
       { name: "Tech Talk", url: "/courseplan-requirement.pdf" },
     ],
   },
@@ -108,14 +110,10 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
     title: "mini-react",
     time: "May 2020",
     image: MiniReact,
-    detail:
-      "A simplified version of React runtime with useState and useEffect hook, built from Scratch.",
+    detail: PROJECTS.miniReact.tagline,
     links: [
-      {
-        name: "GitHub Repo",
-        url: "https://github.com/SamChou19815/mini-react",
-      },
-      { name: "Demo", url: "https://mini-react.developersam.com/" },
+      { name: "GitHub Repo", url: PROJECTS.miniReact.github },
+      { name: "Demo", url: PROJECTS.miniReact.demo },
       { name: "Slides", url: "/build-simplified-react.pdf" },
     ],
   },
@@ -128,7 +126,7 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
   {
     title: "Cornell DTI Developer Lead",
     time: "June 2019",
-    links: [{ name: "Cornell DTI Website", url: "https://www.cornelldti.org" }],
+    links: [{ name: "Cornell DTI Website", url: WORK.cornellDTI.website }],
   },
   {
     title: "Facebook SWE Intern",
@@ -136,8 +134,8 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
     image: Pyre,
     detail: "Working on the Pyre team.",
     links: [
-      { name: "Website", url: "https://pyre-check.org" },
-      { name: "GitHub", url: "https://github.com/facebook/pyre-check" },
+      { name: "Website", url: WORK.pyre.website },
+      { name: "GitHub", url: WORK.pyre.github },
     ],
   },
   {
@@ -156,16 +154,16 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
     title: "Cornell DTI TPM",
     time: "January 2019",
     detail: "Technical product manager of the Samwise subteam.",
-    links: [{ name: "Cornell DTI Website", url: "https://www.cornelldti.org" }],
+    links: [{ name: "Cornell DTI Website", url: WORK.cornellDTI.website }],
   },
   {
     title: "samlang",
     time: "January 2019",
     image: SAMLANG,
-    detail: "Sam's new programming language with full type-inference.",
+    detail: PROJECTS.samlang.tagline,
     links: [
-      { name: "GitHub Repo", url: "https://github.com/SamChou19815/samlang" },
-      { name: "Docs", url: "https://samlang.io/" },
+      { name: "GitHub Repo", url: PROJECTS.samlang.github },
+      { name: "Docs", url: PROJECTS.samlang.website },
     ],
   },
   {
@@ -173,17 +171,14 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
     time: "September 2018",
     image: Samwise,
     detail: "Frontend Developer of Samwise",
-    links: [{ name: "GitHub Repo", url: "https://github.com/cornell-dti/samwise" }],
+    links: [{ name: "GitHub Repo", url: PROJECTS.samwise.github }],
   },
   {
     title: "Critter Compiler",
     time: "August 2018",
     image: CritterCompiler,
     links: [
-      {
-        name: "GitHub Repo",
-        url: "https://github.com/SamChou19815/primitivize",
-      },
+      { name: "GitHub Repo", url: PROJECTS.critterCompiler.github },
       {
         name: "Blog Post",
         url: "https://blog.developersam.com/2018/08/27/cw-turing-complete/",
@@ -205,9 +200,9 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
     title: "SAMPL",
     time: "June 2018",
     image: SAMPL,
-    detail: "Sam's first programming language. Archived in favor of samlang.",
+    detail: PROJECTS.sampl.tagline,
     links: [
-      { name: "GitHub Repo", url: "https://github.com/SamChou19815/sampl" },
+      { name: "GitHub Repo", url: PROJECTS.sampl.github },
       {
         name: "Blog Post",
         url: "https://blog.developersam.com/2018/06/15/sampl-alpha-design-choices/",
@@ -226,12 +221,7 @@ export const DATASET_TIMELINE: readonly TimelineItem[] = [
     title: "TEN",
     time: "July 2017",
     image: TEN,
-    links: [
-      {
-        name: "GitHub Repo",
-        url: "https://github.com/SamChou19815/ten-golang",
-      },
-    ],
+    links: [{ name: "GitHub Repo", url: PROJECTS.ten.github }],
   },
   {
     title: "Graduated from High School",
