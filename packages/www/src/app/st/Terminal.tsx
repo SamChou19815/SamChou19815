@@ -75,6 +75,7 @@ export default function Terminal() {
     inputHistory: [],
   });
   const [input, setInput] = useState("");
+  const [cursorPos, setCursorPos] = useState(0);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -84,6 +85,12 @@ export default function Terminal() {
   useEffect(() => {
     const interval = setInterval(() => setCursorVisible((v) => !v), 530);
     return () => clearInterval(interval);
+  }, []);
+
+  const syncCursor = useCallback(() => {
+    if (inputRef.current) {
+      setCursorPos(inputRef.current.selectionStart ?? inputRef.current.value.length);
+    }
   }, []);
 
   // Auto-scroll after state updates
@@ -114,6 +121,7 @@ export default function Terminal() {
       }));
       scrollToBottom();
       setInput("");
+      setCursorPos(0);
       return;
     }
 
@@ -144,6 +152,7 @@ export default function Terminal() {
     });
     scrollToBottom();
     setInput("");
+    setCursorPos(0);
     setHistoryIndex(-1);
   }, [input, state, scrollToBottom]);
 
@@ -158,7 +167,9 @@ export default function Terminal() {
         if (history.length === 0) return;
         const newIndex = historyIndex === -1 ? history.length - 1 : Math.max(0, historyIndex - 1);
         setHistoryIndex(newIndex);
-        setInput(history[newIndex] ?? "");
+        const next = history[newIndex] ?? "";
+        setInput(next);
+        setCursorPos(next.length);
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
         const history = state.inputHistory;
@@ -167,9 +178,12 @@ export default function Terminal() {
         if (newIndex >= history.length) {
           setHistoryIndex(-1);
           setInput("");
+          setCursorPos(0);
         } else {
           setHistoryIndex(newIndex);
-          setInput(history[newIndex] ?? "");
+          const next = history[newIndex] ?? "";
+          setInput(next);
+          setCursorPos(next.length);
         }
       } else if (e.key === "Tab") {
         e.preventDefault();
@@ -177,7 +191,9 @@ export default function Terminal() {
         if (completions.length === 1) {
           const tokens = input.split(/\s+/);
           tokens[tokens.length - 1] = completions[0] ?? "";
-          setInput(tokens.join(" "));
+          const next = tokens.join(" ");
+          setInput(next);
+          setCursorPos(next.length);
         } else if (completions.length > 1) {
           // Show completions
           const inputLine: OutputLine = {
@@ -202,6 +218,7 @@ export default function Terminal() {
         }));
         scrollToBottom();
         setInput("");
+        setCursorPos(0);
       } else if (e.key === "l" && e.ctrlKey) {
         e.preventDefault();
         setState((prev) => ({ ...prev, history: [] }));
@@ -211,6 +228,9 @@ export default function Terminal() {
   );
 
   const shortCwd = state.cwd === "/home/sam" ? "~" : state.cwd.replace("/home/sam", "~");
+  const beforeCursor = input.slice(0, cursorPos);
+  const atCursor = input.slice(cursorPos, cursorPos + 1);
+  const afterCursor = input.slice(cursorPos + 1);
 
   return (
     <div
@@ -236,15 +256,20 @@ export default function Terminal() {
         ))}
 
         {/* Current input line */}
-        <div className="flex whitespace-pre-wrap break-all">
+        <div className="whitespace-pre-wrap break-all">
           <span className="text-[#5af78e]">{PROMPT_PREFIX}</span>
           <span className="text-white">:</span>
           <span className="text-[#57c7ff]">{shortCwd}</span>
           <span className="text-white">$ </span>
-          <span className="text-[#e4e4e4]">{input}</span>
-          <span
-            className={`inline-block h-[1.2em] w-[0.6em] align-middle ${cursorVisible ? "bg-[#e4e4e4]" : "bg-transparent"}`}
-          />
+          <span className="text-[#e4e4e4]">{beforeCursor}</span>
+          {atCursor ? (
+            <span className={cursorVisible ? "bg-[#e4e4e4] text-[#1a1b26]" : "text-[#e4e4e4]"}>
+              {atCursor}
+            </span>
+          ) : (
+            <span className={`text-[#e4e4e4] ${cursorVisible ? "" : "opacity-0"}`}>█</span>
+          )}
+          <span className="text-[#e4e4e4]">{afterCursor}</span>
         </div>
       </div>
 
@@ -255,9 +280,12 @@ export default function Terminal() {
         value={input}
         onChange={(e) => {
           setInput(e.target.value);
+          setCursorPos(e.target.selectionStart ?? e.target.value.length);
           setHistoryIndex(-1);
         }}
         onKeyDown={handleKeyDown}
+        onKeyUp={syncCursor}
+        onSelect={syncCursor}
         spellCheck={false}
         autoComplete="off"
         autoCapitalize="none"
