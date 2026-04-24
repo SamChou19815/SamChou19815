@@ -1,5 +1,5 @@
 export const title = "What Will Happen if React Evaluates JSX Eagerly?";
-import blogPostPageMetadata from '../../../../../../../lib/blog-post-page-metadata';
+import blogPostPageMetadata from "../../../../../../../lib/blog-post-page-metadata";
 export const metadata = blogPostPageMetadata(title);
 
 TLDR: Absolute Chaos
@@ -11,17 +11,11 @@ We know that React evaluates JSX lazily. JSX is not a function call, but a spec 
 Once in a while, you might want to inspect what will be rendered to make rendering decisions. Maybe you want to figure out whether certain components are rendered, or whether the stuff you want to render is actually rendered.
 
 ```tsx
-import type {ReactNode} from 'react';
+import type { ReactNode } from "react";
 
-function MyFlexibleContainer(
-  {children}: {children: ReactNode},
-) {
+function MyFlexibleContainer({ children }: { children: ReactNode }) {
   if (childrenHasMaterialDesignElements(children)) {
-    return (
-      <MaterialDesignContainer>
-        {children}
-      </MaterialDesignContainer>
-    );
+    return <MaterialDesignContainer>{children}</MaterialDesignContainer>;
   }
 
   return <div>{children}</div>;
@@ -32,11 +26,7 @@ How do you implement the function `childrenHasMaterialDesignElements`? It turns 
 
 ```tsx
 function MyWrappedMaterialButton() {
-  return (
-    <MaterialButton onClick={() => alert("Ouch")}>
-      Ouch
-    </MaterialButton>
-  );
+  return <MaterialButton onClick={() => alert("Ouch")}>Ouch</MaterialButton>;
 }
 ```
 
@@ -73,7 +63,7 @@ function Foo() {
   return <div />;
 }
 
-function Bar({cond}: {cond: boolean}) {
+function Bar({ cond }: { cond: boolean }) {
   // Behaves like conditional hook usage.
   const e = cond && Foo();
 
@@ -84,20 +74,14 @@ function Bar({cond}: {cond: boolean}) {
 Well, it clearly doesn't work today. However, let's assume that the React team is on your side, and provides a new first-class hook `useFullyResolvedJSX` that knows how to handle states and effects, so you can write
 
 ```tsx
-import type {ReactNode} from 'react';
-import {useFullyResolvedJSX} from 'react';
+import type { ReactNode } from "react";
+import { useFullyResolvedJSX } from "react";
 
-function MyFlexibleContainer(
-  {children}: {children: ReactNode},
-) {
+function MyFlexibleContainer({ children }: { children: ReactNode }) {
   const resolved = useFullyResolvedJSX(children);
 
   if (childrenHasMaterialDesignElements(resolved)) {
-    return (
-      <MaterialDesignContainer>
-        {resolved}
-      </MaterialDesignContainer>
-    );
+    return <MaterialDesignContainer>{resolved}</MaterialDesignContainer>;
   }
 
   return <div>{resolved}</div>;
@@ -132,9 +116,7 @@ We can start by asking the question: is the return value of `useFullyResolvedJSX
 For the first time, you get a handle of a stateful React component instance. This is where the harm of this hypothetical API becomes obvious. While we can use static typing to prevent further inspection on mutable state, you can already create a mess with some very innocent code. e.g.
 
 ```tsx
-function MyFlexibleContainer(
-  {children}: {children: ReactNode},
-) {
+function MyFlexibleContainer({ children }: { children: ReactNode }) {
   const resolved = useFullyResolvedJSX(children);
 
   return (
@@ -142,7 +124,7 @@ function MyFlexibleContainer(
       {resolved}
       {resolved}
     </MaterialDesignContainer>
-  )
+  );
 }
 ```
 
@@ -163,7 +145,7 @@ I have not spent enough time learning the internals of React, so I cannot conclu
 I have showed that eager evaluation of JSX is a bad idea, but what about the problem mentioned above? Well, it can be solved by just changing the API:
 
 ```tsx
-import type {ReactNode} from 'react';
+import type { ReactNode } from "react";
 
 function MyFlexibleContainer({
   useMaterialWrapper,
@@ -173,11 +155,7 @@ function MyFlexibleContainer({
   children: ReactNode;
 }) {
   if (useMaterialWrapper) {
-    return (
-      <MaterialDesignContainer>
-        {children}
-      </MaterialDesignContainer>
-    );
+    return <MaterialDesignContainer>{children}</MaterialDesignContainer>;
   }
 
   return <div>{children}</div>;

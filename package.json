@@ -1,25 +1,26 @@
 {
   "name": "monorepo",
   "private": true,
-  "packageManager": "pnpm@10.0.0+sha512.b8fef5494bd3fe4cbd4edabd0745df2ee5be3e4b0b8b08fa643aa3e4c6702ccc0f00d68fa8a8c9858a735a0032485a44990ed2810526c875e416f001b17df12b",
   "scripts": {
     "check": "turbo run check",
     "build": "turbo run build",
-    "format": "biome format --write .",
-    "lint": "biome check .",
-    "fix": "biome lint . --apply",
-    "bump": "pnpm up -r --latest @types/node @types/react @types/react-dom typescript turbo",
+    "format": "oxfmt .",
+    "lint": "oxlint && oxfmt --check .",
+    "fix": "oxlint --fix && oxfmt .",
+    "bump": "pnpm up -r --latest @types/node @types/react @types/react-dom typescript turbo oxlint oxfmt",
     "dev": "pnpm --filter www dev"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.8.3",
-    "@types/node": "^25.0.3",
-    "@types/react": "^19.2.7",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.49",
-    "tailwindcss": "^3.4.15",
-    "turbo": "^2.7.3",
-    "typescript": "^5.9.3"
-  }
+    "autoprefixer": "^10.5.0",
+    "oxfmt": "^0.46.0",
+    "oxlint": "^1.61.0",
+    "postcss": "^8.5.10",
+    "tailwindcss": "^4.2.4",
+    "turbo": "^2.9.6",
+    "typescript": "^6.0.3"
+  },
+  "packageManager": "pnpm@10.0.0+sha512.b8fef5494bd3fe4cbd4edabd0745df2ee5be3e4b0b8b08fa643aa3e4c6702ccc0f00d68fa8a8c9858a735a0032485a44990ed2810526c875e416f001b17df12b"
 }

@@ -53,6 +53,7 @@ function getMonthsInRange(start: Date, end: Date): { year: number; month: number
   const current = new Date(start.getFullYear(), start.getMonth(), 1);
   const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
 
+  // oxlint-disable-next-line no-unmodified-loop-condition
   while (current <= endMonth) {
     months.push({ year: current.getFullYear(), month: current.getMonth() });
     current.setMonth(current.getMonth() + 1);
@@ -76,7 +77,11 @@ function MonthCalendar({
   year,
   month,
   today,
-}: { year: number; month: number; today: Date }): React.JSX.Element {
+}: {
+  year: number;
+  month: number;
+  today: Date;
+}): React.JSX.Element {
   const daysInMonth = getDaysInMonth(year, month);
   const firstDay = getFirstDayOfMonth(year, month);
   const monthName = new Date(year, month).toLocaleDateString("en-US", { month: "short" });

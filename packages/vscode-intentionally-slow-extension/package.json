@@ -2,17 +2,23 @@
   "name": "vscode-intentionally-slow-extension",
   "displayName": "Disable edits for generated files",
   "version": "0.0.1",
+  "categories": [
+    "Other"
+  ],
   "license": "MIT",
-  "main": "index.js",
-  "icon": "no-edit.png",
-  "publisher": "dev-sam",
   "repository": {
     "type": "git",
     "url": "https://github.com/SamChou19815/SamChou19815.git",
     "directory": "packages/vscode-intentionally-slow-extension"
   },
-  "activationEvents": ["onLanguage:typescript"],
-  "categories": ["Other"],
+  "publisher": "dev-sam",
+  "main": "index.js",
+  "scripts": {
+    "compile": "tsc"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.116.0"
+  },
   "contributes": {
     "configuration": [
       {
@@ -57,13 +63,11 @@
       }
     ]
   },
+  "activationEvents": [
+    "onLanguage:typescript"
+  ],
+  "icon": "no-edit.png",
   "engines": {
-    "vscode": "^1.92.0"
-  },
-  "scripts": {
-    "compile": "tsc"
-  },
-  "devDependencies": {
-    "@types/vscode": "1.92.0"
+    "vscode": "^1.116.0"
   }
 }

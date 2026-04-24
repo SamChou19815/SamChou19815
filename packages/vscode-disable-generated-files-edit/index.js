@@ -13,6 +13,7 @@ const disabledEditDecorationType = vscode.window.createTextEditorDecorationType(
 
 const updateGeneratedHoverForEditor = (/** @type {vscode.TextEditor | undefined} */ editor) => {
   if (editor == null) return;
+  // oxlint-disable-next-line no-useless-concat
   if (editor.document.getText().includes("@" + "generated")) {
     editor.setDecorations(disabledEditDecorationType, [
       {

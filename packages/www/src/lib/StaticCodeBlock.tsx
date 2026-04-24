@@ -45,7 +45,7 @@ function Token({ token }: { token: shiki.ThemedToken }): React.JSX.Element {
 }
 
 const lang: shiki.LanguageRegistration = {
-  // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+  // oxlint-disable-next-line no-explicit-any
   ...(samlangGrammar as any),
   name: "samlang",
   scopeName: "text.samlang",
@@ -88,10 +88,10 @@ export default async function StaticCodeBlock({
     <pre className={`code-block ${className ?? ""}`.trim()} style={preStyle}>
       {manualSection}
       {tokens.tokens.map((line, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: only valid key
+        // oxlint-disable-next-line no-array-index-key
         <span key={i}>
           {line.map((token, j) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: only valid key
+            // oxlint-disable-next-line no-array-index-key
             <Token key={j} token={token} />
           ))}
           {"\n"}

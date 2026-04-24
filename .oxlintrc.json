@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript"],
+  "categories": {
+    "correctness": "error",
+    "perf": "warn",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "react/react-in-jsx-scope": "off"
+  },
+  "ignorePatterns": [
+    "**/.next/**",
+    "**/.vercel/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/out/**",
+    "**/node_modules/**",
+    "packages/vscode-intentionally-slow-extension/test.ts"
+  ]
+}
