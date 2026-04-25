@@ -251,7 +251,7 @@ export default function Terminal() {
       {/* Terminal body */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-2">
         {state.history.map((line, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: terminal output lines
+          // oxlint-disable-next-line no-array-index-key
           <TerminalLine key={i} line={line} />
         ))}
 

@@ -36,7 +36,10 @@ function ButtonLink({
 function Card({
   className,
   children,
-}: { className?: string; children: ReactNode }): React.JSX.Element {
+}: {
+  className?: string;
+  children: ReactNode;
+}): React.JSX.Element {
   const CardBaseCSS =
     "flex flex-col bg-white rounded filter drop-shadow hover:drop-shadow-lg transition-all duration-300 ease-out dark:bg-[#242424] dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.3)] dark:hover:drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]";
   const classes = className != null ? `${CardBaseCSS} ${className}` : CardBaseCSS;
@@ -46,7 +49,10 @@ function Card({
 function CardHeader({
   title,
   subheader,
-}: { title: string; subheader?: string }): React.JSX.Element {
+}: {
+  title: string;
+  subheader?: string;
+}): React.JSX.Element {
   return (
     <div className="px-4 pb-0 last:pb-4">
       <h4 className="mb-0">{title}</h4>
@@ -97,7 +103,7 @@ class Main {
         manualSection={
           <>
             <div className="token-line">
-              <span className="token comment">/**</span>
+              <span className="token comment">{"/**"}</span>
             </div>
             <div className="token-line">
               <span className="token comment">
@@ -109,7 +115,7 @@ class Main {
               <span className="token comment">
                 {" * @demo "}
                 <a
-                  className="text-[var(--prism-code-block-comment-color)] underline"
+                  className="text-(--prism-code-block-comment-color) underline"
                   href="https://samlang.io/demo"
                 >
                   https://samlang.io/demo
@@ -120,7 +126,7 @@ class Main {
               <span className="token comment">
                 {" * @github "}
                 <a
-                  className="text-[var(--prism-code-block-comment-color)] underline"
+                  className="text-(--prism-code-block-comment-color) underline"
                   href="https://github.com/SamChou19815"
                 >
                   https://github.com/SamChou19815
@@ -131,7 +137,7 @@ class Main {
               <span className="token comment">
                 {" * @bsky "}
                 <a
-                  className="text-[var(--prism-code-block-comment-color)] underline"
+                  className="text-(--prism-code-block-comment-color) underline"
                   href="https://bsky.app/profile/developersam.com"
                 >
                   https://bsky.app/profile/developersam.com
@@ -143,7 +149,7 @@ class Main {
                 {" "}
                 * @resume{" "}
                 <a
-                  className="text-[var(--prism-code-block-comment-color)] underline"
+                  className="text-(--prism-code-block-comment-color) underline"
                   href="https://developersam.com/resume.pdf"
                 >
                   https://developersam.com/resume.pdf
@@ -177,7 +183,7 @@ const TimelineSection = (
               {item.links != null && (
                 <div className="p-4">
                   {item.links.map(({ name, url }, index) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: no other good choice
+                    // oxlint-disable-next-line no-array-index-key
                     <ButtonLink key={index} href={url} className="px-1.5">
                       {name}
                     </ButtonLink>
@@ -207,14 +213,14 @@ export default function IndexPage(): React.JSX.Element {
     <>
       <Script
         type="application/ld+json"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static scripts
+        // oxlint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{
           __html: `{"@context":"http://schema.org","@type":"Organization","url":"https://developersam.com","logo":"https://developersam.com/logo.png"}`,
         }}
       />
       <Script
         type="application/ld+json"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static scripts
+        // oxlint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{
           __html: `{"@context":"http://schema.org","@type":"Person","name":"Developer Sam","url":"https://developersam.com","sameAs":[
   "https://www.developersam.com",

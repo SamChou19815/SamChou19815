@@ -33,7 +33,7 @@ function computeAllMedatada() {
             const title = parseMarkdownTitle(content);
             allMetadata.push({ title, year, month, date, titleSlug });
           } catch (error) {
-            throw new Error(`Failed to parse ${fullPath}, error: ${error}`);
+            throw new Error(`Failed to parse ${fullPath}`, { cause: error });
           }
         }
       }

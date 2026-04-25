@@ -11,10 +11,10 @@ const CustomMDXComponents: MDXComponents = {
     return <Link href={href || ""} />;
   },
   pre: (props) => {
-    // biome-ignore lint/suspicious/noExplicitAny: shameful children inspection
+    // oxlint-disable-next-line no-explicit-any
     const stringOrComponentChildren = props.children as any;
     const { className, children } = (
-      isValidElement(stringOrComponentChildren) ? stringOrComponentChildren?.props : props
+      isValidElement(stringOrComponentChildren) ? stringOrComponentChildren.props : props
     ) as { className: string; readonly children: string };
     return (
       <StaticCodeBlock language={className.replace(/language-/, "")} className="text-sm">

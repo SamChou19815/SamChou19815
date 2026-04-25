@@ -1,4 +1,6 @@
-@tailwind base;
+@import "tailwindcss";
+
+@source "../**/*.{js,ts,jsx,tsx,mdx}";
 
 @layer base {
   h1 {
@@ -38,9 +40,6 @@
     @apply ml-0 mr-0 mt-4 mb-4 p-2 rounded-md text-sm dark:bg-[#2a2a2a];
   }
 }
-
-@tailwind components;
-@tailwind utilities;
 
 .markdown p,
 .markdown ul,

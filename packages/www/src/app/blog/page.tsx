@@ -22,13 +22,13 @@ export default async function BlogListPage(): Promise<React.JSX.Element> {
     <BlogDocumentWrapper>
       <div className="flex flex-row flex-wrap justify-center">
         <main className="w-full">
-          {allMetadata.map((metadata) => {
-            const permalink = permalinkFromMetadata(metadata);
+          {allMetadata.map((post) => {
+            const permalink = permalinkFromMetadata(post);
             return (
               <BlogPostItem
                 key={permalink}
-                title={<Link href={permalink}>{metadata.title}</Link>}
-                formattedDate={`${metadata.year}-${metadata.month}-${metadata.date}`}
+                title={<Link href={permalink}>{post.title}</Link>}
+                formattedDate={`${post.year}-${post.month}-${post.date}`}
               />
             );
           })}
