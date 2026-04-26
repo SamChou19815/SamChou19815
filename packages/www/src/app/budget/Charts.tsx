@@ -152,7 +152,7 @@ export function MonthlyBar({
             dataKey={`income:${cat}`}
             stackId="income"
             fill={INCOME_PALETTE[idx % INCOME_PALETTE.length]}
-            name={`Income — ${cat}`}
+            name={cat}
           />
         ))}
         {expenseCategories.map((cat, idx) => (
@@ -161,7 +161,7 @@ export function MonthlyBar({
             dataKey={`expense:${cat}`}
             stackId="expense"
             fill={EXPENSE_PALETTE[idx % EXPENSE_PALETTE.length]}
-            name={`Expense — ${cat}`}
+            name={cat}
           />
         ))}
       </BarChart>
@@ -169,18 +169,14 @@ export function MonthlyBar({
   );
 }
 
-export function CashFlowAndNetWorthLine({
+export function CashFlowLine({
   range,
   incomes,
   expenses,
-  snapshots,
-  investments,
 }: {
   range: Range;
   incomes: ReadonlyArray<Income>;
   expenses: ReadonlyArray<Expense>;
-  snapshots: ReadonlyArray<InvestmentSnapshot>;
-  investments: ReadonlyArray<Investment>;
 }): React.JSX.Element {
   const months = monthsBetween(range.start, range.end);
   const incomeBy = bucketSum(incomes, (i) => Number(i.amount));
@@ -195,29 +191,7 @@ export function CashFlowAndNetWorthLine({
     cashFlowMap.set(m, runningIncome - runningExpense);
   }
 
-  const snapsByInvestment = new Map<string, InvestmentSnapshot[]>();
-  for (const s of snapshots) {
-    const arr = snapsByInvestment.get(s.investment_id) ?? [];
-    arr.push(s);
-    snapsByInvestment.set(s.investment_id, arr);
-  }
-  const monthlyMarketValue = new Map<string, number>();
-  for (const m of months) {
-    let total = 0;
-    for (const inv of investments) {
-      const arr = snapsByInvestment.get(inv.id) ?? [];
-      const map = latestSnapshotByMonth(arr, [m]);
-      const snap = map.get(m);
-      if (snap != null) total += snapshotCadValue(snap);
-    }
-    monthlyMarketValue.set(m, total);
-  }
-
-  const data = months.map((m) => {
-    const cashFlow = cashFlowMap.get(m) ?? 0;
-    const market = monthlyMarketValue.get(m) ?? 0;
-    return { month: m, cashFlow, netWorth: cashFlow + market };
-  });
+  const data = months.map((m) => ({ month: m, cashFlow: cashFlowMap.get(m) ?? 0 }));
 
   return (
     <ResponsiveContainer width="100%" height={300}>
@@ -228,7 +202,6 @@ export function CashFlowAndNetWorthLine({
         <Tooltip formatter={(v: number) => formatCAD(v)} />
         <Legend />
         <Line type="monotone" dataKey="cashFlow" stroke={PALETTE[0]} name="Cash flow" dot={false} />
-        <Line type="monotone" dataKey="netWorth" stroke={PALETTE[4]} name="Net worth" dot={false} />
       </LineChart>
     </ResponsiveContainer>
   );
@@ -275,6 +248,79 @@ export function InvestmentValueLine({
           dot={false}
         />
       </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+export function IncomeByCategoryPie({
+  range,
+  incomes,
+}: {
+  range: Range;
+  incomes: ReadonlyArray<Income>;
+}): React.JSX.Element {
+  const months = new Set(monthsBetween(range.start, range.end));
+  const byCat = new Map<string, number>();
+  for (const i of incomes) {
+    if (!months.has(monthBucket(i.date))) continue;
+    const k = i.source ?? NO_SOURCE;
+    byCat.set(k, (byCat.get(k) ?? 0) + Number(i.amount));
+  }
+  const data = Array.from(byCat, ([name, value]) => ({ name, value })).filter((d) => d.value > 0);
+  if (data.length === 0) {
+    return (
+      <div className="flex h-[300px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+        No income in range.
+      </div>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <PieChart>
+        <Pie data={data} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label>
+          {data.map((entry, idx) => (
+            <Cell key={entry.name} fill={INCOME_PALETTE[idx % INCOME_PALETTE.length]} />
+          ))}
+        </Pie>
+        <Tooltip formatter={(v: number) => formatCAD(v)} />
+        <Legend />
+      </PieChart>
+    </ResponsiveContainer>
+  );
+}
+
+export function ExpenseByCategoryPie({
+  range,
+  expenses,
+}: {
+  range: Range;
+  expenses: ReadonlyArray<Expense>;
+}): React.JSX.Element {
+  const months = new Set(monthsBetween(range.start, range.end));
+  const byCat = new Map<string, number>();
+  for (const e of expenses) {
+    if (!months.has(monthBucket(e.date))) continue;
+    byCat.set(e.category, (byCat.get(e.category) ?? 0) + Number(e.amount));
+  }
+  const data = Array.from(byCat, ([name, value]) => ({ name, value })).filter((d) => d.value > 0);
+  if (data.length === 0) {
+    return (
+      <div className="flex h-[300px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+        No expenses in range.
+      </div>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <PieChart>
+        <Pie data={data} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label>
+          {data.map((entry, idx) => (
+            <Cell key={entry.name} fill={EXPENSE_PALETTE[idx % EXPENSE_PALETTE.length]} />
+          ))}
+        </Pie>
+        <Tooltip formatter={(v: number) => formatCAD(v)} />
+        <Legend />
+      </PieChart>
     </ResponsiveContainer>
   );
 }

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Card } from "./BudgetApp";
 import { computeMonthlyTotals, MonthlyTotalsChart } from "./Charts";
-import TimeRangeSelector, { defaultRange, type TimeRange } from "./TimeRangeSelector";
+import type { TimeRange } from "./TimeRangeSelector";
 import type { Expense, Income } from "./types";
 import { formatCAD } from "./utils";
 
@@ -12,21 +12,19 @@ type View = "table" | "chart";
 export default function MonthlySummary({
   incomes,
   expenses,
+  range,
 }: {
   incomes: ReadonlyArray<Income>;
   expenses: ReadonlyArray<Expense>;
+  range: TimeRange;
 }): React.JSX.Element {
-  const [range, setRange] = useState<TimeRange>(defaultRange);
   const [view, setView] = useState<View>("table");
 
   return (
     <Card>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h3 className="m-0">Monthly summary</h3>
-        <div className="flex flex-wrap items-center gap-2">
-          <ViewToggle value={view} onChange={setView} />
-          <TimeRangeSelector value={range} onChange={setRange} />
-        </div>
+        <ViewToggle value={view} onChange={setView} />
       </div>
       {view === "table" ? (
         <MonthlyTotalsTable incomes={incomes} expenses={expenses} range={range} />
