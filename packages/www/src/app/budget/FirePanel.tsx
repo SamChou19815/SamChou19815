@@ -42,6 +42,7 @@ type SharedInputs = {
   portfolio: string;
   annualSavings: string;
   expectedReturn: string;
+  inflation: string;
   horizon: string;
 };
 
@@ -51,6 +52,7 @@ type SharedSetters = {
   setPortfolio: (v: string) => void;
   setAnnualSavings: (v: string) => void;
   setExpectedReturn: (v: string) => void;
+  setInflation: (v: string) => void;
   setHorizon: (v: string) => void;
 };
 
@@ -96,6 +98,7 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [portfolio, setPortfolio] = useState(() => String(round2(defaults.portfolio)));
   const [annualSavings, setAnnualSavings] = useState(() => String(round2(defaults.annualSavings)));
   const [expectedReturn, setExpectedReturn] = useState("7");
+  const [inflation, setInflation] = useState("2.5");
   const [horizon, setHorizon] = useState("50");
 
   const hasLastYearData = defaults.annualExpenses > 0 || defaults.annualIncome > 0;
@@ -105,6 +108,7 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
     portfolio,
     annualSavings,
     expectedReturn,
+    inflation,
     horizon,
   };
   const setters: SharedSetters = {
@@ -113,6 +117,7 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
     setPortfolio,
     setAnnualSavings,
     setExpectedReturn,
+    setInflation,
     setHorizon,
   };
 
@@ -159,7 +164,7 @@ function SharedInputsCard({
         title="Shared inputs"
         subtitle="Edit once — these values feed every calculator below."
       />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <NumberField
           label={`Annual expenses (${year})`}
           value={shared.annualExpenses}
@@ -182,13 +187,24 @@ function SharedInputsCard({
           onChange={setters.setAnnualSavings}
         />
         <NumberField
-          label="Real return (% / yr)"
+          label="Nominal return (% / yr)"
           value={shared.expectedReturn}
           onChange={setters.setExpectedReturn}
           step="0.1"
         />
+        <NumberField
+          label="Inflation (% / yr)"
+          value={shared.inflation}
+          onChange={setters.setInflation}
+          step="0.1"
+        />
         <NumberField label="Horizon (yrs)" value={shared.horizon} onChange={setters.setHorizon} />
       </div>
+      <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+        All amounts (FIRE number, gap, projection chart) are shown in today&rsquo;s dollars.
+        Calculations use the real return derived from your nominal return and inflation: (1 +
+        nominal) / (1 + inflation) − 1.
+      </p>
     </Card>
   );
 }
@@ -198,7 +214,7 @@ function ClassicFire({ shared }: { shared: SharedInputs }): React.JSX.Element {
   const wr = numOr(shared.withdrawalRate, 0) / 100;
   const pv = numOr(shared.portfolio, 0);
   const sav = numOr(shared.annualSavings, 0);
-  const r = numOr(shared.expectedReturn, 0) / 100;
+  const r = realReturn(shared.expectedReturn, shared.inflation);
   const horizonYears = clampHorizon(numOr(shared.horizon, 50));
 
   const fireNumber = wr > 0 ? exp / wr : Number.POSITIVE_INFINITY;
@@ -242,7 +258,7 @@ function CoastFire({ shared }: { shared: SharedInputs }): React.JSX.Element {
   const exp = numOr(shared.annualExpenses, 0);
   const wr = numOr(shared.withdrawalRate, 0) / 100;
   const pv = numOr(shared.portfolio, 0);
-  const r = numOr(shared.expectedReturn, 0) / 100;
+  const r = realReturn(shared.expectedReturn, shared.inflation);
   const age = numOr(currentAge, 0);
   const retire = numOr(retireAge, 0);
   const end = numOr(endAge, 0);
@@ -307,7 +323,7 @@ function BaristaFire({ shared }: { shared: SharedInputs }): React.JSX.Element {
   const wr = numOr(shared.withdrawalRate, 0) / 100;
   const pv = numOr(shared.portfolio, 0);
   const sav = numOr(shared.annualSavings, 0);
-  const r = numOr(shared.expectedReturn, 0) / 100;
+  const r = realReturn(shared.expectedReturn, shared.inflation);
   const horizonYears = clampHorizon(numOr(shared.horizon, 50));
   const barista = numOr(baristaIncome, 0);
 
@@ -451,7 +467,7 @@ function ProjectionChart({
             type="monotone"
             dataKey="portfolio"
             stroke="#3b82f6"
-            name="Portfolio"
+            name="Portfolio (today's $)"
             dot={false}
             strokeWidth={2}
           />
@@ -459,7 +475,7 @@ function ProjectionChart({
             type="monotone"
             dataKey="withdrawn"
             stroke="#10b981"
-            name="Cumulative withdrawn"
+            name="Cumulative withdrawn (today's $)"
             dot={false}
             strokeWidth={2}
           />
@@ -531,6 +547,14 @@ function numOr(value: string, fallback: number): number {
 function clampHorizon(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 1;
   return Math.min(100, Math.max(1, Math.round(n)));
+}
+
+// Fisher: real = (1 + nominal) / (1 + inflation) - 1.
+function realReturn(nominalPct: string, inflationPct: string): number {
+  const nominal = numOr(nominalPct, 0) / 100;
+  const inflation = numOr(inflationPct, 0) / 100;
+  if (inflation <= -1) return nominal;
+  return (1 + nominal) / (1 + inflation) - 1;
 }
 
 // Solves for n in: fv = pv·(1+r)^n + sav·((1+r)^n - 1)/r
