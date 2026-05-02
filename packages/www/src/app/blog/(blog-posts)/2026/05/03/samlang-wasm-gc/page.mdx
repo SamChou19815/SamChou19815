@@ -1,0 +1,86 @@
+export const title = "WASM GC Backend for samlang";
+import blogPostPageMetadata from "../../../../../../../lib/blog-post-page-metadata";
+export const metadata = blogPostPageMetadata(title);
+
+This is a long overdue blog post that serves as a project update on [samlang](https://samlang.io).
+A few weeks ago, I finally cut a release where samlang emits wasm code that targets the WASM GC
+backend.
+
+## History of samlang's GC Implementation
+
+samlang has a long history of evolution. It started out as an interpreted language implemented in
+Kotlin, so GC was taken care of by the JVM. Later in early 2020, I added a full compiler pipeline using
+what I learned from [the compiler class](https://www.cs.cornell.edu/courses/cs4120/2019sp/),
+including its solution for GC: [Boehm GC](https://en.wikipedia.org/wiki/Boehm_garbage_collector),
+which doesn't need any special handling on the compiler side.
+
+The solution remained unchanged for quite some time, even after a
+[full TS rewrite](/blog/2020/08/30/samlang-ts-rewrite). However, it went through a first major
+rewrite after
+[samlang began to target WASM GC](http://localhost:3000/blog/2021/10/29/samlang-wasm-backend). For
+the first time, I could no longer easily add some lazy `malloc`-compatible GC solution in wasm since
+there wasn't any. I settled on using reference counting, while hoping for a future when WASM GC
+would finally become standardized.
+
+In late 2023, WASM GC finally landed in Chrome, which meant it was only a matter of time until it
+would be supported in all browsers, so
+[I kicked off the samlang WASM GC project](https://github.com/SamChou19815/samlang/issues/1180).
+
+## A Long Grind
+
+_You might have noticed that this is almost a 2.5-year grind. Of course, changing a
+reference-counting-based GC design to WASM GC with a spec written in confusing language isn't really
+a walk in the park, but it's still not difficult enough to require 2.5 years. Well, I did get myself
+a gaming PC in late 2023, and that explains most of the delay._
+
+In order to understand the overall challenge, we first need to understand what needs to be changed:
+
+1. Low-level operations directly operating on the main linear memory need to be replaced by
+   specialized WASM typed-reference instructions.
+2. Completely unchecked casts need to be replaced by WASM's checked casts, which also means that we
+   need to adopt the subtyping system of the WASM typed language.
+3. For enums with data, samlang has an optimization that turns things like `Option.None` into a
+   number. This number now needs to be `i31` in the WASM system.
+4. A custom string type needs to be replaced with a u8 array backed by GC in WASM, which means we
+   need to replace the standard library on strings in WASM.
+5. Eventually, everything needs to be connected together and I need to debug breakages.
+
+For items 1, 2, 3, and 4, although they took some work and some even required several weekend hacks
+to get through, they were at least doable in an incremental way. More importantly, we could slowly
+build the infrastructure and high-level IR that work for both the old RC-based GC and the new WASM
+GC. Even for item 4, it was possible to first write down the new standard library functions. We
+just didn't connect them to anything.
+
+It was item 5 that was the biggest pain to deal with: it was all or nothing. For instance, once we
+started to actually use the new WASM-GC-based string stdlib functions, we could no longer operate
+in the old way where a reference-typed value is simply a `u32`. We needed to actually represent it
+using the typed WASM language, which meant that we also needed to bring in the WASM structs and so
+on. Eventually in the last step, everything happens all at once.
+
+It was hard enough to concentrate my attention for an entire weekend to debug those integration
+issues even in ideal situations. With the lure of video games, it became even harder. Therefore, I
+mostly sat on the problem for months without any real progress.
+
+Fortunately, near the end of 2025, AI agents finally became good enough. Over the Christmas break
+when the Claude Code subscription's usage limit was doubled, I finally let the AI drive the final
+phases of debugging, and got it done over several days of mostly unsupervised runs. It still took
+another week to get past my strict requirement of 100% test coverage, and another few weeks for me
+to sit down and understand what was happening. Finally, on February 6,
+[it was done](https://github.com/SamChou19815/samlang/pull/1313).
+
+## Future Plans
+
+With the most difficult refactor that sucked all my energy finally done, and with the advancement
+of AI that liberates me from getting the test coverage to 100%, it's time to explore new frontiers
+of the language. You might notice that
+[the latest release](https://github.com/SamChou19815/samlang/releases/tag/v0.11.0) already includes
+advanced pattern matching support and makes use of parallel threads to speed up all phases of
+compilation. I want to try these ideas in the future, not necessarily in the order of importance:
+
+- More Rust-like syntax
+- More ergonomic language features
+- Support for mutable data types
+- Additional complex optimizations
+- Rust-like fearless concurrency
+- Expanded standard library
+- Use samlang as a scripting language for something else fun
