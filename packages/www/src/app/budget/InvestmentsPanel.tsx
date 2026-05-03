@@ -112,7 +112,8 @@ export default function InvestmentsPanel({
     if (cost == null) return "Total cost must be ≥ 0.";
     if (value == null) return "Total market value must be ≥ 0.";
     if (d.currency === "CAD") {
-      if (Number(d.exchange_rate) !== 1) return "Exchange rate must be 1 for CAD.";
+      if (Number(d.exchange_rate.replace(/,/g, "")) !== 1)
+        return "Exchange rate must be 1 for CAD.";
     } else {
       const rate = parsePosFloat(d.exchange_rate);
       if (rate == null) return "Exchange rate must be > 0.";
@@ -154,9 +155,9 @@ export default function InvestmentsPanel({
         name: draft.name.trim(),
         type: draft.type.trim(),
         currency: draft.currency,
-        total_cost: Number(draft.total_cost),
-        total_market_value: Number(draft.total_market_value),
-        exchange_rate: draft.currency === "CAD" ? 1 : Number(draft.exchange_rate),
+        total_cost: Number(draft.total_cost.replace(/,/g, "")),
+        total_market_value: Number(draft.total_market_value.replace(/,/g, "")),
+        exchange_rate: draft.currency === "CAD" ? 1 : Number(draft.exchange_rate.replace(/,/g, "")),
         updated_at,
       })
       .select()
@@ -196,9 +197,10 @@ export default function InvestmentsPanel({
       name: editDraft.name.trim(),
       type: editDraft.type.trim(),
       currency: editDraft.currency,
-      total_cost: Number(editDraft.total_cost),
-      total_market_value: Number(editDraft.total_market_value),
-      exchange_rate: editDraft.currency === "CAD" ? 1 : Number(editDraft.exchange_rate),
+      total_cost: Number(editDraft.total_cost.replace(/,/g, "")),
+      total_market_value: Number(editDraft.total_market_value.replace(/,/g, "")),
+      exchange_rate:
+        editDraft.currency === "CAD" ? 1 : Number(editDraft.exchange_rate.replace(/,/g, "")),
       updated_at,
     };
     const { data, error: updErr } = await getSupabase()
@@ -511,7 +513,8 @@ export default function InvestmentsPanel({
                 onSet={(v) => setBulkEdit({ ...bulkEdit, setTotalCost: v })}
               >
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={bulkEdit.total_cost}
                   onChange={(e) => setBulkEdit({ ...bulkEdit, total_cost: e.target.value })}
                   className={inputCls()}
@@ -523,7 +526,8 @@ export default function InvestmentsPanel({
                 onSet={(v) => setBulkEdit({ ...bulkEdit, setTotalMarketValue: v })}
               >
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={bulkEdit.total_market_value}
                   onChange={(e) => setBulkEdit({ ...bulkEdit, total_market_value: e.target.value })}
                   className={inputCls()}
@@ -535,7 +539,8 @@ export default function InvestmentsPanel({
                 onSet={(v) => setBulkEdit({ ...bulkEdit, setExchangeRate: v })}
               >
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   step="0.0001"
                   value={bulkEdit.exchange_rate}
                   onChange={(e) => setBulkEdit({ ...bulkEdit, exchange_rate: e.target.value })}
@@ -722,20 +727,23 @@ function DraftForm({
       </label>
       <Input
         label="Total cost"
-        type="number"
+        type="text"
+        inputMode="decimal"
         value={draft.total_cost}
         onChange={(v) => onChange({ ...draft, total_cost: v })}
       />
       <Input
         label="Total market value"
-        type="number"
+        type="text"
+        inputMode="decimal"
         value={draft.total_market_value}
         onChange={(v) => onChange({ ...draft, total_market_value: v })}
       />
       <label className="flex flex-col text-sm">
         <span className="mb-1 text-gray-600 dark:text-gray-400">FX → CAD</span>
         <input
-          type="number"
+          type="text"
+          inputMode="decimal"
           step="0.0001"
           value={draft.currency === "CAD" ? "1" : draft.exchange_rate}
           disabled={draft.currency === "CAD"}
@@ -762,17 +770,22 @@ function Input({
   value,
   onChange,
   type = "text",
+  inputMode,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   type?: string;
+  inputMode?: string;
 }): React.JSX.Element {
   return (
     <label className="flex flex-col text-sm">
       <span className="mb-1 text-gray-600 dark:text-gray-400">{label}</span>
       <input
         type={type}
+        inputMode={
+          inputMode as "decimal" | "numeric" | "tel" | "url" | "email" | "search" | undefined
+        }
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={inputCls()}

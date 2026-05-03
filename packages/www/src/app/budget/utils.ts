@@ -107,14 +107,18 @@ export function endOfCurrentMonth(): Date {
   return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
 }
 
+export function stripCommas(value: string): string {
+  return value.replace(/,/g, "");
+}
+
 export function parseNonNegFloat(value: string): number | null {
-  const n = Number(value);
+  const n = Number(stripCommas(value));
   if (!Number.isFinite(n) || n < 0) return null;
   return n;
 }
 
 export function parsePosFloat(value: string): number | null {
-  const n = Number(value);
+  const n = Number(stripCommas(value));
   if (!Number.isFinite(n) || n <= 0) return null;
   return n;
 }
