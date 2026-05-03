@@ -93,7 +93,7 @@ type Defaults = {
 const CHUBBY_DEFAULT_SPEND = 100000;
 const FAT_DEFAULT_SPEND = 200000;
 
-type FlavorKey = "classic" | "chubby" | "fat" | "coast" | "barista";
+type FlavorKey = "classic" | "conservative" | "chubby" | "fat" | "coast" | "barista";
 
 type Flavor = {
   key: FlavorKey;
@@ -117,6 +117,7 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [chubbySpend, setChubbySpend] = useState(String(CHUBBY_DEFAULT_SPEND));
   const [fatSpend, setFatSpend] = useState(String(FAT_DEFAULT_SPEND));
   const [baristaIncome, setBaristaIncome] = useState("25000");
+  const [conservativeWr, setConservativeWr] = useState("3");
   const [currentAge, setCurrentAge] = useState(String(new Date().getFullYear() - 1998));
   const [retireAge, setRetireAge] = useState("65");
   const [endAge, setEndAge] = useState("95");
@@ -159,6 +160,10 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const fatTarget = wr > 0 ? fatExp / wr : Number.POSITIVE_INFINITY;
   const baristaShortfall = Math.max(0, exp - barista);
   const baristaTarget = wr > 0 ? baristaShortfall / wr : Number.POSITIVE_INFINITY;
+  const conservativeSpend = exp > 0 ? Math.ceil(exp / 10000) * 10000 : 0;
+  const conservativeWrValue = numOr(conservativeWr, 0) / 100;
+  const conservativeTarget =
+    conservativeWrValue > 0 ? conservativeSpend / conservativeWrValue : Number.POSITIVE_INFINITY;
   const yearsToRetire = Math.max(0, retire - age);
   const growth = Math.pow(1 + r, yearsToRetire);
   const coastTarget = growth > 0 ? fireNumber / growth : Number.POSITIVE_INFINITY;
@@ -224,6 +229,18 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
       }),
     [pv, r, horizonYears, sav, baristaShortfall, baristaTarget],
   );
+  const conservativeSim = useMemo(
+    () =>
+      simulate({
+        pv,
+        r,
+        horizonYears,
+        contribution: sav,
+        withdrawal: conservativeSpend,
+        switchAt: (_y, p) => p >= conservativeTarget,
+      }),
+    [pv, r, horizonYears, sav, conservativeSpend, conservativeTarget],
+  );
 
   const flavors: Flavor[] = [
     {
@@ -233,6 +250,14 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
       target: fireNumber,
       sim: classicSim,
       switchYear: firstWithdrawYear(classicSim),
+    },
+    {
+      key: "conservative",
+      label: "Conservative FIRE",
+      color: "#06b6d4",
+      target: conservativeTarget,
+      sim: conservativeSim,
+      switchYear: firstWithdrawYear(conservativeSim),
     },
     {
       key: "chubby",
@@ -289,7 +314,17 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
 
       <SharedInputsCard year={year} shared={shared} setters={setters} />
 
-      <ClassicFire pv={pv} sav={sav} r={r} exp={exp} target={fireNumber} />
+      <ClassicFire pv={pv} sav={sav} r={r} exp={exp} target={fireNumber} wrPct={withdrawalRate} />
+      <ConservativeFire
+        pv={pv}
+        sav={sav}
+        r={r}
+        exp={exp}
+        conservativeSpend={conservativeSpend}
+        conservativeWr={conservativeWr}
+        setConservativeWr={setConservativeWr}
+        target={conservativeTarget}
+      />
       <ChubbyFire
         pv={pv}
         sav={sav}
@@ -407,12 +442,14 @@ function ClassicFire({
   r,
   exp,
   target,
+  wrPct,
 }: {
   pv: number;
   sav: number;
   r: number;
   exp: number;
   target: number;
+  wrPct: string;
 }): React.JSX.Element {
   const gap = Math.max(0, target - pv);
   const years = yearsToReach(pv, target, sav, r);
@@ -420,13 +457,63 @@ function ClassicFire({
     <Card>
       <CalculatorHeader
         title="FIRE"
-        subtitle={`Classic ${"4% rule"}-style target: portfolio big enough to fund your annual expenses (${formatCAD(exp)}) indefinitely.`}
+        subtitle={`Portfolio big enough to fund your annual expenses (${formatCAD(exp)}) indefinitely at your ${wrPct}% withdrawal rate.`}
       />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Result label="FIRE number" value={formatCAD(target)} />
         <Result label="Gap from today" value={formatCAD(gap)} />
         <Result label="Years to FIRE" value={formatYears(years)} />
       </div>
+    </Card>
+  );
+}
+
+function ConservativeFire({
+  pv,
+  sav,
+  r,
+  exp,
+  conservativeSpend,
+  conservativeWr,
+  setConservativeWr,
+  target,
+}: {
+  pv: number;
+  sav: number;
+  r: number;
+  exp: number;
+  conservativeSpend: number;
+  conservativeWr: string;
+  setConservativeWr: (v: string) => void;
+  target: number;
+}): React.JSX.Element {
+  const gap = Math.max(0, target - pv);
+  const years = yearsToReach(pv, target, sav, r);
+  return (
+    <Card>
+      <CalculatorHeader
+        title="Conservative FIRE"
+        subtitle={`A safer margin: ${conservativeWr}% withdrawal rate with spending rounded up to the next $10,000 (${formatCAD(conservativeSpend)}).`}
+      />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <NumberField
+          label="Conservative withdrawal rate (%)"
+          value={conservativeWr}
+          onChange={setConservativeWr}
+          step="0.1"
+        />
+        <Result label="Rounded-up annual spend" value={formatCAD(conservativeSpend)} />
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Result label="Conservative FIRE number" value={formatCAD(target)} />
+        <Result label="Gap from today" value={formatCAD(gap)} />
+        <Result label="Years to conservative FIRE" value={formatYears(years)} />
+      </div>
+      {exp <= 0 && (
+        <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">
+          Set annual expenses above $0 to see meaningful results.
+        </p>
+      )}
     </Card>
   );
 }
@@ -681,7 +768,7 @@ function CombinedProjectionChart({
   }
   return (
     <div className="mt-2">
-      <ResponsiveContainer width="100%" height={340}>
+      <ResponsiveContainer width="100%" height={600}>
         <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
           <XAxis
