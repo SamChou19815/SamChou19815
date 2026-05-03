@@ -111,9 +111,9 @@ export default function SnapshotsHistory({
       .insert({
         user_id: userId,
         investment_id: investmentId,
-        total_cost: Number(draft.total_cost),
-        total_market_value: Number(draft.total_market_value),
-        exchange_rate: Number(draft.exchange_rate),
+        total_cost: Number(draft.total_cost.replace(/,/g, "")),
+        total_market_value: Number(draft.total_market_value.replace(/,/g, "")),
+        exchange_rate: Number(draft.exchange_rate.replace(/,/g, "")),
         recorded_at: localInputValueToISO(draft.recorded_at),
       });
     if (insErr != null) {
@@ -144,9 +144,9 @@ export default function SnapshotsHistory({
     const { error: updErr } = await getSupabase()
       .from("investment_snapshots")
       .update({
-        total_cost: Number(editDraft.total_cost),
-        total_market_value: Number(editDraft.total_market_value),
-        exchange_rate: Number(editDraft.exchange_rate),
+        total_cost: Number(editDraft.total_cost.replace(/,/g, "")),
+        total_market_value: Number(editDraft.total_market_value.replace(/,/g, "")),
+        exchange_rate: Number(editDraft.exchange_rate.replace(/,/g, "")),
         recorded_at: localInputValueToISO(editDraft.recorded_at),
       })
       .eq("id", editingId);
@@ -307,19 +307,22 @@ export default function SnapshotsHistory({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
               <SInput
                 label="Total cost"
-                type="number"
+                type="text"
+                inputMode="decimal"
                 value={draft.total_cost}
                 onChange={(v) => setDraft({ ...draft, total_cost: v })}
               />
               <SInput
                 label="Market value"
-                type="number"
+                type="text"
+                inputMode="decimal"
                 value={draft.total_market_value}
                 onChange={(v) => setDraft({ ...draft, total_market_value: v })}
               />
               <SInput
                 label="FX → CAD"
-                type="number"
+                type="text"
+                inputMode="decimal"
                 value={draft.exchange_rate}
                 onChange={(v) => setDraft({ ...draft, exchange_rate: v })}
               />
@@ -369,7 +372,8 @@ export default function SnapshotsHistory({
               onSet={(v) => setBulkEdit({ ...bulkEdit, setTotalCost: v })}
             >
               <input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 value={bulkEdit.total_cost}
                 onChange={(e) => setBulkEdit({ ...bulkEdit, total_cost: e.target.value })}
                 className={inputCls()}
@@ -381,7 +385,8 @@ export default function SnapshotsHistory({
               onSet={(v) => setBulkEdit({ ...bulkEdit, setTotalMarketValue: v })}
             >
               <input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 value={bulkEdit.total_market_value}
                 onChange={(e) => setBulkEdit({ ...bulkEdit, total_market_value: e.target.value })}
                 className={inputCls()}
@@ -393,7 +398,8 @@ export default function SnapshotsHistory({
               onSet={(v) => setBulkEdit({ ...bulkEdit, setExchangeRate: v })}
             >
               <input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 step="0.0001"
                 value={bulkEdit.exchange_rate}
                 onChange={(e) => setBulkEdit({ ...bulkEdit, exchange_rate: e.target.value })}
@@ -465,7 +471,8 @@ export default function SnapshotsHistory({
                         </Td>
                         <Td className="text-right">
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             value={editDraft.total_cost}
                             onChange={(e) =>
                               setEditDraft({ ...editDraft, total_cost: e.target.value })
@@ -475,7 +482,8 @@ export default function SnapshotsHistory({
                         </Td>
                         <Td className="text-right">
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             value={editDraft.total_market_value}
                             onChange={(e) =>
                               setEditDraft({ ...editDraft, total_market_value: e.target.value })
@@ -485,7 +493,8 @@ export default function SnapshotsHistory({
                         </Td>
                         <Td className="text-right">
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             step="0.0001"
                             value={editDraft.exchange_rate}
                             onChange={(e) =>
@@ -557,17 +566,22 @@ function SInput({
   value,
   onChange,
   type = "text",
+  inputMode,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   type?: string;
+  inputMode?: string;
 }): React.JSX.Element {
   return (
     <label className="flex flex-col text-xs">
       <span className="mb-1 text-gray-600 dark:text-gray-400">{label}</span>
       <input
         type={type}
+        inputMode={
+          inputMode as "decimal" | "numeric" | "tel" | "url" | "email" | "search" | undefined
+        }
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={inputCls()}

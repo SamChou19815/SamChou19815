@@ -848,7 +848,8 @@ function NumberField({
     <label className="flex flex-col text-sm">
       <span className="mb-1 text-gray-600 dark:text-gray-400">{label}</span>
       <input
-        type="number"
+        type="text"
+        inputMode="decimal"
         step={step ?? "1"}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -873,7 +874,7 @@ function round2(value: number): number {
 }
 
 function numOr(value: string, fallback: number): number {
-  const n = Number(value);
+  const n = Number(value.replace(/,/g, ""));
   return Number.isFinite(n) ? n : fallback;
 }
 

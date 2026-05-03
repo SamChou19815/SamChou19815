@@ -285,7 +285,8 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
               />
               <Input
                 label="Amount (CAD)"
-                type="number"
+                type="text"
+                inputMode="decimal"
                 value={draft.amount}
                 onChange={(v) => setDraft({ ...draft, amount: v })}
               />
@@ -368,7 +369,8 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
                 onSet={(v) => setBulkEdit({ ...bulkEdit, setAmount: v })}
               >
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={bulkEdit.amount}
                   onChange={(e) => setBulkEdit({ ...bulkEdit, amount: e.target.value })}
                   className={inputCls()}
@@ -465,7 +467,8 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
                           </Td>
                           <Td className="text-right">
                             <input
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               value={editDraft.amount}
                               onChange={(e) =>
                                 setEditDraft({ ...editDraft, amount: e.target.value })
@@ -545,12 +548,14 @@ function Input({
   value,
   onChange,
   type = "text",
+  inputMode,
   className,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   type?: string;
+  inputMode?: string;
   className?: string;
 }): React.JSX.Element {
   return (
@@ -558,6 +563,9 @@ function Input({
       <span className="mb-1 text-gray-600 dark:text-gray-400">{label}</span>
       <input
         type={type}
+        inputMode={
+          inputMode as "decimal" | "numeric" | "tel" | "url" | "email" | "search" | undefined
+        }
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={inputCls()}
