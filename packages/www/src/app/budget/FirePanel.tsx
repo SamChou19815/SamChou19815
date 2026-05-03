@@ -90,6 +90,20 @@ type Defaults = {
   portfolio: number;
 };
 
+const CHUBBY_DEFAULT_SPEND = 100000;
+const FAT_DEFAULT_SPEND = 200000;
+
+type FlavorKey = "classic" | "chubby" | "fat" | "coast" | "barista";
+
+type Flavor = {
+  key: FlavorKey;
+  label: string;
+  color: string;
+  target: number;
+  sim: SimYear[];
+  switchYear: number | null;
+};
+
 function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): React.JSX.Element {
   const [annualExpenses, setAnnualExpenses] = useState(() =>
     String(round2(defaults.annualExpenses)),
@@ -100,6 +114,12 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [expectedReturn, setExpectedReturn] = useState("7");
   const [inflation, setInflation] = useState("2.5");
   const [horizon, setHorizon] = useState("50");
+  const [chubbySpend, setChubbySpend] = useState(String(CHUBBY_DEFAULT_SPEND));
+  const [fatSpend, setFatSpend] = useState(String(FAT_DEFAULT_SPEND));
+  const [baristaIncome, setBaristaIncome] = useState("25000");
+  const [currentAge, setCurrentAge] = useState(String(new Date().getFullYear() - 1998));
+  const [retireAge, setRetireAge] = useState("65");
+  const [endAge, setEndAge] = useState("95");
 
   const hasLastYearData = defaults.annualExpenses > 0 || defaults.annualIncome > 0;
   const shared: SharedInputs = {
@@ -120,6 +140,133 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
     setInflation,
     setHorizon,
   };
+
+  const exp = numOr(annualExpenses, 0);
+  const wr = numOr(withdrawalRate, 0) / 100;
+  const pv = numOr(portfolio, 0);
+  const sav = numOr(annualSavings, 0);
+  const r = realReturn(expectedReturn, inflation);
+  const horizonYears = clampHorizon(numOr(horizon, 50));
+  const chubbyExp = numOr(chubbySpend, 0);
+  const fatExp = numOr(fatSpend, 0);
+  const barista = numOr(baristaIncome, 0);
+  const age = numOr(currentAge, 0);
+  const retire = numOr(retireAge, 0);
+  const end = numOr(endAge, 0);
+
+  const fireNumber = wr > 0 ? exp / wr : Number.POSITIVE_INFINITY;
+  const chubbyTarget = wr > 0 ? chubbyExp / wr : Number.POSITIVE_INFINITY;
+  const fatTarget = wr > 0 ? fatExp / wr : Number.POSITIVE_INFINITY;
+  const baristaShortfall = Math.max(0, exp - barista);
+  const baristaTarget = wr > 0 ? baristaShortfall / wr : Number.POSITIVE_INFINITY;
+  const yearsToRetire = Math.max(0, retire - age);
+  const growth = Math.pow(1 + r, yearsToRetire);
+  const coastTarget = growth > 0 ? fireNumber / growth : Number.POSITIVE_INFINITY;
+  const coastHorizon = clampHorizon(Math.max(yearsToRetire + 1, end - age));
+
+  const classicSim = useMemo(
+    () =>
+      simulate({
+        pv,
+        r,
+        horizonYears,
+        contribution: sav,
+        withdrawal: exp,
+        switchAt: (_y, p) => p >= fireNumber,
+      }),
+    [pv, r, horizonYears, sav, exp, fireNumber],
+  );
+  const chubbySim = useMemo(
+    () =>
+      simulate({
+        pv,
+        r,
+        horizonYears,
+        contribution: sav,
+        withdrawal: chubbyExp,
+        switchAt: (_y, p) => p >= chubbyTarget,
+      }),
+    [pv, r, horizonYears, sav, chubbyExp, chubbyTarget],
+  );
+  const fatSim = useMemo(
+    () =>
+      simulate({
+        pv,
+        r,
+        horizonYears,
+        contribution: sav,
+        withdrawal: fatExp,
+        switchAt: (_y, p) => p >= fatTarget,
+      }),
+    [pv, r, horizonYears, sav, fatExp, fatTarget],
+  );
+  const coastSim = useMemo(
+    () =>
+      simulate({
+        pv,
+        r,
+        horizonYears: coastHorizon,
+        contribution: 0,
+        withdrawal: exp,
+        switchAt: (y) => y >= yearsToRetire,
+      }),
+    [pv, r, coastHorizon, exp, yearsToRetire],
+  );
+  const baristaSim = useMemo(
+    () =>
+      simulate({
+        pv,
+        r,
+        horizonYears,
+        contribution: sav,
+        withdrawal: baristaShortfall,
+        switchAt: (_y, p) => p >= baristaTarget,
+      }),
+    [pv, r, horizonYears, sav, baristaShortfall, baristaTarget],
+  );
+
+  const flavors: Flavor[] = [
+    {
+      key: "classic",
+      label: "FIRE",
+      color: "#3b82f6",
+      target: fireNumber,
+      sim: classicSim,
+      switchYear: firstWithdrawYear(classicSim),
+    },
+    {
+      key: "chubby",
+      label: "Chubby FIRE",
+      color: "#f59e0b",
+      target: chubbyTarget,
+      sim: chubbySim,
+      switchYear: firstWithdrawYear(chubbySim),
+    },
+    {
+      key: "fat",
+      label: "Fat FIRE",
+      color: "#ef4444",
+      target: fatTarget,
+      sim: fatSim,
+      switchYear: firstWithdrawYear(fatSim),
+    },
+    {
+      key: "coast",
+      label: "Coast FIRE",
+      color: "#8b5cf6",
+      target: fireNumber,
+      sim: coastSim,
+      switchYear: yearsToRetire,
+    },
+    {
+      key: "barista",
+      label: "Barista FIRE",
+      color: "#10b981",
+      target: baristaTarget,
+      sim: baristaSim,
+      switchYear: firstWithdrawYear(baristaSim),
+    },
+  ];
 
   return (
     <div className="flex flex-col gap-6">
@@ -142,9 +289,54 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
 
       <SharedInputsCard year={year} shared={shared} setters={setters} />
 
-      <ClassicFire shared={shared} />
-      <CoastFire shared={shared} />
-      <BaristaFire shared={shared} />
+      <ClassicFire pv={pv} sav={sav} r={r} exp={exp} target={fireNumber} />
+      <ChubbyFire
+        pv={pv}
+        sav={sav}
+        r={r}
+        spend={chubbySpend}
+        setSpend={setChubbySpend}
+        target={chubbyTarget}
+        spendValue={chubbyExp}
+      />
+      <FatFire
+        pv={pv}
+        sav={sav}
+        r={r}
+        spend={fatSpend}
+        setSpend={setFatSpend}
+        target={fatTarget}
+        spendValue={fatExp}
+      />
+      <CoastFire
+        pv={pv}
+        r={r}
+        retire={retire}
+        currentAge={currentAge}
+        setCurrentAge={setCurrentAge}
+        retireAge={retireAge}
+        setRetireAge={setRetireAge}
+        endAge={endAge}
+        setEndAge={setEndAge}
+        target={coastTarget}
+        fireNumber={fireNumber}
+      />
+      <BaristaFire
+        pv={pv}
+        baristaIncome={baristaIncome}
+        setBaristaIncome={setBaristaIncome}
+        exp={exp}
+        shortfall={baristaShortfall}
+        target={baristaTarget}
+      />
+
+      <Card>
+        <CalculatorHeader
+          title="Combined projection"
+          subtitle="Portfolio trajectories under each FIRE flavor, in today's dollars. Vertical markers show when each strategy switches from accumulation to withdrawal."
+        />
+        <CombinedProjectionChart flavors={flavors} />
+      </Card>
     </div>
   );
 }
@@ -209,82 +401,151 @@ function SharedInputsCard({
   );
 }
 
-function ClassicFire({ shared }: { shared: SharedInputs }): React.JSX.Element {
-  const exp = numOr(shared.annualExpenses, 0);
-  const wr = numOr(shared.withdrawalRate, 0) / 100;
-  const pv = numOr(shared.portfolio, 0);
-  const sav = numOr(shared.annualSavings, 0);
-  const r = realReturn(shared.expectedReturn, shared.inflation);
-  const horizonYears = clampHorizon(numOr(shared.horizon, 50));
-
-  const fireNumber = wr > 0 ? exp / wr : Number.POSITIVE_INFINITY;
-  const gap = Math.max(0, fireNumber - pv);
-  const years = yearsToReach(pv, fireNumber, sav, r);
-
-  const sim = useMemo(
-    () =>
-      simulate({
-        pv,
-        r,
-        horizonYears,
-        contribution: sav,
-        withdrawal: exp,
-        switchAt: (_y, p) => p >= fireNumber,
-      }),
-    [pv, r, horizonYears, sav, exp, fireNumber],
-  );
-
+function ClassicFire({
+  pv,
+  sav,
+  r,
+  exp,
+  target,
+}: {
+  pv: number;
+  sav: number;
+  r: number;
+  exp: number;
+  target: number;
+}): React.JSX.Element {
+  const gap = Math.max(0, target - pv);
+  const years = yearsToReach(pv, target, sav, r);
   return (
     <Card>
       <CalculatorHeader
         title="FIRE"
-        subtitle={`Classic ${"4% rule"}-style target: portfolio big enough to fund your annual expenses indefinitely.`}
+        subtitle={`Classic ${"4% rule"}-style target: portfolio big enough to fund your annual expenses (${formatCAD(exp)}) indefinitely.`}
       />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Result label="FIRE number" value={formatCAD(fireNumber)} />
+        <Result label="FIRE number" value={formatCAD(target)} />
         <Result label="Gap from today" value={formatCAD(gap)} />
         <Result label="Years to FIRE" value={formatYears(years)} />
       </div>
-      <ProjectionChart sim={sim} switchLabel="FIRE reached" target={fireNumber} />
     </Card>
   );
 }
 
-function CoastFire({ shared }: { shared: SharedInputs }): React.JSX.Element {
-  const [currentAge, setCurrentAge] = useState("30");
-  const [retireAge, setRetireAge] = useState("65");
-  const [endAge, setEndAge] = useState("95");
+function ChubbyFire({
+  pv,
+  sav,
+  r,
+  spend,
+  setSpend,
+  target,
+  spendValue,
+}: {
+  pv: number;
+  sav: number;
+  r: number;
+  spend: string;
+  setSpend: (v: string) => void;
+  target: number;
+  spendValue: number;
+}): React.JSX.Element {
+  const gap = Math.max(0, target - pv);
+  const years = yearsToReach(pv, target, sav, r);
+  return (
+    <Card>
+      <CalculatorHeader
+        title="Chubby FIRE"
+        subtitle={`A more comfortable retirement. Default ${formatCAD(CHUBBY_DEFAULT_SPEND)} is the mid-point of that band.`}
+      />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <NumberField label="Annual spend" value={spend} onChange={setSpend} />
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Result label="Chubby FIRE number" value={formatCAD(target)} />
+        <Result label="Gap from today" value={formatCAD(gap)} />
+        <Result label="Years to chubby FIRE" value={formatYears(years)} />
+      </div>
+      {spendValue <= 0 && (
+        <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">
+          Set an annual spend above $0 to see meaningful results.
+        </p>
+      )}
+    </Card>
+  );
+}
 
-  const exp = numOr(shared.annualExpenses, 0);
-  const wr = numOr(shared.withdrawalRate, 0) / 100;
-  const pv = numOr(shared.portfolio, 0);
-  const r = realReturn(shared.expectedReturn, shared.inflation);
+function FatFire({
+  pv,
+  sav,
+  r,
+  spend,
+  setSpend,
+  target,
+  spendValue,
+}: {
+  pv: number;
+  sav: number;
+  r: number;
+  spend: string;
+  setSpend: (v: string) => void;
+  target: number;
+  spendValue: number;
+}): React.JSX.Element {
+  const gap = Math.max(0, target - pv);
+  const years = yearsToReach(pv, target, sav, r);
+  return (
+    <Card>
+      <CalculatorHeader
+        title="Fat FIRE"
+        subtitle={`Luxury retirement. Default ${formatCAD(FAT_DEFAULT_SPEND)} is the mid-point of that band.`}
+      />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <NumberField label="Annual spend" value={spend} onChange={setSpend} />
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Result label="Fat FIRE number" value={formatCAD(target)} />
+        <Result label="Gap from today" value={formatCAD(gap)} />
+        <Result label="Years to fat FIRE" value={formatYears(years)} />
+      </div>
+      {spendValue <= 0 && (
+        <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">
+          Set an annual spend above $0 to see meaningful results.
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function CoastFire({
+  pv,
+  r,
+  retire,
+  currentAge,
+  setCurrentAge,
+  retireAge,
+  setRetireAge,
+  endAge,
+  setEndAge,
+  target,
+  fireNumber,
+}: {
+  pv: number;
+  r: number;
+  retire: number;
+  currentAge: string;
+  setCurrentAge: (v: string) => void;
+  retireAge: string;
+  setRetireAge: (v: string) => void;
+  endAge: string;
+  setEndAge: (v: string) => void;
+  target: number;
+  fireNumber: number;
+}): React.JSX.Element {
   const age = numOr(currentAge, 0);
-  const retire = numOr(retireAge, 0);
-  const end = numOr(endAge, 0);
-
-  const fireNumber = wr > 0 ? exp / wr : Number.POSITIVE_INFINITY;
   const yearsToRetire = Math.max(0, retire - age);
   const growth = Math.pow(1 + r, yearsToRetire);
-  const coastTarget = growth > 0 ? fireNumber / growth : Number.POSITIVE_INFINITY;
-  const gap = Math.max(0, coastTarget - pv);
-  const surplus = Math.max(0, pv - coastTarget);
   const projected = pv * growth;
-  const horizonYears = clampHorizon(Math.max(yearsToRetire + 1, end - age));
-
-  // Coast: no contributions, switch to withdrawal when retirement age is reached.
-  const sim = useMemo(
-    () =>
-      simulate({
-        pv,
-        r,
-        horizonYears,
-        contribution: 0,
-        withdrawal: exp,
-        switchAt: (y) => y >= yearsToRetire,
-      }),
-    [pv, r, horizonYears, exp, yearsToRetire],
-  );
+  const gap = Math.max(0, target - pv);
+  const surplus = Math.max(0, pv - target);
 
   return (
     <Card>
@@ -299,51 +560,34 @@ function CoastFire({ shared }: { shared: SharedInputs }): React.JSX.Element {
       </div>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Result label="FIRE number (at retirement)" value={formatCAD(fireNumber)} />
-        <Result label="Coast FIRE target (today)" value={formatCAD(coastTarget)} />
+        <Result label="Coast FIRE target (today)" value={formatCAD(target)} />
         <Result
           label={surplus > 0 ? "Surplus over target" : "Gap to target"}
           value={formatCAD(surplus > 0 ? surplus : gap)}
         />
         <Result label={`Projected at age ${Math.round(retire)}`} value={formatCAD(projected)} />
       </div>
-      <ProjectionChart
-        sim={sim}
-        switchLabel={`Retire at ${Math.round(retire)}`}
-        switchYear={yearsToRetire}
-        target={fireNumber}
-      />
     </Card>
   );
 }
 
-function BaristaFire({ shared }: { shared: SharedInputs }): React.JSX.Element {
-  const [baristaIncome, setBaristaIncome] = useState("25000");
-
-  const exp = numOr(shared.annualExpenses, 0);
-  const wr = numOr(shared.withdrawalRate, 0) / 100;
-  const pv = numOr(shared.portfolio, 0);
-  const sav = numOr(shared.annualSavings, 0);
-  const r = realReturn(shared.expectedReturn, shared.inflation);
-  const horizonYears = clampHorizon(numOr(shared.horizon, 50));
-  const barista = numOr(baristaIncome, 0);
-
-  const shortfall = Math.max(0, exp - barista);
-  const baristaTarget = wr > 0 ? shortfall / wr : Number.POSITIVE_INFINITY;
-  const gap = Math.max(0, baristaTarget - pv);
-  const covered = barista >= exp;
-
-  const sim = useMemo(
-    () =>
-      simulate({
-        pv,
-        r,
-        horizonYears,
-        contribution: sav,
-        withdrawal: shortfall,
-        switchAt: (_y, p) => p >= baristaTarget,
-      }),
-    [pv, r, horizonYears, sav, shortfall, baristaTarget],
-  );
+function BaristaFire({
+  pv,
+  baristaIncome,
+  setBaristaIncome,
+  exp,
+  shortfall,
+  target,
+}: {
+  pv: number;
+  baristaIncome: string;
+  setBaristaIncome: (v: string) => void;
+  exp: number;
+  shortfall: number;
+  target: number;
+}): React.JSX.Element {
+  const gap = Math.max(0, target - pv);
+  const covered = shortfall <= 0 && exp > 0;
 
   return (
     <Card>
@@ -362,11 +606,10 @@ function BaristaFire({ shared }: { shared: SharedInputs }): React.JSX.Element {
         <Result label="Annual shortfall" value={formatCAD(shortfall)} />
         <Result
           label="Barista FIRE target"
-          value={covered ? "$0 (income covers)" : formatCAD(baristaTarget)}
+          value={covered ? "$0 (income covers)" : formatCAD(target)}
         />
         <Result label="Gap from today" value={formatCAD(gap)} />
       </div>
-      <ProjectionChart sim={sim} switchLabel="Go barista" target={baristaTarget} />
     </Card>
   );
 }
@@ -413,26 +656,32 @@ function simulate({
   return out;
 }
 
-function ProjectionChart({
-  sim,
-  switchLabel,
-  switchYear,
-  target,
+function firstWithdrawYear(sim: ReadonlyArray<SimYear>): number | null {
+  const found = sim.find((s, i) => i > 0 && s.phase === "withdraw");
+  return found ? found.year : null;
+}
+
+function CombinedProjectionChart({
+  flavors,
 }: {
-  sim: ReadonlyArray<SimYear>;
-  switchLabel: string;
-  switchYear?: number;
-  target: number;
+  flavors: ReadonlyArray<Flavor>;
 }): React.JSX.Element {
-  const switchAt = switchYear ?? sim.find((s, i) => i > 0 && s.phase === "withdraw")?.year ?? null;
-  const data = sim.map((s) => ({
-    year: s.year,
-    portfolio: Math.round(s.portfolio),
-    withdrawn: Math.round(s.withdrawn),
-  }));
+  const maxYear = flavors.reduce((m, f) => {
+    const last = f.sim[f.sim.length - 1];
+    return Math.max(m, last ? last.year : 0);
+  }, 0);
+  const data: Array<Record<string, number>> = [];
+  for (let y = 0; y <= maxYear; y++) {
+    const row: Record<string, number> = { year: y };
+    for (const f of flavors) {
+      const point = f.sim.find((s) => s.year === y);
+      if (point) row[f.key] = Math.round(point.portfolio);
+    }
+    data.push(row);
+  }
   return (
-    <div className="mt-6">
-      <ResponsiveContainer width="100%" height={260}>
+    <div className="mt-2">
+      <ResponsiveContainer width="100%" height={340}>
         <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
           <XAxis
@@ -445,40 +694,37 @@ function ProjectionChart({
             tickFormatter={(v) => `$${Math.round(v / 1000)}k`}
             width={60}
           />
-          <Tooltip formatter={(v: number) => formatCAD(v)} labelFormatter={(l) => `Year ${l}`} />
+          <Tooltip
+            formatter={(v: number, name: string) => [formatCAD(v), name]}
+            labelFormatter={(l) => `Year ${l}`}
+          />
           <Legend />
-          {Number.isFinite(target) && target > 0 && (
-            <ReferenceLine
-              y={target}
-              stroke="#9ca3af"
-              strokeDasharray="4 4"
-              label={{ value: "Target", position: "right", fontSize: 11, fill: "#6b7280" }}
-            />
+          {flavors.map(
+            (f) =>
+              f.switchYear != null &&
+              f.switchYear > 0 &&
+              f.switchYear <= maxYear && (
+                <ReferenceLine
+                  key={`switch-${f.key}`}
+                  x={f.switchYear}
+                  stroke={f.color}
+                  strokeOpacity={0.5}
+                  strokeDasharray="3 3"
+                />
+              ),
           )}
-          {switchAt != null && switchAt > 0 && switchAt < data.length && (
-            <ReferenceLine
-              x={switchAt}
-              stroke="#f59e0b"
-              strokeDasharray="4 4"
-              label={{ value: switchLabel, position: "top", fontSize: 11, fill: "#b45309" }}
+          {flavors.map((f) => (
+            <Line
+              key={f.key}
+              type="monotone"
+              dataKey={f.key}
+              stroke={f.color}
+              name={f.label}
+              dot={false}
+              strokeWidth={2}
+              connectNulls
             />
-          )}
-          <Line
-            type="monotone"
-            dataKey="portfolio"
-            stroke="#3b82f6"
-            name="Portfolio (today's $)"
-            dot={false}
-            strokeWidth={2}
-          />
-          <Line
-            type="monotone"
-            dataKey="withdrawn"
-            stroke="#10b981"
-            name="Cumulative withdrawn (today's $)"
-            dot={false}
-            strokeWidth={2}
-          />
+          ))}
         </LineChart>
       </ResponsiveContainer>
     </div>
