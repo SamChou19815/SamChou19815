@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -113,7 +113,7 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [annualSavings, setAnnualSavings] = useState(() => String(round2(defaults.annualSavings)));
   const [expectedReturn, setExpectedReturn] = useState("7");
   const [inflation, setInflation] = useState("2.5");
-  const [horizon, setHorizon] = useState("50");
+  const [horizon, setHorizon] = useState(() => String(100 - (new Date().getFullYear() - 1998)));
   const [chubbySpend, setChubbySpend] = useState(String(CHUBBY_DEFAULT_SPEND));
   const [fatSpend, setFatSpend] = useState(String(FAT_DEFAULT_SPEND));
   const [baristaIncome, setBaristaIncome] = useState("25000");
@@ -121,6 +121,8 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [currentAge, setCurrentAge] = useState(String(new Date().getFullYear() - 1998));
   const [retireAge, setRetireAge] = useState("65");
   const [endAge, setEndAge] = useState("95");
+  const [mcStdDev, setMcStdDev] = useState("12");
+  const [mcNumSims, setMcNumSims] = useState("10000");
 
   const hasLastYearData = defaults.annualExpenses > 0 || defaults.annualIncome > 0;
   const shared: SharedInputs = {
@@ -293,6 +295,34 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
     },
   ];
 
+  const deferredExp = useDeferredValue(exp);
+  const deferredR = useDeferredValue(r);
+  const deferredFireNumber = useDeferredValue(fireNumber);
+  const deferredHorizonYears = useDeferredValue(horizonYears);
+  const deferredMcStdDev = useDeferredValue(mcStdDev);
+  const deferredMcNumSims = useDeferredValue(mcNumSims);
+  const mcResult = useMemo(() => {
+    if (deferredFireNumber <= 0 || !Number.isFinite(deferredFireNumber) || deferredExp <= 0)
+      return null;
+    const sd = numOr(deferredMcStdDev, 12) / 100;
+    const ns = Math.min(50000, Math.max(100, Math.round(numOr(deferredMcNumSims, 10000))));
+    return monteCarloSimulate({
+      startPortfolio: deferredFireNumber,
+      annualWithdrawal: deferredExp,
+      realReturn: deferredR,
+      realStdDev: sd,
+      horizonYears: deferredHorizonYears,
+      numSims: ns,
+    });
+  }, [
+    deferredFireNumber,
+    deferredExp,
+    deferredR,
+    deferredMcStdDev,
+    deferredHorizonYears,
+    deferredMcNumSims,
+  ]);
+
   return (
     <div className="flex flex-col gap-6">
       <Card>
@@ -363,6 +393,15 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
         exp={exp}
         shortfall={baristaShortfall}
         target={baristaTarget}
+      />
+
+      <MonteCarloCard
+        result={mcResult}
+        stdDev={mcStdDev}
+        setStdDev={setMcStdDev}
+        numSims={mcNumSims}
+        setNumSims={setMcNumSims}
+        fireNumber={fireNumber}
       />
 
       <Card>
@@ -916,4 +955,265 @@ function formatYears(years: number): string {
     return `${months} mo`;
   }
   return `${years.toFixed(1)} yrs`;
+}
+
+// ── Monte Carlo simulation ──────────────────────────────────────────────────
+
+type McPercentile = {
+  year: number;
+  p10: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  p90: number;
+};
+
+type MonteCarloResult = {
+  successRate: number;
+  medianEnd: number;
+  p10End: number;
+  p90End: number;
+  percentiles: McPercentile[];
+};
+
+function mulberry32(seed: number): () => number {
+  return () => {
+    seed |= 0;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function normalRandom(rng: () => number): number {
+  const u1 = rng();
+  const u2 = rng();
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+function pctValue(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = p * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  const loVal = sorted[lo] ?? 0;
+  if (lo === hi) return loVal;
+  return loVal + ((sorted[hi] ?? 0) - loVal) * (idx - lo);
+}
+
+function monteCarloSimulate({
+  startPortfolio,
+  annualWithdrawal,
+  realReturn: annualReturn,
+  realStdDev,
+  horizonYears,
+  numSims,
+}: {
+  startPortfolio: number;
+  annualWithdrawal: number;
+  realReturn: number;
+  realStdDev: number;
+  horizonYears: number;
+  numSims: number;
+}): MonteCarloResult | null {
+  if (startPortfolio <= 0 || annualWithdrawal <= 0 || horizonYears <= 0 || numSims <= 0) {
+    return null;
+  }
+
+  const rng = mulberry32(42);
+  const allPaths: number[][] = [];
+  let successes = 0;
+
+  for (let s = 0; s < numSims; s++) {
+    const path = [startPortfolio];
+    let portfolio = startPortfolio;
+    let survived = true;
+
+    for (let y = 1; y <= horizonYears; y++) {
+      const ret = annualReturn + realStdDev * normalRandom(rng);
+      portfolio = portfolio * (1 + ret) - annualWithdrawal;
+      if (portfolio <= 0) {
+        portfolio = 0;
+        survived = false;
+      }
+      path.push(portfolio);
+    }
+
+    if (survived) successes++;
+    allPaths.push(path);
+  }
+
+  const percentiles: McPercentile[] = [];
+  for (let y = 0; y <= horizonYears; y++) {
+    const vals = allPaths.map((p) => p[y] as number).sort((a, b) => a - b);
+    percentiles.push({
+      year: y,
+      p10: pctValue(vals, 0.1),
+      p25: pctValue(vals, 0.25),
+      p50: pctValue(vals, 0.5),
+      p75: pctValue(vals, 0.75),
+      p90: pctValue(vals, 0.9),
+    });
+  }
+
+  const endVals = allPaths.map((p) => p[horizonYears] as number).sort((a, b) => a - b);
+
+  return {
+    successRate: successes / numSims,
+    medianEnd: pctValue(endVals, 0.5),
+    p10End: pctValue(endVals, 0.1),
+    p90End: pctValue(endVals, 0.9),
+    percentiles,
+  };
+}
+
+function MonteCarloCard({
+  result,
+  stdDev,
+  setStdDev,
+  numSims,
+  setNumSims,
+  fireNumber,
+}: {
+  result: MonteCarloResult | null;
+  stdDev: string;
+  setStdDev: (v: string) => void;
+  numSims: string;
+  setNumSims: (v: string) => void;
+  fireNumber: number;
+}): React.JSX.Element {
+  const successColor =
+    result && result.successRate >= 0.9
+      ? "text-emerald-600 dark:text-emerald-400"
+      : result && result.successRate >= 0.7
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-red-600 dark:text-red-400";
+
+  return (
+    <Card>
+      <CalculatorHeader
+        title="Monte Carlo Simulation"
+        subtitle="Estimates the probability your portfolio survives retirement withdrawals by running thousands of simulations with random annual returns. Based on the Trinity Study (Cooley, Hubbard & Walz, 1998) which established the 4% safe withdrawal rate using historical US market data (1926–1997), and Bengen (1994) who first proposed the rule."
+      />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Result label="Starting portfolio (FIRE number)" value={formatCAD(fireNumber)} />
+        <NumberField
+          label="Real return std dev (%)"
+          value={stdDev}
+          onChange={setStdDev}
+          step="0.1"
+        />
+        <NumberField label="Number of simulations" value={numSims} onChange={setNumSims} />
+      </div>
+      {result ? (
+        <>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/40">
+              <div className="text-xs text-gray-500 dark:text-gray-400">Success rate</div>
+              <div className={`text-lg font-semibold ${successColor}`}>
+                {(result.successRate * 100).toFixed(1)}%
+              </div>
+            </div>
+            <Result label="Median ending portfolio" value={formatCAD(result.medianEnd)} />
+            <Result label="10th percentile ending" value={formatCAD(result.p10End)} />
+            <Result label="90th percentile ending" value={formatCAD(result.p90End)} />
+          </div>
+          <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+            Success rate = percentage of simulations where the portfolio survived the full horizon.
+            Std dev of ~15–20% approximates historical equity volatility; ~10–12% for a balanced
+            portfolio. All values are in today&apos;s dollars.
+          </p>
+          <MonteCarloChart percentiles={result.percentiles} />
+        </>
+      ) : (
+        <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">
+          Set a valid withdrawal rate (&gt;0%) and annual expenses (&gt;$0) to run the simulation.
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function MonteCarloChart({ percentiles }: { percentiles: McPercentile[] }): React.JSX.Element {
+  if (percentiles.length === 0) return <></>;
+
+  const data = percentiles.map((p) => ({
+    year: p.year,
+    p10: Math.round(p.p10),
+    p25: Math.round(p.p25),
+    p50: Math.round(p.p50),
+    p75: Math.round(p.p75),
+    p90: Math.round(p.p90),
+  }));
+
+  return (
+    <div className="mt-2">
+      <ResponsiveContainer width="100%" height={400}>
+        <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <XAxis
+            dataKey="year"
+            tick={{ fontSize: 12 }}
+            label={{
+              value: "Years in retirement",
+              position: "insideBottom",
+              offset: -4,
+              fontSize: 12,
+            }}
+          />
+          <YAxis
+            tick={{ fontSize: 12 }}
+            tickFormatter={(v) => `$${Math.round(v / 1000)}k`}
+            width={60}
+          />
+          <Tooltip
+            formatter={(v: number, name: string) => [formatCAD(v), name]}
+            labelFormatter={(l) => `Year ${l}`}
+          />
+          <Legend />
+          <Line
+            type="monotone"
+            dataKey="p90"
+            stroke="#93c5fd"
+            strokeWidth={1}
+            dot={false}
+            name="90th percentile"
+          />
+          <Line
+            type="monotone"
+            dataKey="p75"
+            stroke="#60a5fa"
+            strokeWidth={1}
+            dot={false}
+            name="75th percentile"
+          />
+          <Line
+            type="monotone"
+            dataKey="p50"
+            stroke="#3b82f6"
+            strokeWidth={2}
+            dot={false}
+            name="Median"
+          />
+          <Line
+            type="monotone"
+            dataKey="p25"
+            stroke="#60a5fa"
+            strokeWidth={1}
+            dot={false}
+            name="25th percentile"
+          />
+          <Line
+            type="monotone"
+            dataKey="p10"
+            stroke="#93c5fd"
+            strokeWidth={1}
+            dot={false}
+            name="10th percentile"
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
 }
