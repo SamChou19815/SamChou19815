@@ -117,9 +117,11 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [chubbySpend, setChubbySpend] = useState(String(CHUBBY_DEFAULT_SPEND));
   const [fatSpend, setFatSpend] = useState(String(FAT_DEFAULT_SPEND));
   const [baristaIncome, setBaristaIncome] = useState("25000");
-  const [conservativeWr, setConservativeWr] = useState("3");
+  const [conservativeWr, setConservativeWr] = useState("2");
   const [currentAge, setCurrentAge] = useState(String(new Date().getFullYear() - 1998));
   const [retireAge, setRetireAge] = useState("65");
+  const [coastStartAge, setCoastStartAge] = useState("30");
+  const [coastUntilAge, setCoastUntilAge] = useState("45");
   const [endAge, setEndAge] = useState("95");
   const [mcStdDev, setMcStdDev] = useState("12");
   const [mcNumSims, setMcNumSims] = useState("10000");
@@ -155,7 +157,11 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const barista = numOr(baristaIncome, 0);
   const age = numOr(currentAge, 0);
   const retire = numOr(retireAge, 0);
+  const coastStart = numOr(coastStartAge, 0);
+  const coastUntil = numOr(coastUntilAge, 0);
   const end = numOr(endAge, 0);
+  const accumulationYears = Math.max(0, Math.round(coastStart - age));
+  const coastYears = Math.max(0, Math.round(coastUntil - Math.max(age, coastStart)));
 
   const fireNumber = wr > 0 ? exp / wr : Number.POSITIVE_INFINITY;
   const chubbyTarget = wr > 0 ? chubbyExp / wr : Number.POSITIVE_INFINITY;
@@ -296,18 +302,23 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   ];
 
   const deferredExp = useDeferredValue(exp);
+  const deferredSav = useDeferredValue(sav);
   const deferredR = useDeferredValue(r);
-  const deferredFireNumber = useDeferredValue(fireNumber);
+  const deferredPv = useDeferredValue(pv);
+  const deferredAccumulationYears = useDeferredValue(accumulationYears);
+  const deferredCoastYears = useDeferredValue(coastYears);
   const deferredHorizonYears = useDeferredValue(horizonYears);
   const deferredMcStdDev = useDeferredValue(mcStdDev);
   const deferredMcNumSims = useDeferredValue(mcNumSims);
   const mcResult = useMemo(() => {
-    if (deferredFireNumber <= 0 || !Number.isFinite(deferredFireNumber) || deferredExp <= 0)
-      return null;
+    if (deferredPv <= 0 || deferredExp <= 0) return null;
     const sd = numOr(deferredMcStdDev, 12) / 100;
     const ns = Math.min(50000, Math.max(100, Math.round(numOr(deferredMcNumSims, 10000))));
     return monteCarloSimulate({
-      startPortfolio: deferredFireNumber,
+      startPortfolio: deferredPv,
+      accumulationYears: deferredAccumulationYears,
+      annualContribution: deferredSav,
+      coastYears: deferredCoastYears,
       annualWithdrawal: deferredExp,
       realReturn: deferredR,
       realStdDev: sd,
@@ -315,7 +326,10 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
       numSims: ns,
     });
   }, [
-    deferredFireNumber,
+    deferredPv,
+    deferredAccumulationYears,
+    deferredSav,
+    deferredCoastYears,
     deferredExp,
     deferredR,
     deferredMcStdDev,
@@ -381,6 +395,10 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
         setCurrentAge={setCurrentAge}
         retireAge={retireAge}
         setRetireAge={setRetireAge}
+        coastStartAge={coastStartAge}
+        setCoastStartAge={setCoastStartAge}
+        coastUntilAge={coastUntilAge}
+        setCoastUntilAge={setCoastUntilAge}
         endAge={endAge}
         setEndAge={setEndAge}
         target={coastTarget}
@@ -401,7 +419,10 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
         setStdDev={setMcStdDev}
         numSims={mcNumSims}
         setNumSims={setMcNumSims}
-        fireNumber={fireNumber}
+        startPortfolio={pv}
+        accumulationYears={accumulationYears}
+        coastYears={coastYears}
+        horizonYears={horizonYears}
       />
 
       <Card>
@@ -649,6 +670,10 @@ function CoastFire({
   setCurrentAge,
   retireAge,
   setRetireAge,
+  coastStartAge,
+  setCoastStartAge,
+  coastUntilAge,
+  setCoastUntilAge,
   endAge,
   setEndAge,
   target,
@@ -661,6 +686,10 @@ function CoastFire({
   setCurrentAge: (v: string) => void;
   retireAge: string;
   setRetireAge: (v: string) => void;
+  coastStartAge: string;
+  setCoastStartAge: (v: string) => void;
+  coastUntilAge: string;
+  setCoastUntilAge: (v: string) => void;
   endAge: string;
   setEndAge: (v: string) => void;
   target: number;
@@ -677,11 +706,13 @@ function CoastFire({
     <Card>
       <CalculatorHeader
         title="Coast FIRE"
-        subtitle="The lump sum you need invested today so it grows into your full FIRE number by retirement, even if you stop contributing."
+        subtitle="The lump sum you need invested today so it grows into your full FIRE number by retirement, even if you stop contributing. In the Monte Carlo simulation: contributions continue until the coast-start age, the portfolio coasts (no contributions, no withdrawals) until the coast-until age, and then withdrawals begin."
       />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <NumberField label="Current age" value={currentAge} onChange={setCurrentAge} />
         <NumberField label="Retirement age" value={retireAge} onChange={setRetireAge} />
+        <NumberField label="Coast start age" value={coastStartAge} onChange={setCoastStartAge} />
+        <NumberField label="Coast until age" value={coastUntilAge} onChange={setCoastUntilAge} />
         <NumberField label="Plan-until age" value={endAge} onChange={setEndAge} />
       </div>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -973,6 +1004,8 @@ type MonteCarloResult = {
   medianEnd: number;
   p10End: number;
   p90End: number;
+  medianRetirePortfolio: number;
+  effectiveWithdrawalRate: number;
   percentiles: McPercentile[];
 };
 
@@ -1004,6 +1037,9 @@ function pctValue(sorted: number[], p: number): number {
 
 function monteCarloSimulate({
   startPortfolio,
+  accumulationYears,
+  annualContribution,
+  coastYears,
   annualWithdrawal,
   realReturn: annualReturn,
   realStdDev,
@@ -1011,6 +1047,9 @@ function monteCarloSimulate({
   numSims,
 }: {
   startPortfolio: number;
+  accumulationYears: number;
+  annualContribution: number;
+  coastYears: number;
   annualWithdrawal: number;
   realReturn: number;
   realStdDev: number;
@@ -1020,6 +1059,9 @@ function monteCarloSimulate({
   if (startPortfolio <= 0 || annualWithdrawal <= 0 || horizonYears <= 0 || numSims <= 0) {
     return null;
   }
+
+  const accumEnd = Math.max(0, Math.min(horizonYears, accumulationYears));
+  const coastEnd = Math.min(horizonYears, accumEnd + Math.max(0, coastYears));
 
   const rng = mulberry32(42);
   const allPaths: number[][] = [];
@@ -1032,10 +1074,18 @@ function monteCarloSimulate({
 
     for (let y = 1; y <= horizonYears; y++) {
       const ret = annualReturn + realStdDev * normalRandom(rng);
-      portfolio = portfolio * (1 + ret) - annualWithdrawal;
-      if (portfolio <= 0) {
-        portfolio = 0;
-        survived = false;
+      if (y <= accumEnd) {
+        portfolio = portfolio * (1 + ret) + annualContribution;
+        if (portfolio < 0) portfolio = 0;
+      } else if (y <= coastEnd) {
+        portfolio = portfolio * (1 + ret);
+        if (portfolio < 0) portfolio = 0;
+      } else {
+        portfolio = portfolio * (1 + ret) - annualWithdrawal;
+        if (portfolio <= 0) {
+          portfolio = 0;
+          survived = false;
+        }
       }
       path.push(portfolio);
     }
@@ -1059,11 +1109,18 @@ function monteCarloSimulate({
 
   const endVals = allPaths.map((p) => p[horizonYears] as number).sort((a, b) => a - b);
 
+  const retireVals = allPaths.map((p) => p[coastEnd] as number).sort((a, b) => a - b);
+  const medianRetirePortfolio = pctValue(retireVals, 0.5);
+  const effectiveWithdrawalRate =
+    medianRetirePortfolio > 0 ? annualWithdrawal / medianRetirePortfolio : 0;
+
   return {
     successRate: successes / numSims,
     medianEnd: pctValue(endVals, 0.5),
     p10End: pctValue(endVals, 0.1),
     p90End: pctValue(endVals, 0.9),
+    medianRetirePortfolio,
+    effectiveWithdrawalRate,
     percentiles,
   };
 }
@@ -1074,14 +1131,20 @@ function MonteCarloCard({
   setStdDev,
   numSims,
   setNumSims,
-  fireNumber,
+  startPortfolio,
+  accumulationYears,
+  coastYears,
+  horizonYears,
 }: {
   result: MonteCarloResult | null;
   stdDev: string;
   setStdDev: (v: string) => void;
   numSims: string;
   setNumSims: (v: string) => void;
-  fireNumber: number;
+  startPortfolio: number;
+  accumulationYears: number;
+  coastYears: number;
+  horizonYears: number;
 }): React.JSX.Element {
   const successColor =
     result && result.successRate >= 0.9
@@ -1089,15 +1152,22 @@ function MonteCarloCard({
       : result && result.successRate >= 0.7
         ? "text-amber-600 dark:text-amber-400"
         : "text-red-600 dark:text-red-400";
+  const effectiveAccum = Math.max(0, Math.min(horizonYears, accumulationYears));
+  const effectiveCoast = Math.max(0, Math.min(horizonYears - effectiveAccum, coastYears));
+  const withdrawYears = Math.max(0, horizonYears - effectiveAccum - effectiveCoast);
 
   return (
     <Card>
       <CalculatorHeader
         title="Monte Carlo Simulation"
-        subtitle="Estimates the probability your portfolio survives retirement withdrawals by running thousands of simulations with random annual returns. Based on the Trinity Study (Cooley, Hubbard & Walz, 1998) which established the 4% safe withdrawal rate using historical US market data (1926–1997), and Bengen (1994) who first proposed the rule."
+        subtitle="Estimates the probability your portfolio survives retirement withdrawals by running thousands of simulations with random annual returns. Starts from your current portfolio, contributes annual savings until the coast-start age, then coasts (no contributions, no withdrawals) until the coast-until age, then withdraws your annual expenses each year. The withdrawal rate set in the shared inputs above is not used here — instead, the effective withdrawal rate (annual expenses ÷ median portfolio at retirement) is reported below. Based on the Trinity Study (Cooley, Hubbard & Walz, 1998) which established the 4% safe withdrawal rate using historical US market data (1926–1997), and Bengen (1994) who first proposed the rule."
       />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Result label="Starting portfolio (FIRE number)" value={formatCAD(fireNumber)} />
+        <Result label="Starting portfolio (today)" value={formatCAD(startPortfolio)} />
+        <Result
+          label="Accumulate / coast / withdraw years"
+          value={`${effectiveAccum} / ${effectiveCoast} / ${withdrawYears} yr`}
+        />
         <NumberField
           label="Real return std dev (%)"
           value={stdDev}
@@ -1115,6 +1185,14 @@ function MonteCarloCard({
                 {(result.successRate * 100).toFixed(1)}%
               </div>
             </div>
+            <Result
+              label="Effective withdrawal rate"
+              value={`${(result.effectiveWithdrawalRate * 100).toFixed(2)}%`}
+            />
+            <Result
+              label="Median portfolio at retirement"
+              value={formatCAD(result.medianRetirePortfolio)}
+            />
             <Result label="Median ending portfolio" value={formatCAD(result.medianEnd)} />
             <Result label="10th percentile ending" value={formatCAD(result.p10End)} />
             <Result label="90th percentile ending" value={formatCAD(result.p90End)} />
@@ -1128,7 +1206,7 @@ function MonteCarloCard({
         </>
       ) : (
         <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">
-          Set a valid withdrawal rate (&gt;0%) and annual expenses (&gt;$0) to run the simulation.
+          Set a current portfolio (&gt;$0) and annual expenses (&gt;$0) to run the simulation.
         </p>
       )}
     </Card>
