@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { getSupabase } from "../../lib/supabase";
 import { Card } from "./BudgetApp";
-import BulkAddPaste from "./BulkAddPaste";
+import BulkAddPaste, { type ParseResult, type PreviewColumn } from "./BulkAddPaste";
 import BulkBar, { BulkEditField, HeaderCheckbox, RowCheckbox } from "./BulkBar";
 import SnapshotsHistory from "./SnapshotsHistory";
 import type { Currency, Investment, InvestmentSnapshot } from "./types";
@@ -78,6 +78,84 @@ const emptyBulkEdit = (): BulkEdit => ({
   setUpdatedAt: false,
   updated_at: nowLocalInputValue(),
 });
+
+type BulkRow = {
+  name: string;
+  type: string;
+  currency: Currency;
+  total_cost: number;
+  total_market_value: number;
+  exchange_rate: number;
+  updated_at: string;
+};
+
+const parseBulk = (text: string): ParseResult<BulkRow> => {
+  const lines = splitPastedRows(text);
+  const rows: BulkRow[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cells = lines[i] ?? [];
+    const [
+      name = "",
+      type = "",
+      currencyStr = "",
+      costStr = "",
+      mvStr = "",
+      fxStr = "",
+      updatedStr = "",
+    ] = cells;
+    const currency = currencyStr.toUpperCase();
+    if (currency !== "CAD" && currency !== "USD") {
+      return { ok: false, line: i + 1, message: "currency must be CAD or USD." };
+    }
+    const cost = parseNonNegFloat(costStr);
+    const mv = parseNonNegFloat(mvStr);
+    const fx = currency === "CAD" ? 1 : parsePosFloat(fxStr);
+    if (name === "" || type === "" || cost == null || mv == null || fx == null) {
+      return {
+        ok: false,
+        line: i + 1,
+        message:
+          "need name, type, currency, total_cost (≥ 0), total_market_value (≥ 0), exchange_rate (> 0).",
+      };
+    }
+    const parsed = new Date(updatedStr);
+    if (updatedStr === "" || Number.isNaN(parsed.getTime())) {
+      return { ok: false, line: i + 1, message: "invalid updated_at." };
+    }
+    rows.push({
+      name,
+      type,
+      currency: currency as Currency,
+      total_cost: cost,
+      total_market_value: mv,
+      exchange_rate: fx,
+      updated_at: parsed.toISOString(),
+    });
+  }
+  return { ok: true, rows };
+};
+
+const bulkColumns: ReadonlyArray<PreviewColumn<BulkRow>> = [
+  { header: "Name", cell: (r) => r.name },
+  { header: "Type", cell: (r) => r.type },
+  { header: "Currency", cell: (r) => r.currency },
+  { header: "Cost", cell: (r) => r.total_cost.toLocaleString(), align: "right" },
+  {
+    header: "Market value",
+    cell: (r) => r.total_market_value.toLocaleString(),
+    align: "right",
+  },
+  { header: "FX", cell: (r) => r.exchange_rate.toString(), align: "right" },
+  {
+    header: "CAD value",
+    cell: (r) => formatCAD(cadValue(r)),
+    align: "right",
+  },
+  {
+    header: "Updated",
+    cell: (r) => isoToLocalInputValue(r.updated_at).replace("T", " "),
+  },
+];
 
 export default function InvestmentsPanel({
   userId,
@@ -344,59 +422,9 @@ export default function InvestmentsPanel({
     setBulkEdit(emptyBulkEdit());
   };
 
-  const bulkInsert = async (text: string) => {
+  const bulkInsert = async (rows: ReadonlyArray<BulkRow>) => {
     if (userId == null) return { ok: false as const, message: "Not signed in." };
-    const lines = splitPastedRows(text);
-    type Payload = {
-      user_id: string;
-      name: string;
-      type: string;
-      currency: Currency;
-      total_cost: number;
-      total_market_value: number;
-      exchange_rate: number;
-      updated_at: string;
-    };
-    const payloads: Payload[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const cells = lines[i] ?? [];
-      const [
-        name = "",
-        type = "",
-        currencyStr = "",
-        costStr = "",
-        mvStr = "",
-        fxStr = "",
-        updatedStr = "",
-      ] = cells;
-      const currency = currencyStr.toUpperCase();
-      if (currency !== "CAD" && currency !== "USD") {
-        return { ok: false as const, message: `Line ${i + 1}: currency must be CAD or USD.` };
-      }
-      const cost = parseNonNegFloat(costStr);
-      const mv = parseNonNegFloat(mvStr);
-      const fx = currency === "CAD" ? 1 : parsePosFloat(fxStr);
-      if (name === "" || type === "" || cost == null || mv == null || fx == null) {
-        return {
-          ok: false as const,
-          message: `Line ${i + 1}: need name, type, currency, total_cost (≥ 0), total_market_value (≥ 0), exchange_rate (> 0).`,
-        };
-      }
-      const parsed = new Date(updatedStr);
-      if (updatedStr === "" || Number.isNaN(parsed.getTime())) {
-        return { ok: false as const, message: `Line ${i + 1}: invalid updated_at.` };
-      }
-      payloads.push({
-        user_id: userId,
-        name,
-        type,
-        currency: currency as Currency,
-        total_cost: cost,
-        total_market_value: mv,
-        exchange_rate: fx,
-        updated_at: parsed.toISOString(),
-      });
-    }
+    const payloads = rows.map((r) => ({ ...r, user_id: userId }));
     const { data, error: err } = await getSupabase().from("investments").insert(payloads).select();
     if (err != null || data == null) {
       return {
@@ -451,7 +479,7 @@ export default function InvestmentsPanel({
             </div>
           </>
         ) : (
-          <BulkAddPaste
+          <BulkAddPaste<BulkRow>
             placeholder={
               "TFSA Wealthsimple\tStocks\tCAD\t10000\t11250\t1\t2026-04-01T09:00\nUS Index\tETF\tUSD\t5000\t5400\t1.36\t2026-04-01T09:00"
             }
@@ -465,7 +493,9 @@ export default function InvestmentsPanel({
                 created for each row.
               </span>
             }
-            onSubmit={bulkInsert}
+            columns={bulkColumns}
+            parse={parseBulk}
+            onInsert={bulkInsert}
           />
         )}
       </Card>
