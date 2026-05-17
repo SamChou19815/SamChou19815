@@ -36,6 +36,16 @@ function sumForYear<T extends { date: string; amount: number }>(
     .reduce((s, r) => s + Number(r.amount), 0);
 }
 
+function sumRollingYear<T extends { date: string; amount: number }>(
+  rows: ReadonlyArray<T>,
+): number {
+  const today = new Date();
+  const cutoff = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+  return rows
+    .filter((r) => parseLocalDate(r.date).getTime() > cutoff.getTime())
+    .reduce((s, r) => s + Number(r.amount), 0);
+}
+
 type SharedInputs = {
   annualExpenses: string;
   withdrawalRate: string;
@@ -65,11 +75,12 @@ export default function FirePanel({
   const year = lastCalendarYear();
 
   const defaults = useMemo(() => {
-    const annualExpenses = sumForYear(expenses, year);
-    const annualIncome = sumForYear(incomes, year);
-    const annualSavings = Math.max(0, annualIncome - annualExpenses);
+    const annualExpenses = sumRollingYear(expenses);
+    const annualIncomeYear = sumForYear(incomes, year);
+    const annualExpensesYear = sumForYear(expenses, year);
+    const annualSavings = Math.max(0, annualIncomeYear - annualExpensesYear);
     const portfolio = investments.reduce((s, inv) => s + cadValue(inv), 0);
-    return { annualExpenses, annualIncome, annualSavings, portfolio };
+    return { annualExpenses, annualIncome: annualIncomeYear, annualSavings, portfolio };
   }, [expenses, incomes, investments, year]);
 
   if (loading) {
@@ -318,7 +329,7 @@ function SharedInputsCard({
       />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <NumberField
-          label={`Annual expenses (${year})`}
+          label="Annual expenses (last 12 mo)"
           value={shared.annualExpenses}
           onChange={setters.setAnnualExpenses}
         />
@@ -680,18 +691,25 @@ function formatYears(years: number): string {
 
 type McPercentile = {
   year: number;
+  p1: number;
+  p2: number;
+  p3: number;
+  p4: number;
+  p5: number;
   p10: number;
   p25: number;
   p50: number;
-  p75: number;
-  p90: number;
 };
 
 type MonteCarloResult = {
   successRate: number;
   medianEnd: number;
   p10End: number;
-  p90End: number;
+  p5End: number;
+  p4End: number;
+  p3End: number;
+  p2End: number;
+  p1End: number;
   medianRetirePortfolio: number;
   effectiveWithdrawalRate: number;
   percentiles: McPercentile[];
@@ -787,11 +805,14 @@ function monteCarloSimulate({
     const vals = allPaths.map((p) => p[y] as number).sort((a, b) => a - b);
     percentiles.push({
       year: y,
+      p1: pctValue(vals, 0.01),
+      p2: pctValue(vals, 0.02),
+      p3: pctValue(vals, 0.03),
+      p4: pctValue(vals, 0.04),
+      p5: pctValue(vals, 0.05),
       p10: pctValue(vals, 0.1),
       p25: pctValue(vals, 0.25),
       p50: pctValue(vals, 0.5),
-      p75: pctValue(vals, 0.75),
-      p90: pctValue(vals, 0.9),
     });
   }
 
@@ -806,7 +827,11 @@ function monteCarloSimulate({
     successRate: successes / numSims,
     medianEnd: pctValue(endVals, 0.5),
     p10End: pctValue(endVals, 0.1),
-    p90End: pctValue(endVals, 0.9),
+    p5End: pctValue(endVals, 0.05),
+    p4End: pctValue(endVals, 0.04),
+    p3End: pctValue(endVals, 0.03),
+    p2End: pctValue(endVals, 0.02),
+    p1End: pctValue(endVals, 0.01),
     medianRetirePortfolio,
     effectiveWithdrawalRate,
     percentiles,
@@ -883,7 +908,11 @@ function MonteCarloCard({
             />
             <Result label="Median ending portfolio" value={formatCAD(result.medianEnd)} />
             <Result label="10th percentile ending" value={formatCAD(result.p10End)} />
-            <Result label="90th percentile ending" value={formatCAD(result.p90End)} />
+            <Result label="5th percentile ending" value={formatCAD(result.p5End)} />
+            <Result label="4th percentile ending" value={formatCAD(result.p4End)} />
+            <Result label="3rd percentile ending" value={formatCAD(result.p3End)} />
+            <Result label="2nd percentile ending" value={formatCAD(result.p2End)} />
+            <Result label="1st percentile ending" value={formatCAD(result.p1End)} />
           </div>
           <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
             Success rate = percentage of simulations where the portfolio survived the full horizon.
@@ -906,11 +935,14 @@ function MonteCarloChart({ percentiles }: { percentiles: McPercentile[] }): Reac
 
   const data = percentiles.map((p) => ({
     year: p.year,
+    p1: Math.round(p.p1),
+    p2: Math.round(p.p2),
+    p3: Math.round(p.p3),
+    p4: Math.round(p.p4),
+    p5: Math.round(p.p5),
     p10: Math.round(p.p10),
     p25: Math.round(p.p25),
     p50: Math.round(p.p50),
-    p75: Math.round(p.p75),
-    p90: Math.round(p.p90),
   }));
 
   return (
@@ -940,22 +972,6 @@ function MonteCarloChart({ percentiles }: { percentiles: McPercentile[] }): Reac
           <Legend />
           <Line
             type="monotone"
-            dataKey="p90"
-            stroke="#93c5fd"
-            strokeWidth={1}
-            dot={false}
-            name="90th percentile"
-          />
-          <Line
-            type="monotone"
-            dataKey="p75"
-            stroke="#60a5fa"
-            strokeWidth={1}
-            dot={false}
-            name="75th percentile"
-          />
-          <Line
-            type="monotone"
             dataKey="p50"
             stroke="#3b82f6"
             strokeWidth={2}
@@ -977,6 +993,46 @@ function MonteCarloChart({ percentiles }: { percentiles: McPercentile[] }): Reac
             strokeWidth={1}
             dot={false}
             name="10th percentile"
+          />
+          <Line
+            type="monotone"
+            dataKey="p5"
+            stroke="#fecaca"
+            strokeWidth={1}
+            dot={false}
+            name="5th percentile"
+          />
+          <Line
+            type="monotone"
+            dataKey="p4"
+            stroke="#fca5a5"
+            strokeWidth={1}
+            dot={false}
+            name="4th percentile"
+          />
+          <Line
+            type="monotone"
+            dataKey="p3"
+            stroke="#f87171"
+            strokeWidth={1}
+            dot={false}
+            name="3rd percentile"
+          />
+          <Line
+            type="monotone"
+            dataKey="p2"
+            stroke="#ef4444"
+            strokeWidth={1}
+            dot={false}
+            name="2nd percentile"
+          />
+          <Line
+            type="monotone"
+            dataKey="p1"
+            stroke="#b91c1c"
+            strokeWidth={1}
+            dot={false}
+            name="1st percentile"
           />
         </LineChart>
       </ResponsiveContainer>
