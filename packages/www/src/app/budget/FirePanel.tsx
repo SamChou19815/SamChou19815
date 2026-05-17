@@ -108,7 +108,7 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [annualExpenses, setAnnualExpenses] = useState(() =>
     String(round2(defaults.annualExpenses)),
   );
-  const [withdrawalRate, setWithdrawalRate] = useState("4");
+  const [withdrawalRate, setWithdrawalRate] = useState("2");
   const [portfolio, setPortfolio] = useState(() => String(round2(defaults.portfolio)));
   const [annualSavings, setAnnualSavings] = useState(() => String(round2(defaults.annualSavings)));
   const [expectedReturn, setExpectedReturn] = useState("7");
