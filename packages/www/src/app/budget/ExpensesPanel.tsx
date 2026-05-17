@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { getSupabase } from "../../lib/supabase";
 import { Card } from "./BudgetApp";
-import BulkAddPaste from "./BulkAddPaste";
+import BulkAddPaste, { type ParseResult, type PreviewColumn } from "./BulkAddPaste";
 import BulkBar, { BulkEditField, HeaderCheckbox, RowCheckbox } from "./BulkBar";
 import type { Expense } from "./types";
 import { useBulkSelection } from "./useBulkSelection";
@@ -37,6 +37,41 @@ const emptyDraft = (): Draft => ({
   date: todayISO(),
   notes: "",
 });
+
+type BulkRow = {
+  name: string;
+  category: string;
+  amount: number;
+  date: string;
+  notes: string | null;
+};
+
+const parseBulk = (text: string): ParseResult<BulkRow> => {
+  const lines = splitPastedRows(text);
+  const rows: BulkRow[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cells = lines[i] ?? [];
+    const [date = "", name = "", category = "", amountStr = "", notes = ""] = cells;
+    const amount = parseNonNegFloat(amountStr);
+    if (date === "" || name === "" || category === "" || amount == null) {
+      return {
+        ok: false,
+        line: i + 1,
+        message: "need date, name, category, amount (≥ 0).",
+      };
+    }
+    rows.push({ name, category, amount, date, notes: notes === "" ? null : notes });
+  }
+  return { ok: true, rows };
+};
+
+const bulkColumns: ReadonlyArray<PreviewColumn<BulkRow>> = [
+  { header: "Date", cell: (r) => r.date },
+  { header: "Name", cell: (r) => r.name },
+  { header: "Category", cell: (r) => r.category },
+  { header: "Amount", cell: (r) => formatCAD(r.amount), align: "right" },
+  { header: "Notes", cell: (r) => r.notes ?? "" },
+];
 
 type BulkEdit = {
   setName: boolean;
@@ -215,37 +250,9 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
     setBulkEdit(emptyBulkEdit());
   };
 
-  const bulkInsert = async (text: string) => {
+  const bulkInsert = async (parsed: ReadonlyArray<BulkRow>) => {
     if (userId == null) return { ok: false as const, message: "Not signed in." };
-    const lines = splitPastedRows(text);
-    type Payload = {
-      user_id: string;
-      name: string;
-      category: string;
-      amount: number;
-      date: string;
-      notes: string | null;
-    };
-    const payloads: Payload[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const cells = lines[i] ?? [];
-      const [date = "", name = "", category = "", amountStr = "", notes = ""] = cells;
-      const amount = parseNonNegFloat(amountStr);
-      if (date === "" || name === "" || category === "" || amount == null) {
-        return {
-          ok: false as const,
-          message: `Line ${i + 1}: need date, name, category, amount (≥ 0).`,
-        };
-      }
-      payloads.push({
-        user_id: userId,
-        name,
-        category,
-        amount,
-        date,
-        notes: notes === "" ? null : notes,
-      });
-    }
+    const payloads = parsed.map((r) => ({ ...r, user_id: userId }));
     const { error: err } = await getSupabase().from("expenses").insert(payloads);
     if (err != null) return { ok: false as const, message: friendlyMutationError(err) };
     return { ok: true as const, insertedCount: payloads.length };
@@ -315,7 +322,7 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
             </div>
           </>
         ) : (
-          <BulkAddPaste
+          <BulkAddPaste<BulkRow>
             placeholder={
               "2026-04-01\tGroceries\tFood\t52.10\tWeekly run\n2026-04-02\tGas\tTransport\t40"
             }
@@ -326,7 +333,9 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
                 must be <code>YYYY-MM-DD</code>.
               </span>
             }
-            onSubmit={bulkInsert}
+            columns={bulkColumns}
+            parse={parseBulk}
+            onInsert={bulkInsert}
           />
         )}
       </Card>

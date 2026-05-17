@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getSupabase } from "../../lib/supabase";
-import BulkAddPaste from "./BulkAddPaste";
+import BulkAddPaste, { type ParseResult, type PreviewColumn } from "./BulkAddPaste";
 import BulkBar, { BulkEditField, HeaderCheckbox, RowCheckbox } from "./BulkBar";
 import type { InvestmentSnapshot } from "./types";
 import { useBulkSelection } from "./useBulkSelection";
@@ -60,6 +60,56 @@ const emptyBulkEdit = (): BulkEdit => ({
   setRecordedAt: false,
   recorded_at: nowLocalInputValue(),
 });
+
+type BulkRow = {
+  total_cost: number;
+  total_market_value: number;
+  exchange_rate: number;
+  recorded_at: string;
+};
+
+const parseBulk = (text: string): ParseResult<BulkRow> => {
+  const lines = splitPastedRows(text);
+  const rows: BulkRow[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cells = lines[i] ?? [];
+    const [recordedStr = "", costStr = "", mvStr = "", fxStr = ""] = cells;
+    const cost = parseNonNegFloat(costStr);
+    const mv = parseNonNegFloat(mvStr);
+    const fx = parsePosFloat(fxStr);
+    if (recordedStr === "" || cost == null || mv == null || fx == null) {
+      return {
+        ok: false,
+        line: i + 1,
+        message:
+          "need recorded_at, total_cost (≥ 0), total_market_value (≥ 0), exchange_rate (> 0).",
+      };
+    }
+    const parsed = new Date(recordedStr);
+    if (Number.isNaN(parsed.getTime())) {
+      return { ok: false, line: i + 1, message: "invalid recorded_at." };
+    }
+    rows.push({
+      total_cost: cost,
+      total_market_value: mv,
+      exchange_rate: fx,
+      recorded_at: parsed.toISOString(),
+    });
+  }
+  return { ok: true, rows };
+};
+
+const bulkColumns: ReadonlyArray<PreviewColumn<BulkRow>> = [
+  { header: "Recorded at", cell: (r) => isoToLocalInputValue(r.recorded_at).replace("T", " ") },
+  { header: "Cost", cell: (r) => formatCAD(r.total_cost), align: "right" },
+  { header: "Market value", cell: (r) => formatCAD(r.total_market_value), align: "right" },
+  { header: "FX", cell: (r) => r.exchange_rate.toString(), align: "right" },
+  {
+    header: "CAD value",
+    cell: (r) => formatCAD(snapshotCadValue(r)),
+    align: "right",
+  },
+];
 
 export default function SnapshotsHistory({
   userId,
@@ -227,43 +277,13 @@ export default function SnapshotsHistory({
     setBulkEdit(emptyBulkEdit());
   };
 
-  const bulkInsert = async (text: string) => {
+  const bulkInsert = async (rows: ReadonlyArray<BulkRow>) => {
     if (userId == null) return { ok: false as const, message: "Not signed in." };
-    const lines = splitPastedRows(text);
-    type Payload = {
-      user_id: string;
-      investment_id: string;
-      total_cost: number;
-      total_market_value: number;
-      exchange_rate: number;
-      recorded_at: string;
-    };
-    const payloads: Payload[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const cells = lines[i] ?? [];
-      const [recordedStr = "", costStr = "", mvStr = "", fxStr = ""] = cells;
-      const cost = parseNonNegFloat(costStr);
-      const mv = parseNonNegFloat(mvStr);
-      const fx = parsePosFloat(fxStr);
-      if (recordedStr === "" || cost == null || mv == null || fx == null) {
-        return {
-          ok: false as const,
-          message: `Line ${i + 1}: need recorded_at, total_cost (≥ 0), total_market_value (≥ 0), exchange_rate (> 0).`,
-        };
-      }
-      const parsed = new Date(recordedStr);
-      if (Number.isNaN(parsed.getTime())) {
-        return { ok: false as const, message: `Line ${i + 1}: invalid recorded_at.` };
-      }
-      payloads.push({
-        user_id: userId,
-        investment_id: investmentId,
-        total_cost: cost,
-        total_market_value: mv,
-        exchange_rate: fx,
-        recorded_at: parsed.toISOString(),
-      });
-    }
+    const payloads = rows.map((r) => ({
+      ...r,
+      user_id: userId,
+      investment_id: investmentId,
+    }));
     const { error: err } = await getSupabase().from("investment_snapshots").insert(payloads);
     if (err != null) return { ok: false as const, message: friendlyMutationError(err) };
     return { ok: true as const, insertedCount: payloads.length };
@@ -343,7 +363,7 @@ export default function SnapshotsHistory({
               </div>
             </div>
           ) : (
-            <BulkAddPaste
+            <BulkAddPaste<BulkRow>
               placeholder={"2026-03-01T16:00\t10000\t10500\t1\n2026-04-01T16:00\t10000\t11250\t1"}
               helpText={
                 <span>
@@ -352,7 +372,9 @@ export default function SnapshotsHistory({
                   comma-separated.
                 </span>
               }
-              onSubmit={bulkInsert}
+              columns={bulkColumns}
+              parse={parseBulk}
+              onInsert={bulkInsert}
             />
           )}
         </div>
