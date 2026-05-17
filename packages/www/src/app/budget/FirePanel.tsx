@@ -90,10 +90,7 @@ type Defaults = {
   portfolio: number;
 };
 
-const CHUBBY_DEFAULT_SPEND = 100000;
-const FAT_DEFAULT_SPEND = 200000;
-
-type FlavorKey = "classic" | "conservative" | "chubby" | "fat" | "coast" | "barista";
+type FlavorKey = "classic" | "coast";
 
 type Flavor = {
   key: FlavorKey;
@@ -114,10 +111,6 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [expectedReturn, setExpectedReturn] = useState("7");
   const [inflation, setInflation] = useState("2.5");
   const [horizon, setHorizon] = useState(() => String(100 - (new Date().getFullYear() - 1998)));
-  const [chubbySpend, setChubbySpend] = useState(String(CHUBBY_DEFAULT_SPEND));
-  const [fatSpend, setFatSpend] = useState(String(FAT_DEFAULT_SPEND));
-  const [baristaIncome, setBaristaIncome] = useState("25000");
-  const [conservativeWr, setConservativeWr] = useState("2");
   const [currentAge, setCurrentAge] = useState(String(new Date().getFullYear() - 1998));
   const [retireAge, setRetireAge] = useState("65");
   const [coastStartAge, setCoastStartAge] = useState("30");
@@ -152,9 +145,6 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const sav = numOr(annualSavings, 0);
   const r = realReturn(expectedReturn, inflation);
   const horizonYears = clampHorizon(numOr(horizon, 50));
-  const chubbyExp = numOr(chubbySpend, 0);
-  const fatExp = numOr(fatSpend, 0);
-  const barista = numOr(baristaIncome, 0);
   const age = numOr(currentAge, 0);
   const retire = numOr(retireAge, 0);
   const coastStart = numOr(coastStartAge, 0);
@@ -164,14 +154,6 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const coastYears = Math.max(0, Math.round(coastUntil - Math.max(age, coastStart)));
 
   const fireNumber = wr > 0 ? exp / wr : Number.POSITIVE_INFINITY;
-  const chubbyTarget = wr > 0 ? chubbyExp / wr : Number.POSITIVE_INFINITY;
-  const fatTarget = wr > 0 ? fatExp / wr : Number.POSITIVE_INFINITY;
-  const baristaShortfall = Math.max(0, exp - barista);
-  const baristaTarget = wr > 0 ? baristaShortfall / wr : Number.POSITIVE_INFINITY;
-  const conservativeSpend = exp > 0 ? Math.ceil(exp / 10000) * 10000 : 0;
-  const conservativeWrValue = numOr(conservativeWr, 0) / 100;
-  const conservativeTarget =
-    conservativeWrValue > 0 ? conservativeSpend / conservativeWrValue : Number.POSITIVE_INFINITY;
   const yearsToRetire = Math.max(0, retire - age);
   const growth = Math.pow(1 + r, yearsToRetire);
   const coastTarget = growth > 0 ? fireNumber / growth : Number.POSITIVE_INFINITY;
@@ -189,30 +171,6 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
       }),
     [pv, r, horizonYears, sav, exp, fireNumber],
   );
-  const chubbySim = useMemo(
-    () =>
-      simulate({
-        pv,
-        r,
-        horizonYears,
-        contribution: sav,
-        withdrawal: chubbyExp,
-        switchAt: (_y, p) => p >= chubbyTarget,
-      }),
-    [pv, r, horizonYears, sav, chubbyExp, chubbyTarget],
-  );
-  const fatSim = useMemo(
-    () =>
-      simulate({
-        pv,
-        r,
-        horizonYears,
-        contribution: sav,
-        withdrawal: fatExp,
-        switchAt: (_y, p) => p >= fatTarget,
-      }),
-    [pv, r, horizonYears, sav, fatExp, fatTarget],
-  );
   const coastSim = useMemo(
     () =>
       simulate({
@@ -225,30 +183,6 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
       }),
     [pv, r, coastHorizon, exp, yearsToRetire],
   );
-  const baristaSim = useMemo(
-    () =>
-      simulate({
-        pv,
-        r,
-        horizonYears,
-        contribution: sav,
-        withdrawal: baristaShortfall,
-        switchAt: (_y, p) => p >= baristaTarget,
-      }),
-    [pv, r, horizonYears, sav, baristaShortfall, baristaTarget],
-  );
-  const conservativeSim = useMemo(
-    () =>
-      simulate({
-        pv,
-        r,
-        horizonYears,
-        contribution: sav,
-        withdrawal: conservativeSpend,
-        switchAt: (_y, p) => p >= conservativeTarget,
-      }),
-    [pv, r, horizonYears, sav, conservativeSpend, conservativeTarget],
-  );
 
   const flavors: Flavor[] = [
     {
@@ -260,44 +194,12 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
       switchYear: firstWithdrawYear(classicSim),
     },
     {
-      key: "conservative",
-      label: "Conservative FIRE",
-      color: "#06b6d4",
-      target: conservativeTarget,
-      sim: conservativeSim,
-      switchYear: firstWithdrawYear(conservativeSim),
-    },
-    {
-      key: "chubby",
-      label: "Chubby FIRE",
-      color: "#f59e0b",
-      target: chubbyTarget,
-      sim: chubbySim,
-      switchYear: firstWithdrawYear(chubbySim),
-    },
-    {
-      key: "fat",
-      label: "Fat FIRE",
-      color: "#ef4444",
-      target: fatTarget,
-      sim: fatSim,
-      switchYear: firstWithdrawYear(fatSim),
-    },
-    {
       key: "coast",
       label: "Coast FIRE",
       color: "#8b5cf6",
       target: fireNumber,
       sim: coastSim,
       switchYear: yearsToRetire,
-    },
-    {
-      key: "barista",
-      label: "Barista FIRE",
-      color: "#10b981",
-      target: baristaTarget,
-      sim: baristaSim,
-      switchYear: firstWithdrawYear(baristaSim),
     },
   ];
 
@@ -359,34 +261,6 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
       <SharedInputsCard year={year} shared={shared} setters={setters} />
 
       <ClassicFire pv={pv} sav={sav} r={r} exp={exp} target={fireNumber} wrPct={withdrawalRate} />
-      <ConservativeFire
-        pv={pv}
-        sav={sav}
-        r={r}
-        exp={exp}
-        conservativeSpend={conservativeSpend}
-        conservativeWr={conservativeWr}
-        setConservativeWr={setConservativeWr}
-        target={conservativeTarget}
-      />
-      <ChubbyFire
-        pv={pv}
-        sav={sav}
-        r={r}
-        spend={chubbySpend}
-        setSpend={setChubbySpend}
-        target={chubbyTarget}
-        spendValue={chubbyExp}
-      />
-      <FatFire
-        pv={pv}
-        sav={sav}
-        r={r}
-        spend={fatSpend}
-        setSpend={setFatSpend}
-        target={fatTarget}
-        spendValue={fatExp}
-      />
       <CoastFire
         pv={pv}
         r={r}
@@ -404,15 +278,6 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
         target={coastTarget}
         fireNumber={fireNumber}
       />
-      <BaristaFire
-        pv={pv}
-        baristaIncome={baristaIncome}
-        setBaristaIncome={setBaristaIncome}
-        exp={exp}
-        shortfall={baristaShortfall}
-        target={baristaTarget}
-      />
-
       <MonteCarloCard
         result={mcResult}
         stdDev={mcStdDev}
@@ -528,140 +393,6 @@ function ClassicFire({
   );
 }
 
-function ConservativeFire({
-  pv,
-  sav,
-  r,
-  exp,
-  conservativeSpend,
-  conservativeWr,
-  setConservativeWr,
-  target,
-}: {
-  pv: number;
-  sav: number;
-  r: number;
-  exp: number;
-  conservativeSpend: number;
-  conservativeWr: string;
-  setConservativeWr: (v: string) => void;
-  target: number;
-}): React.JSX.Element {
-  const gap = Math.max(0, target - pv);
-  const years = yearsToReach(pv, target, sav, r);
-  return (
-    <Card>
-      <CalculatorHeader
-        title="Conservative FIRE"
-        subtitle={`A safer margin: ${conservativeWr}% withdrawal rate with spending rounded up to the next $10,000 (${formatCAD(conservativeSpend)}).`}
-      />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <NumberField
-          label="Conservative withdrawal rate (%)"
-          value={conservativeWr}
-          onChange={setConservativeWr}
-          step="0.1"
-        />
-        <Result label="Rounded-up annual spend" value={formatCAD(conservativeSpend)} />
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Result label="Conservative FIRE number" value={formatCAD(target)} />
-        <Result label="Gap from today" value={formatCAD(gap)} />
-        <Result label="Years to conservative FIRE" value={formatYears(years)} />
-      </div>
-      {exp <= 0 && (
-        <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">
-          Set annual expenses above $0 to see meaningful results.
-        </p>
-      )}
-    </Card>
-  );
-}
-
-function ChubbyFire({
-  pv,
-  sav,
-  r,
-  spend,
-  setSpend,
-  target,
-  spendValue,
-}: {
-  pv: number;
-  sav: number;
-  r: number;
-  spend: string;
-  setSpend: (v: string) => void;
-  target: number;
-  spendValue: number;
-}): React.JSX.Element {
-  const gap = Math.max(0, target - pv);
-  const years = yearsToReach(pv, target, sav, r);
-  return (
-    <Card>
-      <CalculatorHeader
-        title="Chubby FIRE"
-        subtitle={`A more comfortable retirement. Default ${formatCAD(CHUBBY_DEFAULT_SPEND)} is the mid-point of that band.`}
-      />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <NumberField label="Annual spend" value={spend} onChange={setSpend} />
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Result label="Chubby FIRE number" value={formatCAD(target)} />
-        <Result label="Gap from today" value={formatCAD(gap)} />
-        <Result label="Years to chubby FIRE" value={formatYears(years)} />
-      </div>
-      {spendValue <= 0 && (
-        <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">
-          Set an annual spend above $0 to see meaningful results.
-        </p>
-      )}
-    </Card>
-  );
-}
-
-function FatFire({
-  pv,
-  sav,
-  r,
-  spend,
-  setSpend,
-  target,
-  spendValue,
-}: {
-  pv: number;
-  sav: number;
-  r: number;
-  spend: string;
-  setSpend: (v: string) => void;
-  target: number;
-  spendValue: number;
-}): React.JSX.Element {
-  const gap = Math.max(0, target - pv);
-  const years = yearsToReach(pv, target, sav, r);
-  return (
-    <Card>
-      <CalculatorHeader
-        title="Fat FIRE"
-        subtitle={`Luxury retirement. Default ${formatCAD(FAT_DEFAULT_SPEND)} is the mid-point of that band.`}
-      />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <NumberField label="Annual spend" value={spend} onChange={setSpend} />
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Result label="Fat FIRE number" value={formatCAD(target)} />
-        <Result label="Gap from today" value={formatCAD(gap)} />
-        <Result label="Years to fat FIRE" value={formatYears(years)} />
-      </div>
-      {spendValue <= 0 && (
-        <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">
-          Set an annual spend above $0 to see meaningful results.
-        </p>
-      )}
-    </Card>
-  );
-}
-
 function CoastFire({
   pv,
   r,
@@ -723,49 +454,6 @@ function CoastFire({
           value={formatCAD(surplus > 0 ? surplus : gap)}
         />
         <Result label={`Projected at age ${Math.round(retire)}`} value={formatCAD(projected)} />
-      </div>
-    </Card>
-  );
-}
-
-function BaristaFire({
-  pv,
-  baristaIncome,
-  setBaristaIncome,
-  exp,
-  shortfall,
-  target,
-}: {
-  pv: number;
-  baristaIncome: string;
-  setBaristaIncome: (v: string) => void;
-  exp: number;
-  shortfall: number;
-  target: number;
-}): React.JSX.Element {
-  const gap = Math.max(0, target - pv);
-  const covered = shortfall <= 0 && exp > 0;
-
-  return (
-    <Card>
-      <CalculatorHeader
-        title="Barista FIRE"
-        subtitle="Portfolio big enough that part-time / 'barista' income covers the rest of your annual expenses."
-      />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <NumberField
-          label="Part-time income / yr"
-          value={baristaIncome}
-          onChange={setBaristaIncome}
-        />
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Result label="Annual shortfall" value={formatCAD(shortfall)} />
-        <Result
-          label="Barista FIRE target"
-          value={covered ? "$0 (income covers)" : formatCAD(target)}
-        />
-        <Result label="Gap from today" value={formatCAD(gap)} />
       </div>
     </Card>
   );
