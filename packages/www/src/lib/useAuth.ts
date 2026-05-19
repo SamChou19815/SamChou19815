@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { getSupabase, supabaseConfigured } from "../../lib/supabase";
+import { getSupabase, supabaseConfigured } from "./supabase";
 
 export type AuthStatus = "loading" | "signedOut" | "signedIn";
 
