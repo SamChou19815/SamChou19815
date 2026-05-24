@@ -1,18 +1,49 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { getSupabase, supabaseConfigured } from "../../lib/supabase";
-import { Card } from "./BudgetApp";
+import { getSupabase, supabaseConfigured } from "./supabase";
 import { useAuth } from "./useAuth";
-import { useWhitelist } from "./useWhitelist";
+
+// Result of an access-policy check for a signed-in user.
+export type AccessResult = "loading" | "allowed" | "denied";
+
+type Props = {
+  // App name shown on the gate screens (sign-in / denied / loading).
+  title: string;
+  // Sentence shown above the sign-in form.
+  signedOutPrompt: string;
+  // Access policy. Receives the signed-in email (or null while not signed in).
+  useAccessCheck: (email: string | null) => AccessResult;
+  children: ReactNode;
+  // Whether visitors may create an account from the sign-in screen.
+  allowSignUp?: boolean;
+  // Path the sign-up confirmation email links back to.
+  signUpRedirectPath?: string;
+  // Message shown when a signed-in user fails the access check.
+  deniedMessage?: string;
+};
+
+function cardCls(): string {
+  return "flex flex-col bg-white rounded filter drop-shadow hover:drop-shadow-lg transition-all duration-300 ease-out p-6 dark:bg-[#242424] dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.3)] dark:hover:drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]";
+}
+
+function GateCard({ children }: { children: ReactNode }): React.JSX.Element {
+  return <div className={cardCls()}>{children}</div>;
+}
 
 function PageWrapper({ children }: { children: ReactNode }): React.JSX.Element {
-  return <div className="mx-auto max-w-6xl px-4 py-12">{children}</div>;
+  return <div className="mx-auto max-w-4xl px-4 py-12">{children}</div>;
 }
 
 type Mode = "signIn" | "signUp";
 
-function EmailAuthForm(): React.JSX.Element {
+function EmailAuthForm({
+  allowSignUp,
+  signUpRedirectPath,
+}: {
+  allowSignUp: boolean;
+  signUpRedirectPath: string;
+}): React.JSX.Element {
   const [mode, setMode] = useState<Mode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -41,7 +72,7 @@ function EmailAuthForm(): React.JSX.Element {
       const { data, error: err } = await supabase.auth.signUp({
         email: email.trim(),
         password,
-        options: { emailRedirectTo: `${window.location.origin}/budget` },
+        options: { emailRedirectTo: `${window.location.origin}${signUpRedirectPath}` },
       });
       setSubmitting(false);
       if (err != null) {
@@ -96,37 +127,47 @@ function EmailAuthForm(): React.JSX.Element {
       >
         {submitting ? "…" : mode === "signIn" ? "Sign in" : "Sign up"}
       </button>
-      <button
-        type="button"
-        onClick={() => {
-          setMode((m) => (m === "signIn" ? "signUp" : "signIn"));
-          setError(null);
-          setInfo(null);
-        }}
-        className="text-center text-sm text-blue-500 hover:underline dark:text-blue-400"
-      >
-        {mode === "signIn" ? "Create an account" : "Already have an account? Sign in"}
-      </button>
+      {allowSignUp && (
+        <button
+          type="button"
+          onClick={() => {
+            setMode((m) => (m === "signIn" ? "signUp" : "signIn"));
+            setError(null);
+            setInfo(null);
+          }}
+          className="text-center text-sm text-blue-500 hover:underline dark:text-blue-400"
+        >
+          {mode === "signIn" ? "Create an account" : "Already have an account? Sign in"}
+        </button>
+      )}
     </form>
   );
 }
 
-export default function AuthGate({ children }: { children: ReactNode }): React.JSX.Element {
+export default function AuthGate({
+  title,
+  signedOutPrompt,
+  useAccessCheck,
+  children,
+  allowSignUp = false,
+  signUpRedirectPath = "/",
+  deniedMessage = "Access denied — your account is not authorized.",
+}: Props): React.JSX.Element {
   const { session, status } = useAuth();
   const email = session?.user.email ?? null;
-  const whitelist = useWhitelist(status === "signedIn" ? email : null);
+  const access = useAccessCheck(status === "signedIn" ? email : null);
 
   if (!supabaseConfigured) {
     return (
       <PageWrapper>
-        <Card>
-          <h1 className="mb-2">Budget</h1>
+        <GateCard>
+          <h1 className="mb-2">{title}</h1>
           <p className="text-gray-500 dark:text-gray-400">
             Supabase isn&apos;t configured for this build. Set <code>NEXT_PUBLIC_SUPABASE_URL</code>{" "}
             and <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in <code>packages/www/.env.local</code>{" "}
             and rebuild.
           </p>
-        </Card>
+        </GateCard>
       </PageWrapper>
     );
   }
@@ -134,9 +175,9 @@ export default function AuthGate({ children }: { children: ReactNode }): React.J
   if (status === "loading") {
     return (
       <PageWrapper>
-        <Card>
+        <GateCard>
           <div className="text-center text-gray-500 dark:text-gray-400">Loading session…</div>
-        </Card>
+        </GateCard>
       </PageWrapper>
     );
   }
@@ -145,36 +186,32 @@ export default function AuthGate({ children }: { children: ReactNode }): React.J
     return (
       <PageWrapper>
         <div className="mx-auto max-w-md">
-          <Card>
-            <h1 className="text-center mb-2">Budget</h1>
-            <p className="text-center text-gray-500 mb-6 dark:text-gray-400">
-              Sign in to view your dashboard.
-            </p>
-            <EmailAuthForm />
-          </Card>
+          <GateCard>
+            <h1 className="text-center mb-2">{title}</h1>
+            <p className="text-center text-gray-500 mb-6 dark:text-gray-400">{signedOutPrompt}</p>
+            <EmailAuthForm allowSignUp={allowSignUp} signUpRedirectPath={signUpRedirectPath} />
+          </GateCard>
         </div>
       </PageWrapper>
     );
   }
 
-  if (whitelist === "loading") {
+  if (access === "loading") {
     return (
       <PageWrapper>
-        <Card>
+        <GateCard>
           <div className="text-center text-gray-500 dark:text-gray-400">Checking access…</div>
-        </Card>
+        </GateCard>
       </PageWrapper>
     );
   }
 
-  if (whitelist === "denied") {
+  if (access === "denied") {
     return (
       <PageWrapper>
-        <Card>
+        <GateCard>
           <h1 className="text-center mb-2">Access denied</h1>
-          <p className="text-center text-gray-500 mb-6 dark:text-gray-400">
-            Access denied — your account is not on the whitelist.
-          </p>
+          <p className="text-center text-gray-500 mb-6 dark:text-gray-400">{deniedMessage}</p>
           <div className="flex justify-center">
             <button
               type="button"
@@ -184,7 +221,7 @@ export default function AuthGate({ children }: { children: ReactNode }): React.J
               Sign out
             </button>
           </div>
-        </Card>
+        </GateCard>
       </PageWrapper>
     );
   }

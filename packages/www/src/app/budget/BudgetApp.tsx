@@ -2,13 +2,13 @@
 
 import type { ReactNode } from "react";
 import { getSupabase } from "../../lib/supabase";
+import { useAuth } from "../../lib/useAuth";
 import Dashboard from "./Dashboard";
 import ExpensesPanel from "./ExpensesPanel";
 import FirePanel from "./FirePanel";
 import IncomesPanel from "./IncomesPanel";
 import InvestmentsPanel from "./InvestmentsPanel";
 import Tabs, { useActiveTab } from "./Tabs";
-import { useAuth } from "./useAuth";
 import { useRealtimeRows } from "./useRealtimeRows";
 import type { Expense, Income, Investment, InvestmentSnapshot } from "./types";
 
