@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getSupabase } from "../../lib/supabase";
 import { Card } from "./BudgetApp";
 import BulkAddPaste, { type ParseResult, type PreviewColumn } from "./BulkAddPaste";
@@ -37,6 +37,9 @@ const emptyDraft = (): Draft => ({
   date: todayISO(),
   notes: "",
 });
+
+const SOURCE_LIST_ID = "income-source-suggestions";
+const NAME_LIST_ID = "income-name-suggestions";
 
 type BulkRow = {
   name: string;
@@ -102,49 +105,38 @@ const emptyBulkEdit = (): BulkEdit => ({
 });
 
 export default function IncomesPanel({ userId, rows, loading, error }: Props): React.JSX.Element {
-  const [draft, setDraft] = useState<Draft>(emptyDraft);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [tableError, setTableError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(emptyDraft);
-  const [addMode, setAddMode] = useState<"single" | "bulk">("single");
   const [bulkEdit, setBulkEdit] = useState<BulkEdit>(emptyBulkEdit);
 
   const sel = useBulkSelection(rows);
 
-  useEffect(() => {
-    if (submitError == null) return;
-    const t = setTimeout(() => setSubmitError(null), 5000);
-    return () => clearTimeout(t);
-  }, [submitError]);
+  // Suggestions for the source autocomplete, derived from existing income.
+  const sources = useMemo(() => {
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const s = row.source?.trim() ?? "";
+      if (s !== "") seen.add(s);
+    }
+    return Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }, [rows]);
 
-  const addRow = async () => {
-    if (userId == null) return;
-    const name = draft.name.trim();
-    const amount = parseNonNegFloat(draft.amount);
-    if (name === "" || amount == null || draft.date === "") {
-      setSubmitError("Name, amount (≥ 0), and date are required.");
-      return;
+  // Suggestions for the name autocomplete, derived from existing income.
+  const names = useMemo(() => {
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const n = row.name.trim();
+      if (n !== "") seen.add(n);
     }
-    setSubmitting(true);
-    setSubmitError(null);
-    const { error: err } = await getSupabase()
-      .from("incomes")
-      .insert({
-        user_id: userId,
-        name,
-        source: draft.source.trim() === "" ? null : draft.source.trim(),
-        amount,
-        date: draft.date,
-        notes: draft.notes.trim() === "" ? null : draft.notes.trim(),
-      });
-    setSubmitting(false);
-    if (err != null) {
-      setSubmitError(friendlyMutationError(err));
-      return;
-    }
-    setDraft(emptyDraft());
-  };
+    return Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }, [rows]);
+
+  useEffect(() => {
+    if (tableError == null) return;
+    const t = setTimeout(() => setTableError(null), 5000);
+    return () => clearTimeout(t);
+  }, [tableError]);
 
   const startEdit = (row: Income) => {
     setEditingId(row.id);
@@ -162,7 +154,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
     const name = editDraft.name.trim();
     const amount = parseNonNegFloat(editDraft.amount);
     if (name === "" || amount == null || editDraft.date === "") {
-      setSubmitError("Name, amount (≥ 0), and date are required.");
+      setTableError("Name, amount (≥ 0), and date are required.");
       return;
     }
     const { error: err } = await getSupabase()
@@ -176,7 +168,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
       })
       .eq("id", editingId);
     if (err != null) {
-      setSubmitError(friendlyMutationError(err));
+      setTableError(friendlyMutationError(err));
       return;
     }
     setEditingId(null);
@@ -185,7 +177,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
   const deleteRow = async (id: string) => {
     if (!window.confirm("Delete this income entry?")) return;
     const { error: err } = await getSupabase().from("incomes").delete().eq("id", id);
-    if (err != null) setSubmitError(friendlyMutationError(err));
+    if (err != null) setTableError(friendlyMutationError(err));
   };
 
   const bulkDelete = async () => {
@@ -193,7 +185,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
     if (ids.length === 0) return;
     const { error: err } = await getSupabase().from("incomes").delete().in("id", ids);
     if (err != null) {
-      setSubmitError(friendlyMutationError(err));
+      setTableError(friendlyMutationError(err));
       return;
     }
     sel.clear();
@@ -206,7 +198,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
     if (bulkEdit.setName) {
       const v = bulkEdit.name.trim();
       if (v === "") {
-        setSubmitError("Name cannot be blank.");
+        setTableError("Name cannot be blank.");
         return;
       }
       patch.name = v;
@@ -218,14 +210,14 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
     if (bulkEdit.setAmount) {
       const a = parseNonNegFloat(bulkEdit.amount);
       if (a == null) {
-        setSubmitError("Amount must be ≥ 0.");
+        setTableError("Amount must be ≥ 0.");
         return;
       }
       patch.amount = a;
     }
     if (bulkEdit.setDate) {
       if (bulkEdit.date === "") {
-        setSubmitError("Date is required.");
+        setTableError("Date is required.");
         return;
       }
       patch.date = bulkEdit.date;
@@ -235,109 +227,39 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
       patch.notes = v === "" ? null : v;
     }
     if (Object.keys(patch).length === 0) {
-      setSubmitError("Tick at least one field to apply.");
+      setTableError("Tick at least one field to apply.");
       return;
     }
     const { error: err } = await getSupabase().from("incomes").update(patch).in("id", ids);
     if (err != null) {
-      setSubmitError(friendlyMutationError(err));
+      setTableError(friendlyMutationError(err));
       return;
     }
     setBulkEdit(emptyBulkEdit());
   };
 
-  const bulkInsert = async (parsed: ReadonlyArray<BulkRow>) => {
-    if (userId == null) return { ok: false as const, message: "Not signed in." };
-    const payloads = parsed.map((r) => ({ ...r, user_id: userId }));
-    const { error: err } = await getSupabase().from("incomes").insert(payloads);
-    if (err != null) return { ok: false as const, message: friendlyMutationError(err) };
-    return { ok: true as const, insertedCount: payloads.length };
-  };
-
   return (
     <div className="flex flex-col gap-6">
-      <Card>
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="m-0">Add income</h3>
-          <div className="flex gap-1 text-xs">
-            <ModeButton active={addMode === "single"} onClick={() => setAddMode("single")}>
-              Single
-            </ModeButton>
-            <ModeButton active={addMode === "bulk"} onClick={() => setAddMode("bulk")}>
-              Bulk paste
-            </ModeButton>
-          </div>
-        </div>
-        {(submitError || error) && (
-          <div className="mb-3 rounded border border-red-400 bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">
-            {submitError ?? error}
-          </div>
-        )}
-        {addMode === "single" ? (
-          <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-6">
-              <Input
-                label="Name"
-                value={draft.name}
-                onChange={(v) => setDraft({ ...draft, name: v })}
-              />
-              <Input
-                label="Source"
-                value={draft.source}
-                onChange={(v) => setDraft({ ...draft, source: v })}
-              />
-              <Input
-                label="Amount (CAD)"
-                type="text"
-                inputMode="decimal"
-                value={draft.amount}
-                onChange={(v) => setDraft({ ...draft, amount: v })}
-              />
-              <Input
-                label="Date"
-                type="date"
-                value={draft.date}
-                onChange={(v) => setDraft({ ...draft, date: v })}
-              />
-              <Input
-                label="Notes"
-                value={draft.notes}
-                onChange={(v) => setDraft({ ...draft, notes: v })}
-                className="sm:col-span-2"
-              />
-            </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={addRow}
-                className="rounded bg-blue-500 px-4 py-2 text-sm font-bold text-white transition-colors duration-200 hover:bg-blue-600 disabled:opacity-50 dark:bg-blue-400 dark:text-gray-900 dark:hover:bg-blue-300"
-              >
-                {submitting ? "Adding…" : "Add"}
-              </button>
-            </div>
-          </>
-        ) : (
-          <BulkAddPaste<BulkRow>
-            placeholder={
-              "2026-04-01\tSalary\tEmployer\t5000\tApril paycheque\n2026-04-15\tSide gig\tFreelance\t300"
-            }
-            helpText={
-              <span>
-                One row per line: <code>date</code>, <code>name</code>,{" "}
-                <code>source (optional)</code>, <code>amount</code>, <code>notes (optional)</code>.
-                Tab- or comma-separated. Date must be <code>YYYY-MM-DD</code>.
-              </span>
-            }
-            columns={bulkColumns}
-            parse={parseBulk}
-            onInsert={bulkInsert}
-          />
-        )}
-      </Card>
+      <datalist id={SOURCE_LIST_ID}>
+        {sources.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
+      <datalist id={NAME_LIST_ID}>
+        {names.map((n) => (
+          <option key={n} value={n} />
+        ))}
+      </datalist>
+
+      <AddIncomeForm userId={userId} error={error} />
 
       <Card>
         <h3 className="mb-4">Income</h3>
+        {tableError && (
+          <div className="mb-3 rounded border border-red-400 bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">
+            {tableError}
+          </div>
+        )}
         <BulkBar
           count={sel.count}
           itemNoun="income entry"
@@ -355,6 +277,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
                   value={bulkEdit.name}
                   onChange={(e) => setBulkEdit({ ...bulkEdit, name: e.target.value })}
                   className={inputCls()}
+                  list={NAME_LIST_ID}
                 />
               </BulkEditField>
               <BulkEditField
@@ -366,6 +289,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
                   value={bulkEdit.source}
                   onChange={(e) => setBulkEdit({ ...bulkEdit, source: e.target.value })}
                   className={inputCls()}
+                  list={SOURCE_LIST_ID}
                 />
               </BulkEditField>
               <BulkEditField
@@ -459,6 +383,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
                               value={editDraft.name}
                               onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
                               className={inputCls()}
+                              list={NAME_LIST_ID}
                             />
                           </Td>
                           <Td>
@@ -468,6 +393,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
                                 setEditDraft({ ...editDraft, source: e.target.value })
                               }
                               className={inputCls()}
+                              list={SOURCE_LIST_ID}
                             />
                           </Td>
                           <Td className="text-right">
@@ -544,6 +470,147 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
   );
 }
 
+// Owns its own draft state so that typing in the add form does not re-render
+// the (potentially large) income table above.
+function AddIncomeForm({
+  userId,
+  error,
+}: {
+  userId: string | null;
+  error: string | null;
+}): React.JSX.Element {
+  const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [addMode, setAddMode] = useState<"single" | "bulk">("single");
+
+  useEffect(() => {
+    if (submitError == null) return;
+    const t = setTimeout(() => setSubmitError(null), 5000);
+    return () => clearTimeout(t);
+  }, [submitError]);
+
+  const addRow = async () => {
+    if (userId == null) return;
+    const name = draft.name.trim();
+    const amount = parseNonNegFloat(draft.amount);
+    if (name === "" || amount == null || draft.date === "") {
+      setSubmitError("Name, amount (≥ 0), and date are required.");
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(null);
+    const { error: err } = await getSupabase()
+      .from("incomes")
+      .insert({
+        user_id: userId,
+        name,
+        source: draft.source.trim() === "" ? null : draft.source.trim(),
+        amount,
+        date: draft.date,
+        notes: draft.notes.trim() === "" ? null : draft.notes.trim(),
+      });
+    setSubmitting(false);
+    if (err != null) {
+      setSubmitError(friendlyMutationError(err));
+      return;
+    }
+    setDraft(emptyDraft());
+  };
+
+  const bulkInsert = async (parsed: ReadonlyArray<BulkRow>) => {
+    if (userId == null) return { ok: false as const, message: "Not signed in." };
+    const payloads = parsed.map((r) => ({ ...r, user_id: userId }));
+    const { error: err } = await getSupabase().from("incomes").insert(payloads);
+    if (err != null) return { ok: false as const, message: friendlyMutationError(err) };
+    return { ok: true as const, insertedCount: payloads.length };
+  };
+
+  return (
+    <Card>
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="m-0">Add income</h3>
+        <div className="flex gap-1 text-xs">
+          <ModeButton active={addMode === "single"} onClick={() => setAddMode("single")}>
+            Single
+          </ModeButton>
+          <ModeButton active={addMode === "bulk"} onClick={() => setAddMode("bulk")}>
+            Bulk paste
+          </ModeButton>
+        </div>
+      </div>
+      {(submitError || error) && (
+        <div className="mb-3 rounded border border-red-400 bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">
+          {submitError ?? error}
+        </div>
+      )}
+      {addMode === "single" ? (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-6">
+            <Input
+              label="Name"
+              value={draft.name}
+              onChange={(v) => setDraft({ ...draft, name: v })}
+              list={NAME_LIST_ID}
+            />
+            <Input
+              label="Source"
+              value={draft.source}
+              onChange={(v) => setDraft({ ...draft, source: v })}
+              list={SOURCE_LIST_ID}
+            />
+            <Input
+              label="Amount (CAD)"
+              type="text"
+              inputMode="decimal"
+              value={draft.amount}
+              onChange={(v) => setDraft({ ...draft, amount: v })}
+            />
+            <Input
+              label="Date"
+              type="date"
+              value={draft.date}
+              onChange={(v) => setDraft({ ...draft, date: v })}
+            />
+            <Input
+              label="Notes"
+              value={draft.notes}
+              onChange={(v) => setDraft({ ...draft, notes: v })}
+              className="sm:col-span-2"
+            />
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={addRow}
+              className="rounded bg-blue-500 px-4 py-2 text-sm font-bold text-white transition-colors duration-200 hover:bg-blue-600 disabled:opacity-50 dark:bg-blue-400 dark:text-gray-900 dark:hover:bg-blue-300"
+            >
+              {submitting ? "Adding…" : "Add"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <BulkAddPaste<BulkRow>
+          placeholder={
+            "2026-04-01\tSalary\tEmployer\t5000\tApril paycheque\n2026-04-15\tSide gig\tFreelance\t300"
+          }
+          helpText={
+            <span>
+              One row per line: <code>date</code>, <code>name</code>,{" "}
+              <code>source (optional)</code>, <code>amount</code>, <code>notes (optional)</code>.
+              Tab- or comma-separated. Date must be <code>YYYY-MM-DD</code>.
+            </span>
+          }
+          columns={bulkColumns}
+          parse={parseBulk}
+          onInsert={bulkInsert}
+        />
+      )}
+    </Card>
+  );
+}
+
 function inputCls(): string {
   return "w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100";
 }
@@ -555,6 +622,7 @@ function Input({
   type = "text",
   inputMode,
   className,
+  list,
 }: {
   label: string;
   value: string;
@@ -562,6 +630,7 @@ function Input({
   type?: string;
   inputMode?: string;
   className?: string;
+  list?: string;
 }): React.JSX.Element {
   return (
     <label className={`flex flex-col text-sm ${className ?? ""}`}>
@@ -574,6 +643,7 @@ function Input({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={inputCls()}
+        list={list}
       />
     </label>
   );
