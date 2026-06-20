@@ -20,6 +20,7 @@ import type { Expense, Income, Investment, InvestmentSnapshot } from "./types";
 import {
   cadValue,
   formatCAD,
+  formatCADCompact,
   latestSnapshotByMonth,
   monthBucket,
   monthsBetween,
@@ -91,7 +92,7 @@ export function MonthlyTotalsChart({
       <ComposedChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
         <Tooltip formatter={(v: number) => formatCAD(v)} />
         <Legend />
         <Bar dataKey="income" fill="#10b981" name="Income" />
@@ -143,7 +144,7 @@ export function MonthlyBar({
       <BarChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
         <Tooltip formatter={(v: number) => formatCAD(v)} />
         <Legend />
         {incomeCategories.map((cat, idx) => (
@@ -198,7 +199,7 @@ export function CashFlowLine({
       <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
         <Tooltip formatter={(v: number) => formatCAD(v)} />
         <Legend />
         <Line type="monotone" dataKey="cashFlow" stroke={PALETTE[0]} name="Cash flow" dot={false} />
@@ -238,7 +239,7 @@ export function InvestmentValueLine({
       <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
         <Tooltip formatter={(v: number) => formatCAD(v)} />
         <Line
           type="monotone"
@@ -277,7 +278,14 @@ export function IncomeByCategoryPie({
   return (
     <ResponsiveContainer width="100%" height={300}>
       <PieChart>
-        <Pie data={data} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label>
+        <Pie
+          data={data}
+          dataKey="value"
+          nameKey="name"
+          innerRadius={60}
+          outerRadius={100}
+          label={pieValueLabel}
+        >
           {data.map((entry, idx) => (
             <Cell key={entry.name} fill={INCOME_PALETTE[idx % INCOME_PALETTE.length]} />
           ))}
@@ -313,7 +321,14 @@ export function ExpenseByCategoryPie({
   return (
     <ResponsiveContainer width="100%" height={300}>
       <PieChart>
-        <Pie data={data} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label>
+        <Pie
+          data={data}
+          dataKey="value"
+          nameKey="name"
+          innerRadius={60}
+          outerRadius={100}
+          label={pieValueLabel}
+        >
           {data.map((entry, idx) => (
             <Cell key={entry.name} fill={EXPENSE_PALETTE[idx % EXPENSE_PALETTE.length]} />
           ))}
@@ -345,7 +360,14 @@ export function AllocationDonut({
   return (
     <ResponsiveContainer width="100%" height={300}>
       <PieChart>
-        <Pie data={data} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label>
+        <Pie
+          data={data}
+          dataKey="value"
+          nameKey="name"
+          innerRadius={60}
+          outerRadius={100}
+          label={pieValueLabel}
+        >
           {data.map((entry, idx) => (
             <Cell key={entry.name} fill={PALETTE[idx % PALETTE.length]} />
           ))}
@@ -355,6 +377,10 @@ export function AllocationDonut({
       </PieChart>
     </ResponsiveContainer>
   );
+}
+
+function pieValueLabel(props: { value?: number | string }): string {
+  return formatCADCompact(Number(props.value));
 }
 
 function bucketSum<T extends { date: string }>(

@@ -11,6 +11,18 @@ export function formatCAD(value: number): string {
   return cadFormatter.format(value);
 }
 
+const cadCompactFormatter = new Intl.NumberFormat("en-CA", {
+  style: "currency",
+  currency: "CAD",
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+export function formatCADCompact(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  return cadCompactFormatter.format(value);
+}
+
 export function todayISO(): string {
   const d = new Date();
   const yyyy = d.getFullYear();
