@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { Card } from "./BudgetApp";
 import type { Expense, Income, Investment } from "./types";
-import { cadValue, formatCAD, parseLocalDate } from "./utils";
+import { cadValue, formatCAD, formatCADCompact, parseLocalDate } from "./utils";
 
 type Props = {
   expenses: ReadonlyArray<Expense>;
@@ -547,7 +547,7 @@ function CombinedProjectionChart({
           />
           <YAxis
             tick={{ fontSize: 12 }}
-            tickFormatter={(v) => `$${Math.round(v / 1000)}k`}
+            tickFormatter={(v) => formatCADCompact(v)}
             width={60}
           />
           <Tooltip
@@ -962,7 +962,7 @@ function MonteCarloChart({ percentiles }: { percentiles: McPercentile[] }): Reac
           />
           <YAxis
             tick={{ fontSize: 12 }}
-            tickFormatter={(v) => `$${Math.round(v / 1000)}k`}
+            tickFormatter={(v) => formatCADCompact(v)}
             width={60}
           />
           <Tooltip
