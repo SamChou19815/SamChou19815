@@ -20,6 +20,18 @@ function computeAllMedatada() {
 
   /** @type {import("./src/lib/metadata").BlogPostMetadata[]} */
   const allMetadata = [];
+
+  /** @type {Omit<import("./src/lib/metadata").BlogPostMetadata, 'titleSlug'>[]} */
+  const externalPosts = JSON.parse(
+    fs.readFileSync(path.join("src", "external-blog-posts.json")).toString(),
+  );
+  for (const post of externalPosts) {
+    if (post.externalUrl == null) {
+      throw new Error(`External blog post "${post.title}" is missing an externalUrl.`);
+    }
+    allMetadata.push({ titleSlug: "", ...post });
+  }
+
   for (const year of fs.readdirSync(BLOG_POSTS_ROOT)) {
     if (year === "layout.tsx") {
       continue;

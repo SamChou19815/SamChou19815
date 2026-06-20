@@ -3,26 +3,37 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import BlogPostItem from "./BlogPostItem";
-import { allMetadata, permalinkFromMetadata } from "./metadata";
+import { allMetadata, isExternalPost, permalinkFromMetadata } from "./metadata";
 
 function PaginationNavItem({
   permalink,
   title,
   isLeft,
+  isExternal,
 }: {
   permalink: string;
   title: string;
   isLeft: boolean;
+  isExternal: boolean;
 }): React.JSX.Element {
-  return (
-    <Link
-      className="flex-grow rounded-md border border-solid border-gray-300 p-4 leading-tight hover:border-blue-500 dark:border-gray-600 dark:hover:border-blue-400"
-      href={permalink}
-    >
+  const className =
+    "flex-grow rounded-md border border-solid border-gray-300 p-4 leading-tight hover:border-blue-500 dark:border-gray-600 dark:hover:border-blue-400";
+  const titleText = isLeft ? `« ${title}` : `${title} »`;
+  const inner = (
+    <>
       <div className="mb-1 text-sm font-medium text-gray-500 dark:text-gray-400">
         {isLeft ? "Newer Post" : "Older Post"}
       </div>
-      <div className="break-words font-bold">{isLeft ? `« ${title}` : `${title} »`}</div>
+      <div className="break-words font-bold">{isExternal ? `${titleText} ↗` : titleText}</div>
+    </>
+  );
+  return isExternal ? (
+    <a className={className} href={permalink} target="_blank" rel="noopener noreferrer">
+      {inner}
+    </a>
+  ) : (
+    <Link className={className} href={permalink}>
+      {inner}
     </Link>
   );
 }
@@ -52,6 +63,7 @@ export default function BlogPostItemContextAware({ children }: { children: React
                   permalink={permalinkFromMetadata(prevMetadata)}
                   title={prevMetadata.title}
                   isLeft={true}
+                  isExternal={isExternalPost(prevMetadata)}
                 />
               )}
             </div>
@@ -61,6 +73,7 @@ export default function BlogPostItemContextAware({ children }: { children: React
                   permalink={permalinkFromMetadata(nextMetadata)}
                   title={nextMetadata.title}
                   isLeft={false}
+                  isExternal={isExternalPost(nextMetadata)}
                 />
               )}
             </div>

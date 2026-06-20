@@ -3,7 +3,7 @@ import Link from "next/link";
 import BlogDocumentWrapper from "../../lib/BlogDocumentWrapper";
 import BlogPostItem from "../../lib/BlogPostItem";
 import { BLOG_TITLE } from "../../lib/blog-constants";
-import { allMetadata, permalinkFromMetadata } from "../../lib/metadata";
+import { allMetadata, isExternalPost, permalinkFromMetadata } from "../../lib/metadata";
 
 export const metadata: Metadata = {
   title: BLOG_TITLE,
@@ -27,7 +27,15 @@ export default async function BlogListPage(): Promise<React.JSX.Element> {
             return (
               <BlogPostItem
                 key={permalink}
-                title={<Link href={permalink}>{post.title}</Link>}
+                title={
+                  isExternalPost(post) ? (
+                    <a href={permalink} target="_blank" rel="noopener noreferrer">
+                      {post.title} ↗
+                    </a>
+                  ) : (
+                    <Link href={permalink}>{post.title}</Link>
+                  )
+                }
                 formattedDate={`${post.year}-${post.month}-${post.date}`}
               />
             );
