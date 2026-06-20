@@ -597,9 +597,9 @@ function AddIncomeForm({
           }
           helpText={
             <span>
-              One row per line: <code>date</code>, <code>name</code>,{" "}
-              <code>source (optional)</code>, <code>amount</code>, <code>notes (optional)</code>.
-              Tab- or comma-separated. Date must be <code>YYYY-MM-DD</code>.
+              One row per line: <code>date</code>, <code>name</code>, <code>source (optional)</code>
+              , <code>amount</code>, <code>notes (optional)</code>. Tab- or comma-separated. Date
+              must be <code>YYYY-MM-DD</code>.
             </span>
           }
           columns={bulkColumns}
