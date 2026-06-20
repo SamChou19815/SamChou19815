@@ -545,11 +545,7 @@ function CombinedProjectionChart({
             tick={{ fontSize: 12 }}
             label={{ value: "Years from now", position: "insideBottom", offset: -4, fontSize: 12 }}
           />
-          <YAxis
-            tick={{ fontSize: 12 }}
-            tickFormatter={(v) => formatCADCompact(v)}
-            width={60}
-          />
+          <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} width={60} />
           <Tooltip
             formatter={(v: number, name: string) => [formatCAD(v), name]}
             labelFormatter={(l) => `Year ${l}`}
@@ -960,11 +956,7 @@ function MonteCarloChart({ percentiles }: { percentiles: McPercentile[] }): Reac
               fontSize: 12,
             }}
           />
-          <YAxis
-            tick={{ fontSize: 12 }}
-            tickFormatter={(v) => formatCADCompact(v)}
-            width={60}
-          />
+          <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} width={60} />
           <Tooltip
             formatter={(v: number, name: string) => [formatCAD(v), name]}
             labelFormatter={(l) => `Year ${l}`}
