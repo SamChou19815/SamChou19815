@@ -4,9 +4,9 @@
 //! unpushed commits, or no upstream at all — i.e. work that only exists locally.
 //!
 //! Some repos are managed by [jj](https://jj-vcs.github.io/) rather than git
-//! directly. Those are colocated repos with a `.jj` directory, so they're still
-//! queryable through git; we keep using git for the status counts and just flag
-//! the repo as jj-managed in the output.
+//! directly. Those are colocated repos with a `.jj` directory; for them we query
+//! jj instead of git (see [`jj_status`]), since git's upstream view misreports
+//! jj's bookmark→remote relationships, and flag the repo as jj-managed.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -27,21 +27,28 @@ struct RepoStatus {
     branch: String,
     /// Number of changed (staged or unstaged) paths.
     dirty: usize,
-    /// Commits on HEAD not on the upstream branch.
-    ahead: u32,
     /// Commits on the upstream branch not on HEAD.
     behind: u32,
     /// Whether HEAD tracks an upstream branch at all.
     has_upstream: bool,
     /// Whether the repo is colocated with jj (has a `.jj` directory).
     is_jj: bool,
-    last_commit: String,
+    /// One line per unreleased (unpushed) commit, newest first. With a
+    /// one-commit-per-work convention each entry is a distinct piece of work.
+    /// The source of truth for the unpushed count; also the fallback display.
+    commits: Vec<String>,
+    /// For jj repos, the unpushed commits rendered as a graph (`jj log`), so the
+    /// stack structure shows the way it does in `jj log`. Empty for git repos.
+    tree: String,
+    /// The tip commit, shown for context when there are no unpushed commits to
+    /// list (e.g. only uncommitted changes).
+    tip: String,
 }
 
 impl RepoStatus {
     /// Work that exists only locally: uncommitted, unpushed, or untracked branch.
     fn is_unreleased(&self) -> bool {
-        self.dirty > 0 || self.ahead > 0 || !self.has_upstream
+        self.dirty > 0 || !self.commits.is_empty() || !self.has_upstream
     }
 }
 
@@ -168,28 +175,47 @@ fn git_status(dir: &Path) -> Result<RepoStatus> {
 
     // `--left-right --count A...B` prints "<behind> <ahead>"; it fails when HEAD
     // has no upstream, which we treat as unreleased work in its own right.
-    let (ahead, behind, has_upstream) =
-        match git(dir, &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"]) {
-            Ok(out) => {
-                let mut counts = out.split_whitespace();
-                let behind = counts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                let ahead = counts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                (ahead, behind, true)
-            }
-            Err(_) => (0, 0, false),
-        };
-    let last_commit =
+    let (behind, has_upstream) = match git(
+        dir,
+        &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+    ) {
+        Ok(out) => {
+            let behind = out
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            (behind, true)
+        }
+        Err(_) => (0, false),
+    };
+    // The unpushed commits, newest first. Without an upstream there's no base to
+    // diff against, so we leave the list empty and let "no upstream" stand in.
+    let commits = if has_upstream {
+        git(dir, &["log", "--format=%cr · %s", "@{upstream}..HEAD"])
+            .map(|out| {
+                out.lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let tip =
         git(dir, &["log", "-1", "--format=%cr · %s"]).unwrap_or_else(|_| "no commits yet".into());
 
     Ok(RepoStatus {
         name,
         branch,
         dirty,
-        ahead,
         behind,
         has_upstream,
         is_jj: false,
-        last_commit,
+        commits,
+        tree: String::new(),
+        tip,
     })
 }
 
@@ -216,7 +242,13 @@ fn jj_status(dir: &Path) -> Result<RepoStatus> {
     )
     .ok()
     .filter(|s| !s.is_empty())
-    .or_else(|| jj(dir, &["log", "--no-graph", "-r", "@", "-T", "change_id.short()"]).ok())
+    .or_else(|| {
+        jj(
+            dir,
+            &["log", "--no-graph", "-r", "@", "-T", "change_id.short()"],
+        )
+        .ok()
+    })
     .unwrap_or_else(|| "?".into());
 
     // Working-copy changes are jj's analog of uncommitted work.
@@ -224,23 +256,38 @@ fn jj_status(dir: &Path) -> Result<RepoStatus> {
         .map(|out| out.lines().filter(|l| !l.trim().is_empty()).count())
         .unwrap_or(0);
 
-    // Commits reachable from local bookmarks (or @) that aren't on any remote,
-    // excluding the working copy itself (counted as `dirty`) and empties.
-    let ahead = jj(
-        dir,
-        &[
-            "log",
-            "--no-graph",
-            "-r",
-            "remote_bookmarks()..(bookmarks() | @) & ~empty() & ~@",
-            "-T",
-            "\"x\\n\"",
-        ],
-    )
-    .map(|out| out.lines().filter(|l| !l.trim().is_empty()).count() as u32)
-    .unwrap_or(0);
+    // The unpushed commits: every local-only commit not on any remote, excluding
+    // the working copy itself (counted as `dirty`) and empties. We span `all()`
+    // rather than just `::@` so that detached stacks — e.g. work orphaned from @
+    // by a rebase — are still counted. With a one-commit-per-work convention each
+    // commit is a distinct piece of work.
+    let revset = "remote_bookmarks()..all() & ~empty() & ~@";
+    let template = "committer.timestamp().ago() ++ \" · \" ++ description.first_line() ++ \"\\n\"";
 
-    let last_commit = jj(
+    // A flat newest-first list, used for the count and as a plain-text fallback.
+    let commits = jj(dir, &["log", "--no-graph", "-r", revset, "-T", template])
+        .map(|out| {
+            out.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // The same commits rendered as a graph, so the stack structure reads the way
+    // it does in `jj log`. Match our own coloring so piped output stays clean.
+    let color = if crate::charts::color_enabled() {
+        "always"
+    } else {
+        "never"
+    };
+    let tree = jj(
+        dir,
+        &["log", "--color", color, "-r", revset, "-T", template],
+    )
+    .unwrap_or_default();
+
+    let tip = jj(
         dir,
         &[
             "log",
@@ -259,13 +306,14 @@ fn jj_status(dir: &Path) -> Result<RepoStatus> {
         name,
         branch,
         dirty,
-        ahead,
         // jj tracks remotes itself, so git's upstream/behind notions don't apply;
         // mark upstream present to suppress the misleading "no upstream" flag.
         behind: 0,
         has_upstream: true,
         is_jj: true,
-        last_commit,
+        commits,
+        tree,
+        tip,
     })
 }
 
@@ -315,8 +363,11 @@ fn print_status(s: &RepoStatus) {
     if s.dirty > 0 {
         bits.push(paint(&format!("{} uncommitted", s.dirty), Color::Red));
     }
-    if s.ahead > 0 {
-        bits.push(paint(&format!("{} unpushed", s.ahead), Color::Yellow));
+    if !s.commits.is_empty() {
+        bits.push(paint(
+            &format!("{} unpushed", s.commits.len()),
+            Color::Yellow,
+        ));
     }
     if s.behind > 0 {
         bits.push(paint(&format!("{} behind", s.behind), Color::Blue));
@@ -326,6 +377,27 @@ fn print_status(s: &RepoStatus) {
     }
     let separator = paint(" · ", Color::Dim);
     println!("  {}", bits.join(&separator));
-    println!("  {}", paint(&s.last_commit, Color::Dim));
+
+    if s.commits.is_empty() {
+        // Nothing unpushed to enumerate (e.g. only uncommitted changes); show
+        // the tip for context.
+        println!("  {}", paint(&s.tip, Color::Dim));
+    } else if !s.tree.is_empty() {
+        // jj: show the unpushed commits as a graph, indented under the repo, so
+        // the stack structure reads the way it does in `jj log`.
+        for line in s.tree.lines() {
+            if line.is_empty() {
+                println!();
+            } else {
+                println!("  {line}");
+            }
+        }
+    } else {
+        // git fallback: one piece of work per line.
+        let bullet = paint("·", Color::Dim);
+        for commit in &s.commits {
+            println!("  {bullet} {}", paint(commit, Color::Dim));
+        }
+    }
     println!();
 }

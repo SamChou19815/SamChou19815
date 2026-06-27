@@ -44,7 +44,10 @@ pub fn term_width() -> usize {
         .unwrap_or(80)
 }
 
-fn color_enabled() -> bool {
+/// Whether ANSI color should be emitted: stdout is a TTY and `NO_COLOR` is unset.
+/// Exposed so callers shelling out to color-aware tools (e.g. `jj log`) can match
+/// our own coloring choice.
+pub fn color_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
         // Respect the de-facto NO_COLOR convention.
