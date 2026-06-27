@@ -2,7 +2,7 @@
 
 ```rust
 /**
- * Copyright (C) 2015-2025 Developer Sam.
+ * Copyright (C) 2015-2026 Developer Sam.
  * @demo https://samlang.io/demo
  * @github https://github.com/SamChou19815
  * @bsky https://bsky.app/profile/developersam.com
