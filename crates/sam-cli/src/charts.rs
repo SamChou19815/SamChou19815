@@ -64,6 +64,18 @@ pub fn paint(text: &str, color: Color) -> String {
     }
 }
 
+/// Wrap `text` in a 24-bit (truecolor) ANSI foreground color, or return it
+/// unchanged when color is disabled. Used to echo per-language colors that don't
+/// map onto the 8-color palette (e.g. GitHub's language-bar colors).
+pub fn paint_rgb(text: &str, rgb: (u8, u8, u8)) -> String {
+    if color_enabled() {
+        let (r, g, b) = rgb;
+        format!("\x1b[38;2;{r};{g};{b}m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
 /// Render `text` bold (used for headings), no-op when color is disabled.
 pub fn bold(text: &str) -> String {
     if color_enabled() {
