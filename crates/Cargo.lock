@@ -967,6 +967,7 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
+ "terminal_size",
 ]
 
 [[package]]

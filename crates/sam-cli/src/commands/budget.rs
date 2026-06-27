@@ -6,7 +6,7 @@ use anyhow::Result;
 use chrono::{DateTime, Datelike, Months, NaiveDate, Utc};
 use serde::{Deserialize, Deserializer};
 
-use crate::charts::{bold, hbar, paint, paint_signed, sparkline, Color};
+use crate::charts::{bold, chart, hbar, paint, paint_signed, term_width, Color};
 use crate::cli::BudgetCommand;
 use crate::supabase::Supabase;
 
@@ -210,43 +210,67 @@ fn status(sb: &Supabase, months: u32) -> Result<()> {
         .fold(0.0_f64, f64::max);
 
     section("Income vs expenses (monthly)");
+    // Layout per row: "  YYYY-MM  in  " prefix (15) + bar + " " + amount.
+    let amount_w = month_keys
+        .iter()
+        .flat_map(|m| {
+            [
+                cad(*income_by.get(m).unwrap_or(&0.0)).len(),
+                cad(*expense_by.get(m).unwrap_or(&0.0)).len(),
+            ]
+        })
+        .max()
+        .unwrap_or(12);
+    let bar_w = term_width().saturating_sub(15 + 1 + amount_w).max(8);
     for m in &month_keys {
         let inc = *income_by.get(m).unwrap_or(&0.0);
         let exp = *expense_by.get(m).unwrap_or(&0.0);
+        // Pad the bar to its column width *before* coloring so the ANSI escape
+        // codes don't throw off the amount alignment in a real terminal.
+        let in_bar = format!("{:<bar_w$}", hbar(inc, monthly_max, bar_w));
+        let out_bar = format!("{:<bar_w$}", hbar(exp, monthly_max, bar_w));
         println!(
-            "  {m}  in  {:<24} {}",
-            paint(&hbar(inc, monthly_max, 24), Color::Green),
+            "  {m}  in  {} {:>amount_w$}",
+            paint(&in_bar, Color::Green),
             cad(inc)
         );
         println!(
-            "           out {:<24} {}",
-            paint(&hbar(exp, monthly_max, 24), Color::Red),
+            "           out {} {:>amount_w$}",
+            paint(&out_bar, Color::Red),
             cad(exp)
         );
     }
 
+    // Each chart spans the full terminal width and a fixed height; the figures
+    // live in the heading so the plot itself can use the whole terminal.
+    let chart_w = term_width().saturating_sub(2).max(8);
+    let chart_h = 8;
+    let plot = |series: &[f64], color: Color| {
+        for row in chart(series, chart_w, chart_h) {
+            println!("  {}", paint(&row, color));
+        }
+    };
+
     // --- Cumulative cash flow (running net over all time) ------------------
     let cash_flow = cumulative_cash_flow(&incomes, &expenses, &month_keys);
     if let (Some(first), Some(last)) = (cash_flow.first(), cash_flow.last()) {
-        section("Cumulative cash flow");
-        println!(
-            "  {}  {} → {}",
-            paint(&sparkline(&cash_flow), Color::Blue),
+        section(&format!(
+            "Cumulative cash flow  ({} → {})",
             cad(*first),
             cad(*last)
-        );
+        ));
+        plot(&cash_flow, Color::Blue);
     }
 
     // --- Investment market value over time --------------------------------
     let value_series = investment_value_series(&investments, &snapshots, &month_keys);
     if value_series.iter().any(|v| *v > 0.0) {
-        section("Investment market value over time");
         let last = value_series.last().copied().unwrap_or(0.0);
-        println!(
-            "  {}  → {}",
-            paint(&sparkline(&value_series), Color::Cyan),
+        section(&format!(
+            "Investment market value over time  (→ {})",
             cad(last)
-        );
+        ));
+        plot(&value_series, Color::Cyan);
     }
 
     // --- Category breakdowns ----------------------------------------------
@@ -294,12 +318,23 @@ fn breakdown(title: &str, totals: &[(String, f64)], color: Color) {
         .unwrap_or(0)
         .min(20);
     let max = totals.iter().map(|(_, v)| *v).fold(0.0_f64, f64::max);
+    let amount_w = totals
+        .iter()
+        .map(|(_, v)| cad(*v).len())
+        .max()
+        .unwrap_or(12);
+    // Non-bar columns: "  " + label + "  " + " " + amount + "  " + "100%".
+    let bar_w = term_width()
+        .saturating_sub(2 + label_w + 2 + 1 + amount_w + 2 + 5)
+        .max(8);
     for (name, value) in totals {
         let pct = value / grand * 100.0;
+        // Pad the bar before coloring so ANSI codes don't skew column alignment.
+        let bar = format!("{:<bar_w$}", hbar(*value, max, bar_w));
         println!(
-            "  {:<label_w$}  {:<20} {:>12}  {:>4.0}%",
+            "  {:<label_w$}  {} {:>amount_w$}  {:>4.0}%",
             truncate(name, label_w),
-            paint(&hbar(*value, max, 20), color),
+            paint(&bar, color),
             cad(*value),
             pct,
         );
