@@ -53,7 +53,6 @@ type SharedInputs = {
   annualSavings: string;
   expectedReturn: string;
   inflation: string;
-  horizon: string;
 };
 
 type SharedSetters = {
@@ -63,7 +62,6 @@ type SharedSetters = {
   setAnnualSavings: (v: string) => void;
   setExpectedReturn: (v: string) => void;
   setInflation: (v: string) => void;
-  setHorizon: (v: string) => void;
 };
 
 export default function FirePanel({
@@ -121,11 +119,9 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [annualSavings, setAnnualSavings] = useState(() => String(round2(defaults.annualSavings)));
   const [expectedReturn, setExpectedReturn] = useState("7");
   const [inflation, setInflation] = useState("2.5");
-  const [horizon, setHorizon] = useState(() => String(100 - (new Date().getFullYear() - 1998)));
   const [currentAge, setCurrentAge] = useState(String(new Date().getFullYear() - 1998));
-  const [retireAge, setRetireAge] = useState("65");
+  const [retireAge, setRetireAge] = useState("45");
   const [coastStartAge, setCoastStartAge] = useState("30");
-  const [coastUntilAge, setCoastUntilAge] = useState("45");
   const [endAge, setEndAge] = useState("95");
   const [mcStdDev, setMcStdDev] = useState("12");
   const [mcNumSims, setMcNumSims] = useState("10000");
@@ -138,7 +134,6 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
     annualSavings,
     expectedReturn,
     inflation,
-    horizon,
   };
   const setters: SharedSetters = {
     setAnnualExpenses,
@@ -147,7 +142,6 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
     setAnnualSavings,
     setExpectedReturn,
     setInflation,
-    setHorizon,
   };
 
   const exp = numOr(annualExpenses, 0);
@@ -155,14 +149,14 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const pv = numOr(portfolio, 0);
   const sav = numOr(annualSavings, 0);
   const r = realReturn(expectedReturn, inflation);
-  const horizonYears = clampHorizon(numOr(horizon, 50));
   const age = numOr(currentAge, 0);
   const retire = numOr(retireAge, 0);
   const coastStart = numOr(coastStartAge, 0);
-  const coastUntil = numOr(coastUntilAge, 0);
   const end = numOr(endAge, 0);
+  // The four ages are the single source of truth; horizon and phase lengths derive from them.
+  const horizonYears = clampHorizon(end - age);
   const accumulationYears = Math.max(0, Math.round(coastStart - age));
-  const coastYears = Math.max(0, Math.round(coastUntil - Math.max(age, coastStart)));
+  const coastYears = Math.max(0, Math.round(retire - Math.max(age, coastStart)));
 
   const fireNumber = wr > 0 ? exp / wr : Number.POSITIVE_INFINITY;
   const yearsToRetire = Math.max(0, retire - age);
@@ -282,8 +276,6 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
         setRetireAge={setRetireAge}
         coastStartAge={coastStartAge}
         setCoastStartAge={setCoastStartAge}
-        coastUntilAge={coastUntilAge}
-        setCoastUntilAge={setCoastUntilAge}
         endAge={endAge}
         setEndAge={setEndAge}
         target={coastTarget}
@@ -361,7 +353,6 @@ function SharedInputsCard({
           onChange={setters.setInflation}
           step="0.1"
         />
-        <NumberField label="Horizon (yrs)" value={shared.horizon} onChange={setters.setHorizon} />
       </div>
       <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
         All amounts (FIRE number, gap, projection chart) are shown in today&rsquo;s dollars.
@@ -414,8 +405,6 @@ function CoastFire({
   setRetireAge,
   coastStartAge,
   setCoastStartAge,
-  coastUntilAge,
-  setCoastUntilAge,
   endAge,
   setEndAge,
   target,
@@ -430,8 +419,6 @@ function CoastFire({
   setRetireAge: (v: string) => void;
   coastStartAge: string;
   setCoastStartAge: (v: string) => void;
-  coastUntilAge: string;
-  setCoastUntilAge: (v: string) => void;
   endAge: string;
   setEndAge: (v: string) => void;
   target: number;
@@ -448,13 +435,16 @@ function CoastFire({
     <Card>
       <CalculatorHeader
         title="Coast FIRE"
-        subtitle="The lump sum you need invested today so it grows into your full FIRE number by retirement, even if you stop contributing. In the Monte Carlo simulation: contributions continue until the coast-start age, the portfolio coasts (no contributions, no withdrawals) until the coast-until age, and then withdrawals begin."
+        subtitle="The lump sum you need invested today so it grows into your full FIRE number by retirement, even if you stop contributing. These four ages drive every timeline below: contributions continue until the coast-start age, the portfolio coasts (no contributions, no withdrawals) until the retirement age, then withdrawals run until the plan-until age."
       />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <NumberField label="Current age" value={currentAge} onChange={setCurrentAge} />
-        <NumberField label="Retirement age" value={retireAge} onChange={setRetireAge} />
         <NumberField label="Coast start age" value={coastStartAge} onChange={setCoastStartAge} />
-        <NumberField label="Coast until age" value={coastUntilAge} onChange={setCoastUntilAge} />
+        <NumberField
+          label="Retirement age (withdrawals begin)"
+          value={retireAge}
+          onChange={setRetireAge}
+        />
         <NumberField label="Plan-until age" value={endAge} onChange={setEndAge} />
       </div>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -869,7 +859,7 @@ function MonteCarloCard({
     <Card>
       <CalculatorHeader
         title="Monte Carlo Simulation"
-        subtitle="Estimates the probability your portfolio survives retirement withdrawals by running thousands of simulations with random annual returns. Starts from your current portfolio, contributes annual savings until the coast-start age, then coasts (no contributions, no withdrawals) until the coast-until age, then withdraws your annual expenses each year. The withdrawal rate set in the shared inputs above is not used here — instead, the effective withdrawal rate (annual expenses ÷ median portfolio at retirement) is reported below. Based on the Trinity Study (Cooley, Hubbard & Walz, 1998) which established the 4% safe withdrawal rate using historical US market data (1926–1997), and Bengen (1994) who first proposed the rule."
+        subtitle="Estimates the probability your portfolio survives retirement withdrawals by running thousands of simulations with random annual returns. Starts from your current portfolio, contributes annual savings until the coast-start age, then coasts (no contributions, no withdrawals) until the retirement age, then withdraws your annual expenses each year. The withdrawal rate set in the shared inputs above is not used here — instead, the effective withdrawal rate (annual expenses ÷ median portfolio at retirement) is reported below. Based on the Trinity Study (Cooley, Hubbard & Walz, 1998) which established the 4% safe withdrawal rate using historical US market data (1926–1997), and Bengen (1994) who first proposed the rule."
       />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Result label="Starting portfolio (today)" value={formatCAD(startPortfolio)} />
