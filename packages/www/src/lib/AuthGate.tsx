@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { getSupabase, supabaseConfigured } from "./supabase";
+import { getSupabase } from "./supabase";
 import { useAuth } from "./useAuth";
 
 // Result of an access-policy check for a signed-in user.
@@ -156,21 +156,6 @@ export default function AuthGate({
   const { session, status } = useAuth();
   const email = session?.user.email ?? null;
   const access = useAccessCheck(status === "signedIn" ? email : null);
-
-  if (!supabaseConfigured) {
-    return (
-      <PageWrapper>
-        <GateCard>
-          <h1 className="mb-2">{title}</h1>
-          <p className="text-gray-500 dark:text-gray-400">
-            Supabase isn&apos;t configured for this build. Set <code>NEXT_PUBLIC_SUPABASE_URL</code>{" "}
-            and <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in <code>packages/www/.env.local</code>{" "}
-            and rebuild.
-          </p>
-        </GateCard>
-      </PageWrapper>
-    );
-  }
 
   if (status === "loading") {
     return (

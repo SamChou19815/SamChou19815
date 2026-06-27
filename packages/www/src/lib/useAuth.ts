@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { getSupabase, supabaseConfigured } from "./supabase";
+import { getSupabase } from "./supabase";
 
 export type AuthStatus = "loading" | "signedOut" | "signedIn";
 
@@ -18,7 +18,6 @@ export function useAuth(): AuthState {
   });
 
   useEffect(() => {
-    if (!supabaseConfigured) return;
     const supabase = getSupabase();
     let mounted = true;
 
