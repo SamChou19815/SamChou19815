@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getSupabase, supabaseConfigured } from "../../lib/supabase";
+import { getSupabase } from "../../lib/supabase";
 
 export type WhitelistResult = "loading" | "allowed" | "denied";
 
@@ -9,7 +9,7 @@ export function useWhitelist(email: string | null | undefined): WhitelistResult 
   const [result, setResult] = useState<WhitelistResult>("loading");
 
   useEffect(() => {
-    if (!supabaseConfigured || email == null) {
+    if (email == null) {
       setResult("loading");
       return;
     }
