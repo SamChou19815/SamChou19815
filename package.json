@@ -7,6 +7,8 @@
     "format": "oxfmt .",
     "lint": "oxlint && oxfmt --check .",
     "fix": "oxlint --fix && oxfmt .",
+    "build:cli": "cargo build --release --manifest-path crates/Cargo.toml",
+    "cli": "pnpm build:cli > /dev/null 2> /dev/null && ./crates/target/release/sam",
     "bump": "pnpm up -r --latest @types/node @types/react @types/react-dom typescript turbo oxlint oxfmt",
     "dev": "pnpm --filter www dev"
   },
