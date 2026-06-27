@@ -22,8 +22,8 @@ pub enum Command {
     InCanada(InCanadaArgs),
     /// Inspect expenses, income, and investments.
     Budget(BudgetArgs),
-    /// Summarize unreleased work across git repos under ~/Desktop.
-    WorkSummary(WorkSummaryArgs),
+    /// Dashboard of git repos under ~/Desktop: unreleased work and language mix.
+    Projects(ProjectsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -115,7 +115,7 @@ pub struct TrafficArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct WorkSummaryArgs {
+pub struct ProjectsArgs {
     /// Directory to scan for git repositories (defaults to ~/Desktop).
     #[arg(value_name = "DIR")]
     pub path: Option<PathBuf>,
