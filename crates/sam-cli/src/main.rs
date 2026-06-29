@@ -18,6 +18,6 @@ fn main() -> Result<()> {
         // so the purely local commands below never trigger an auth prompt.
         Command::InCanada(args) => commands::in_canada::run(&Supabase::connect()?, args.command),
         Command::Budget(args) => commands::budget::run(&Supabase::connect()?, args.command),
-        Command::WorkSummary(args) => commands::work_summary::run(args),
+        Command::Projects(args) => commands::projects::run(args),
     }
 }
