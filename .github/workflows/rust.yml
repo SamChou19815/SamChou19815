@@ -1,0 +1,30 @@
+name: Rust
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+defaults:
+  run:
+    working-directory: crates
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+          key: cargo-build-debug
+      - name: Format Check
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --no-deps --tests --bins -- -D warnings
+      - name: Build
+        run: cargo build --tests --bins
