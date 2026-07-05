@@ -24,7 +24,7 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-use crate::charts::{bold, hbar, paint, Color};
+use crate::charts::{bold, hbar, paint, paint_rgb, Color};
 use crate::cli::ProjectsArgs;
 
 /// How deep below the scan root to look for repositories.
@@ -590,9 +590,52 @@ fn print_languages(langs: &[(&'static str, u64)]) {
             "  {:<name_width$}  {:>5.1}%  {}  {}",
             lang,
             share,
-            paint(&bar, Color::Cyan),
+            paint_rgb(&bar, lang_color(lang)),
             paint(&human_bytes(*bytes), Color::Dim),
         );
+    }
+}
+
+/// GitHub's display color for a language, as RGB. These mirror the hex colors in
+/// [Linguist]'s `languages.yml`, so the bar reads the way the language strip does
+/// on a repo's GitHub page. Languages without a known color fall back to a
+/// neutral gray (matching how GitHub renders uncolored languages).
+///
+/// [Linguist]: https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml
+fn lang_color(lang: &str) -> (u8, u8, u8) {
+    match lang {
+        "Rust" => (0xde, 0xa5, 0x84),
+        "TypeScript" => (0x31, 0x78, 0xc6),
+        "JavaScript" => (0xf1, 0xe0, 0x5a),
+        "MDX" => (0xfc, 0xb3, 0x2c),
+        "TeX" => (0x3d, 0x61, 0x17),
+        "CSS" => (0x66, 0x33, 0x99),
+        "SCSS" => (0xc6, 0x53, 0x8c),
+        "Less" => (0x1d, 0x36, 0x5d),
+        "HTML" => (0xe3, 0x4c, 0x26),
+        "Vue" => (0x41, 0xb8, 0x83),
+        "Svelte" => (0xff, 0x3e, 0x00),
+        "Python" => (0x35, 0x72, 0xa5),
+        "Go" => (0x00, 0xad, 0xd8),
+        "Ruby" => (0x70, 0x15, 0x16),
+        "Java" => (0xb0, 0x72, 0x19),
+        "Kotlin" => (0xa9, 0x7b, 0xff),
+        "Swift" => (0xf0, 0x51, 0x38),
+        "C" => (0x55, 0x55, 0x55),
+        "C++" => (0xf3, 0x4b, 0x7d),
+        "C#" => (0x17, 0x86, 0x00),
+        "PHP" => (0x4f, 0x5d, 0x95),
+        "Shell" => (0x89, 0xe0, 0x51),
+        "Lua" => (0x00, 0x00, 0x80),
+        "Nix" => (0x7e, 0x7e, 0xff),
+        "Dart" => (0x00, 0xb4, 0xab),
+        "Scala" => (0xc2, 0x2d, 0x40),
+        "OCaml" => (0xef, 0x7a, 0x08),
+        "Haskell" => (0x5e, 0x50, 0x86),
+        "Elixir" => (0x6e, 0x4a, 0x7e),
+        "Dockerfile" => (0x38, 0x4d, 0x54),
+        "Makefile" => (0x42, 0x78, 0x19),
+        _ => (0x80, 0x80, 0x80),
     }
 }
 
@@ -660,6 +703,14 @@ mod tests {
             sorted(map),
             vec![("TypeScript", 300), ("MDX", 100), ("Rust", 100)],
         );
+    }
+
+    #[test]
+    fn lang_color_matches_github_and_falls_back() {
+        // A known language echoes its Linguist hex (Rust = #dea584).
+        assert_eq!(lang_color("Rust"), (0xde, 0xa5, 0x84));
+        // Unknown languages fall back to neutral gray.
+        assert_eq!(lang_color("Brainfuck"), (0x80, 0x80, 0x80));
     }
 
     #[test]
