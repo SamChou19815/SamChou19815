@@ -9,7 +9,7 @@ use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Method;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::{self, Config, Session};
@@ -76,8 +76,32 @@ impl Supabase {
         resp.json::<T>().context("decoding PostgREST response")
     }
 
+    /// GET every row of `/rest/v1/{table}` matching `query`, paginating past
+    /// PostgREST's server-side row cap (1,000 by default on Supabase), which
+    /// silently truncates plain unbounded selects. `query` must not contain
+    /// `order`/`limit`/`offset`; pages are fetched in `id` order so offsets
+    /// are stable — callers that need a display order should sort in memory.
+    pub fn select_all<T: DeserializeOwned>(&self, table: &str, query: &str) -> Result<Vec<T>> {
+        const PAGE: usize = 1000;
+        let mut rows: Vec<T> = Vec::new();
+        loop {
+            let page_query = format!("{query}&order=id&limit={PAGE}&offset={}", rows.len());
+            let batch: Vec<T> = self.select(table, &page_query)?;
+            let last_page = batch.len() < PAGE;
+            rows.extend(batch);
+            if last_page {
+                return Ok(rows);
+            }
+        }
+    }
+
     /// POST a row (or rows) to `/rest/v1/{table}`. `on_conflict` enables upsert.
-    pub fn insert(&self, table: &str, body: &Value, on_conflict: Option<&str>) -> Result<()> {
+    pub fn insert<B: Serialize + ?Sized>(
+        &self,
+        table: &str,
+        body: &B,
+        on_conflict: Option<&str>,
+    ) -> Result<()> {
         let mut url = format!("{}/rest/v1/{table}", self.config.url);
         let mut prefer = "return=minimal".to_string();
         if let Some(cols) = on_conflict {
@@ -89,6 +113,43 @@ impl Supabase {
             .header("Prefer", prefer)
             .json(body)
             .send()?;
+        check(resp)?;
+        Ok(())
+    }
+
+    /// POST a row to `/rest/v1/{table}` and return the inserted rows
+    /// (PostgREST's `return=representation`), e.g. to learn generated ids.
+    pub fn insert_returning<B: Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        table: &str,
+        body: &B,
+    ) -> Result<T> {
+        let url = format!("{}/rest/v1/{table}", self.config.url);
+        let resp = self
+            .request(Method::POST, &url)
+            .header("Prefer", "return=representation")
+            .json(body)
+            .send()?;
+        let resp = check(resp)?;
+        resp.json::<T>().context("decoding PostgREST response")
+    }
+
+    /// PATCH rows in `/rest/v1/{table}` matching the query string filters.
+    pub fn update<B: Serialize + ?Sized>(&self, table: &str, query: &str, body: &B) -> Result<()> {
+        let url = format!("{}/rest/v1/{table}?{query}", self.config.url);
+        let resp = self
+            .request(Method::PATCH, &url)
+            .header("Prefer", "return=minimal")
+            .json(body)
+            .send()?;
+        check(resp)?;
+        Ok(())
+    }
+
+    /// DELETE rows in `/rest/v1/{table}` matching the query string filters.
+    pub fn delete(&self, table: &str, query: &str) -> Result<()> {
+        let url = format!("{}/rest/v1/{table}?{query}", self.config.url);
+        let resp = self.request(Method::DELETE, &url).send()?;
         check(resp)?;
         Ok(())
     }

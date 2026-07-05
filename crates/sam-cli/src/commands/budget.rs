@@ -1,4 +1,5 @@
-//! `sam budget` — mirror of the Budget web app's read views.
+//! `sam budget` — mirror of the Budget web app's read views. Editing lives in
+//! the interactive `sam budget tui` (see `budget_tui`).
 
 use std::collections::BTreeMap;
 
@@ -47,6 +48,8 @@ struct Investment {
     total_market_value: f64,
     #[serde(deserialize_with = "de_num")]
     exchange_rate: f64,
+    #[serde(default)]
+    updated_at: String,
 }
 
 impl Investment {
@@ -79,6 +82,7 @@ pub fn run(sb: &Supabase, command: Option<BudgetCommand>) -> Result<()> {
         BudgetCommand::Expenses { limit } => expenses(sb, limit),
         BudgetCommand::Income { limit } => income(sb, limit),
         BudgetCommand::Investments => investments(sb),
+        BudgetCommand::Tui => super::budget_tui::run(sb),
     }
 }
 
@@ -92,21 +96,21 @@ fn summary(sb: &Supabase, months: u32) -> Result<()> {
         .unwrap_or(now);
     let since = start.format("%Y-%m-%d").to_string();
 
-    let incomes: Vec<Income> = sb.select(
+    let incomes: Vec<Income> = sb.select_all(
         "incomes",
         &format!(
             "select=amount,date&user_id=eq.{}&date=gte.{since}",
             sb.user_id()
         ),
     )?;
-    let expenses: Vec<Expense> = sb.select(
+    let expenses: Vec<Expense> = sb.select_all(
         "expenses",
         &format!(
             "select=amount,date,name,category&user_id=eq.{}&date=gte.{since}",
             sb.user_id()
         ),
     )?;
-    let investments: Vec<Investment> = sb.select(
+    let investments: Vec<Investment> = sb.select_all(
         "investments",
         &format!("select=*&user_id=eq.{}", sb.user_id()),
     )?;
@@ -146,19 +150,19 @@ fn status(sb: &Supabase, months: u32) -> Result<()> {
     let since = month_keys.first().cloned().unwrap_or_default();
 
     // Fetch everything once, then bucket/filter in memory, mirroring the web app.
-    let incomes: Vec<Income> = sb.select(
+    let incomes: Vec<Income> = sb.select_all(
         "incomes",
         &format!("select=amount,date,source&user_id=eq.{}", sb.user_id()),
     )?;
-    let expenses: Vec<Expense> = sb.select(
+    let expenses: Vec<Expense> = sb.select_all(
         "expenses",
         &format!("select=amount,date,category&user_id=eq.{}", sb.user_id()),
     )?;
-    let investments: Vec<Investment> = sb.select(
+    let investments: Vec<Investment> = sb.select_all(
         "investments",
         &format!("select=*&user_id=eq.{}", sb.user_id()),
     )?;
-    let snapshots: Vec<Snapshot> = sb.select(
+    let snapshots: Vec<Snapshot> = sb.select_all(
         "investment_snapshots",
         &format!(
             "select=investment_id,recorded_at,total_market_value,exchange_rate&user_id=eq.{}",
@@ -584,10 +588,11 @@ fn income(sb: &Supabase, limit: u32) -> Result<()> {
 }
 
 fn investments(sb: &Supabase) -> Result<()> {
-    let rows: Vec<Investment> = sb.select(
+    let mut rows: Vec<Investment> = sb.select_all(
         "investments",
-        &format!("select=*&user_id=eq.{}&order=updated_at.desc", sb.user_id()),
+        &format!("select=*&user_id=eq.{}", sb.user_id()),
     )?;
+    rows.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     if rows.is_empty() {
         println!("No investments found.");
         return Ok(());
@@ -628,7 +633,7 @@ fn investments(sb: &Supabase) -> Result<()> {
 }
 
 /// Format a value as CAD currency with thousands separators.
-fn cad(value: f64) -> String {
+pub(crate) fn cad(value: f64) -> String {
     if !value.is_finite() {
         return "—".to_string();
     }
@@ -654,7 +659,7 @@ fn col_width<'a>(header: &str, values: impl Iterator<Item = &'a str>) -> usize {
 
 /// Deserialize an `f64` that PostgREST may encode as either a number or a string
 /// (numeric columns are sometimes serialized as strings).
-fn de_num<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+pub(crate) fn de_num<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
     use serde::de::Error;
     match serde_json::Value::deserialize(deserializer)? {
         serde_json::Value::Number(n) => n.as_f64().ok_or_else(|| Error::custom("invalid number")),

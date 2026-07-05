@@ -84,6 +84,8 @@ pub enum BudgetCommand {
     },
     /// List investments and their value in CAD.
     Investments,
+    /// Interactive TUI to add, edit, and delete expenses, income, and investments.
+    Tui,
 }
 
 #[derive(Debug, Args)]
