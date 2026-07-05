@@ -120,7 +120,7 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [expectedReturn, setExpectedReturn] = useState("7");
   const [inflation, setInflation] = useState("2.5");
   const [currentAge, setCurrentAge] = useState(String(new Date().getFullYear() - 1998));
-  const [retireAge, setRetireAge] = useState("45");
+  const [retireAge, setRetireAge] = useState("40");
   const [coastStartAge, setCoastStartAge] = useState("30");
   const [endAge, setEndAge] = useState("95");
   const [mcStdDev, setMcStdDev] = useState("12");
@@ -755,6 +755,13 @@ function monteCarloSimulate({
   const accumEnd = Math.max(0, Math.min(horizonYears, accumulationYears));
   const coastEnd = Math.min(horizonYears, accumEnd + Math.max(0, coastYears));
 
+  // The user enters `realReturn` as the expected long-run (compound/geometric)
+  // return. Compounding an iid-normal series drags realized growth below its
+  // arithmetic mean by ~σ²/2, so we add that variance term back to recover the
+  // arithmetic mean each draw needs. Without this, median growth lands ~σ²/2
+  // below the input and the sim understates success vs. the Trinity/Bengen 4% rule.
+  const arithmeticReturn = annualReturn + 0.5 * realStdDev * realStdDev;
+
   const rng = mulberry32(42);
   const allPaths: number[][] = [];
   let successes = 0;
@@ -765,7 +772,7 @@ function monteCarloSimulate({
     let survived = true;
 
     for (let y = 1; y <= horizonYears; y++) {
-      const ret = annualReturn + realStdDev * normalRandom(rng);
+      const ret = arithmeticReturn + realStdDev * normalRandom(rng);
       if (y <= accumEnd) {
         portfolio = portfolio * (1 + ret) + annualContribution;
         if (portfolio < 0) portfolio = 0;
