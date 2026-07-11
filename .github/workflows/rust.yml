@@ -5,10 +5,6 @@ on:
       - main
   pull_request:
 
-defaults:
-  run:
-    working-directory: crates
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,7 +16,6 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates
           key: cargo-build-debug
       - name: Format Check
         run: cargo fmt --all -- --check

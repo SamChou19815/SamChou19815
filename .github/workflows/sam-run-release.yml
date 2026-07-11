@@ -1,0 +1,80 @@
+name: sam-run release
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/sam-run/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/sam-run-release.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sam-run-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            targets: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            targets: aarch64-unknown-linux-musl
+          - runner: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install musl toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: sam-run-release-${{ matrix.runner }}
+      - name: Build
+        run: |
+          mkdir -p dist
+          for target in $(echo "${{ matrix.targets }}" | tr ',' ' '); do
+            cargo build --release -p sam-run --target "$target"
+            case "$target" in
+              x86_64-unknown-linux-musl)  name=sam-run-linux-x86_64 ;;
+              aarch64-unknown-linux-musl) name=sam-run-linux-aarch64 ;;
+              x86_64-apple-darwin)        name=sam-run-macos-x86_64 ;;
+              aarch64-apple-darwin)       name=sam-run-macos-aarch64 ;;
+            esac
+            cp "target/$target/release/sam-run" "dist/$name"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sam-run-${{ matrix.runner }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete sam-run-latest --cleanup-tag --yes || true
+          gh release create sam-run-latest dist/* \
+            --title "sam-run latest" \
+            --notes "Rolling build from ${GITHUB_SHA}" \
+            --target "${GITHUB_SHA}" \
+            --latest=false
