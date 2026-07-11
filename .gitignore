@@ -3,6 +3,7 @@
 **/build/
 **/out/
 **/.next
+/target
 server/target
 *.tsbuildinfo
 *.js.map
