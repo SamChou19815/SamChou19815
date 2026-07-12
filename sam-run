@@ -1,0 +1,11 @@
+#!/usr/bin/env sam-run
+{
+  "repo": "SamChou19815/SamChou19815",
+  "tag": "sam-run-latest",
+  "platforms": {
+    "linux-x86_64": { "asset": "sam-run-linux-x86_64" },
+    "linux-aarch64": { "asset": "sam-run-linux-aarch64" },
+    "macos-x86_64": { "asset": "sam-run-macos-x86_64" },
+    "macos-aarch64": { "asset": "sam-run-macos-aarch64" }
+  }
+}

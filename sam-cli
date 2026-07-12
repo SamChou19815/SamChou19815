@@ -1,0 +1,11 @@
+#!/usr/bin/env sam-run
+{
+  "repo": "SamChou19815/SamChou19815",
+  "tag": "sam-cli-latest",
+  "platforms": {
+    "linux-x86_64": { "asset": "sam-cli-linux-x86_64" },
+    "linux-aarch64": { "asset": "sam-cli-linux-aarch64" },
+    "macos-x86_64": { "asset": "sam-cli-macos-x86_64" },
+    "macos-aarch64": { "asset": "sam-cli-macos-aarch64" }
+  }
+}
