@@ -123,13 +123,13 @@ fn paths_match(entry: &str, wanted: &str) -> bool {
 }
 
 #[cfg(unix)]
-fn make_executable(path: &Path) -> Result<()> {
+pub fn make_executable(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
         .with_context(|| format!("failed to mark {} executable", path.display()))
 }
 
 #[cfg(not(unix))]
-fn make_executable(_path: &Path) -> Result<()> {
+pub fn make_executable(_path: &Path) -> Result<()> {
     Ok(())
 }
