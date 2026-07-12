@@ -23,3 +23,13 @@ jobs:
         run: cargo clippy --no-deps --tests --bins -- -D warnings
       - name: Build
         run: cargo build --tests --bins
+  test-sam-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-sam-run
+      - name: Verify sam-run is on PATH
+        run: |
+          command -v sam-run
+          sam-run --version
+          ./sam-cli --help
