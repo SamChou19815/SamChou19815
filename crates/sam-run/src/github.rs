@@ -7,6 +7,9 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct Release {
     pub tag_name: String,
+    /// Commit SHA (or branch) the release was created from; empty when GitHub omits it.
+    #[serde(default)]
+    pub target_commitish: String,
     pub assets: Vec<Asset>,
 }
 

@@ -7,6 +7,34 @@ manifest; running the script downloads the right binary from a GitHub release, c
 The file is **not pinned to a specific version**: sam-run resolves the newest release (or a named
 tag) dynamically and caches the result — for 1 day by default.
 
+## Installation
+
+Download the binary for your platform from the rolling `sam-run-latest` release — the asset is
+one of `sam-run-linux-x86_64`, `sam-run-linux-aarch64`, `sam-run-macos-x86_64`,
+`sam-run-macos-aarch64`:
+
+```sh
+curl -fsSL "https://github.com/SamChou19815/SamChou19815/releases/download/sam-run-latest/sam-run-$(uname -s | tr '[:upper:]' '[:lower:]' | sed s/darwin/macos/)-$(uname -m | sed s/arm64/aarch64/)" \
+  -o ~/.local/bin/sam-run
+chmod +x ~/.local/bin/sam-run
+```
+
+(Any directory on your `PATH` works; in GitHub Actions use the `setup-sam-run` composite action
+instead.)
+
+## Updating
+
+```sh
+sam-run self-update           # replace this executable with the latest release
+sam-run self-update --check   # only report whether an update is available
+```
+
+`sam-run --version` prints the commit the binary was built from; `self-update` is a no-op when
+that commit matches the current release. Local dev builds have no embedded commit and always
+update. The command replaces the file the running executable resolves to (symlinks are followed),
+so an install in a root-owned directory like `/usr/local/bin` needs
+`sudo -E sam-run self-update`.
+
 ## Script format
 
 ```bash

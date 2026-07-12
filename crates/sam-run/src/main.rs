@@ -6,6 +6,7 @@ mod github;
 mod manifest;
 mod platform;
 mod runner;
+mod update;
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -32,5 +33,6 @@ fn dispatch(args: Vec<OsString>) -> anyhow::Result<()> {
     match cli::Cli::parse_from(args).command {
         cli::Command::Run { file, args } => runner::run(&file, args),
         cli::Command::Invalidate { repo } => cache::invalidate(repo.as_deref()),
+        cli::Command::SelfUpdate { check } => update::self_update(check),
     }
 }
