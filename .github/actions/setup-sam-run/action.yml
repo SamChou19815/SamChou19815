@@ -1,0 +1,29 @@
+name: Setup sam-run
+description: Download the latest sam-run binary and add it to PATH (Linux only)
+
+runs:
+  using: composite
+  steps:
+    - name: Install sam-run
+      shell: bash
+      run: |
+        if [[ "$RUNNER_OS" != "Linux" ]]; then
+          echo "::error::setup-sam-run only supports Linux runners, got $RUNNER_OS"
+          exit 1
+        fi
+        case "$(uname -m)" in
+          x86_64)        asset=sam-run-linux-x86_64 ;;
+          aarch64|arm64) asset=sam-run-linux-aarch64 ;;
+          *)
+            echo "::error::setup-sam-run does not support architecture $(uname -m)"
+            exit 1
+            ;;
+        esac
+        install_dir="$RUNNER_TEMP/sam-run-bin"
+        mkdir -p "$install_dir"
+        curl -fsSL --retry 5 --retry-all-errors \
+          "https://github.com/SamChou19815/SamChou19815/releases/download/sam-run-latest/$asset" \
+          -o "$install_dir/sam-run"
+        chmod +x "$install_dir/sam-run"
+        echo "$install_dir" >> "$GITHUB_PATH"
+        "$install_dir/sam-run" --version
