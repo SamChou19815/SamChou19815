@@ -19,5 +19,6 @@ fn main() -> Result<()> {
         Command::InCanada(args) => commands::in_canada::run(&Supabase::connect()?, args.command),
         Command::Budget(args) => commands::budget::run(&Supabase::connect()?, args.command),
         Command::Projects(args) => commands::projects::run(args),
+        Command::KnowledgeGraph => commands::knowledge_graph::run(),
     }
 }
