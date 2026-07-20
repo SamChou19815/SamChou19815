@@ -24,6 +24,9 @@ pub enum Command {
     Budget(BudgetArgs),
     /// Dashboard of git repos under ~/Desktop: unreleased work and language mix.
     Projects(ProjectsArgs),
+    /// Interactive TUI for a local knowledge graph: undirected links between
+    /// nodes, a markdown note per node, and a visual map of the whole graph.
+    KnowledgeGraph,
 }
 
 #[derive(Debug, Args)]
