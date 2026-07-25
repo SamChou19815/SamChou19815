@@ -5,7 +5,7 @@
 //! - **Node** — the selected node's markdown note: a lightly styled read view,
 //!   and a plain multi-line editor behind `e`.
 //! - **Visualize** — the whole graph drawn on a braille canvas with a
-//!   force-directed (Fruchterman–Reingold) layout, so clusters and hubs are
+//!   force-directed (Fruchterman-Reingold) layout, so clusters and hubs are
 //!   visible at a glance.
 //!
 //! Every mutation persists to disk immediately, so quitting can never lose
