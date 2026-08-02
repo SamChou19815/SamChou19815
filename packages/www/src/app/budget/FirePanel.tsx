@@ -537,7 +537,7 @@ function CombinedProjectionChart({
           />
           <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} width={60} />
           <Tooltip
-            formatter={(v: number, name: string) => [formatCAD(v), name]}
+            formatter={(v, name) => [formatCAD(Number(v)), String(name)]}
             labelFormatter={(l) => `Year ${l}`}
           />
           <Legend />
@@ -955,7 +955,7 @@ function MonteCarloChart({ percentiles }: { percentiles: McPercentile[] }): Reac
           />
           <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} width={60} />
           <Tooltip
-            formatter={(v: number, name: string) => [formatCAD(v), name]}
+            formatter={(v, name) => [formatCAD(Number(v)), String(name)]}
             labelFormatter={(l) => `Year ${l}`}
           />
           <Legend />

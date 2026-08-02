@@ -75,7 +75,7 @@ const withMDX = require("@next/mdx")({
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   pageExtensions: ["tsx", "mdx"],
-  experimental: { mdxRs: true },
+  experimental: { mdxRs: true, useTypeScriptCli: true },
   output: "export",
   env: { ALL_BLOG_POST_METADATA: JSON.stringify(computeAllMedatada()) },
   typescript: { ignoreBuildErrors: true },

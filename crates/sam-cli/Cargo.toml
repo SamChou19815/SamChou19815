@@ -16,7 +16,7 @@ anyhow.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap.workspace = true
 directories.workspace = true
-ratatui = "0.29"
+ratatui = "0.30"
 reqwest.workspace = true
 rpassword = "7"
 serde.workspace = true

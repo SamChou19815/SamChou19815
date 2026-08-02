@@ -93,7 +93,7 @@ export function MonthlyTotalsChart({
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
-        <Tooltip formatter={(v: number) => formatCAD(v)} />
+        <Tooltip formatter={(v) => formatCAD(Number(v))} />
         <Legend />
         <Bar dataKey="income" fill="#10b981" name="Income" />
         <Bar dataKey="expense" fill="#ef4444" name="Expenses" />
@@ -145,7 +145,7 @@ export function MonthlyBar({
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
-        <Tooltip formatter={(v: number) => formatCAD(v)} />
+        <Tooltip formatter={(v) => formatCAD(Number(v))} />
         <Legend />
         {incomeCategories.map((cat, idx) => (
           <Bar
@@ -200,7 +200,7 @@ export function CashFlowLine({
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
-        <Tooltip formatter={(v: number) => formatCAD(v)} />
+        <Tooltip formatter={(v) => formatCAD(Number(v))} />
         <Legend />
         <Line type="monotone" dataKey="cashFlow" stroke={PALETTE[0]} name="Cash flow" dot={false} />
       </LineChart>
@@ -240,7 +240,7 @@ export function InvestmentValueLine({
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
-        <Tooltip formatter={(v: number) => formatCAD(v)} />
+        <Tooltip formatter={(v) => formatCAD(Number(v))} />
         <Line
           type="monotone"
           dataKey="value"
@@ -290,7 +290,7 @@ export function IncomeByCategoryPie({
             <Cell key={entry.name} fill={INCOME_PALETTE[idx % INCOME_PALETTE.length]} />
           ))}
         </Pie>
-        <Tooltip formatter={(v: number) => formatCAD(v)} />
+        <Tooltip formatter={(v) => formatCAD(Number(v))} />
         <Legend />
       </PieChart>
     </ResponsiveContainer>
@@ -333,7 +333,7 @@ export function ExpenseByCategoryPie({
             <Cell key={entry.name} fill={EXPENSE_PALETTE[idx % EXPENSE_PALETTE.length]} />
           ))}
         </Pie>
-        <Tooltip formatter={(v: number) => formatCAD(v)} />
+        <Tooltip formatter={(v) => formatCAD(Number(v))} />
         <Legend />
       </PieChart>
     </ResponsiveContainer>
@@ -372,7 +372,7 @@ export function AllocationDonut({
             <Cell key={entry.name} fill={PALETTE[idx % PALETTE.length]} />
           ))}
         </Pie>
-        <Tooltip formatter={(v: number) => formatCAD(v)} />
+        <Tooltip formatter={(v) => formatCAD(Number(v))} />
         <Legend />
       </PieChart>
     </ResponsiveContainer>
