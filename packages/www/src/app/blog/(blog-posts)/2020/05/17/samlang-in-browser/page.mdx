@@ -198,8 +198,7 @@ TypeScript pattern is discriminated union:
 
 ```typescript
 type List<T> =
-  | { readonly type: "nil" }
-  | { readonly type: "cons"; readonly element: T; readonly next: List<T> };
+  { readonly type: "nil" } | { readonly type: "cons"; readonly element: T; readonly next: List<T> };
 ```
 
 Kotlin cannot support this so the generated Kotlin type will simply be `Any`.
