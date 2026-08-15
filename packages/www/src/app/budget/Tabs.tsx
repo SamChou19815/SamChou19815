@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { isTabId, TAB_IDS, type TabId } from "./types";
 
 const TAB_LABELS: Record<TabId, string> = {
@@ -18,7 +18,6 @@ export function useActiveTab(): TabId {
 }
 
 export default function Tabs(): React.JSX.Element {
-  const router = useRouter();
   const params = useSearchParams();
   const active = useActiveTab();
 
@@ -30,7 +29,11 @@ export default function Tabs(): React.JSX.Element {
       next.set("tab", id);
     }
     const qs = next.toString();
-    router.replace(qs.length > 0 ? `/budget?${qs}` : "/budget");
+    // Use the History API instead of router.replace: with `output: "export"`,
+    // the router hydrates with the canonical pathname (no search params), so
+    // after a direct load of /budget?tab=..., router.replace("/budget") is a
+    // same-URL no-op. Next syncs useSearchParams with replaceState.
+    window.history.replaceState(null, "", qs.length > 0 ? `/budget?${qs}` : "/budget");
   };
 
   return (
