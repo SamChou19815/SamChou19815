@@ -1,0 +1,27 @@
+[package]
+name = "sam-tui"
+version = "0.1.0"
+description = "Full-screen TUI core for developersam.com/terminal; renders through any ratatui backend"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Backend-agnostic ratatui: core (Buffer, Frame, Layout, text) plus the
+# built-in widget crate (Block, Paragraph, List, …). Both are crossterm-free
+# so the wasm build instantiates through a plain C ABI.
+ratatui-core = "0.1"
+ratatui-widgets = { version = "0.3", default-features = false }
+
+[lints.rust]
+# The wasm FFI module exports the C ABI with `#[unsafe(no_mangle)]`, which the
+# workspace-wide `unsafe_code = "forbid"` (passed as -F unsafe-code) rejects.
+# Re-declaring the lint here opts this crate out; it contains no `unsafe` blocks.
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
