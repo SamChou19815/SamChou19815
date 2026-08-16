@@ -8,6 +8,8 @@
     "lint": "oxlint && oxfmt --check .",
     "fix": "oxlint --fix && oxfmt .",
     "build:cli": "cargo build --release -p sam-cli",
+    "build:wasm": "sh scripts/build-wasm.sh",
+    "dev-sam": "cargo run -p sam-tui-cli --release",
     "cli": "pnpm build:cli > /dev/null 2> /dev/null && ./target/release/sam",
     "bump": "pnpm up -r --latest @types/node @types/react @types/react-dom typescript turbo oxlint oxfmt",
     "dev": "pnpm --filter www dev"
