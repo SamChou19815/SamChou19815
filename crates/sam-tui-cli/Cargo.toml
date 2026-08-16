@@ -1,0 +1,20 @@
+[package]
+name = "sam-tui-cli"
+version = "0.1.0"
+description = "Native terminal front-end for the Developer Sam TUI"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "dev-sam"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+ratatui = "0.30"
+sam-tui = { path = "../sam-tui" }
+
+[lints]
+workspace = true
