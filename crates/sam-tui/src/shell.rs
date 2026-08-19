@@ -351,7 +351,7 @@ fn read_file(path: &[String]) -> Option<String> {
         ["about.txt"] => {
             let mut out = String::new();
             for line in highlight::doc_comment_lines() {
-                out.push_str(&spans_line(&line));
+                out.push_str(&spans_line(&line.spans));
                 out.push('\n');
             }
             out.push('\n');
