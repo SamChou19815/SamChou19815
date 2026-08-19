@@ -33,12 +33,9 @@ fn border_style() -> Style {
 }
 
 fn select_style() -> Style {
-    // True black rather than `Color::Black`: many terminals (and xterm.js by
-    // default) brighten bold ANSI-black into gray, which wrecks the contrast
-    // of the selection bar.
-    Style::new()
-        .bg(theme::ACCENT)
-        .fg(ratatui_core::style::Color::Rgb(0, 0, 0))
+    // The homepage's own hover treatment (`bg-blue-500 bg-opacity-10`),
+    // scaled up to a selection: a soft blue tint with deep blue text.
+    Style::new().bg(theme::SELECT_BG).fg(theme::SELECT_FG)
 }
 
 /// Total number of lines a scrolling tab pane can show.
