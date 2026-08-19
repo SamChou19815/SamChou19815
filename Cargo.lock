@@ -2117,6 +2117,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sam-tui"
+version = "0.1.0"
+dependencies = [
+ "ratatui-core",
+ "ratatui-widgets",
+]
+
+[[package]]
+name = "sam-tui-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ratatui",
+ "sam-tui",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
