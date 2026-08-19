@@ -2,6 +2,7 @@
 **/dist/
 **/build/
 **/out/
+packages/www/public/wasm/
 **/.next
 /target
 server/target

@@ -23,6 +23,30 @@ jobs:
         run: cargo clippy --no-deps --tests --bins -- -D warnings
       - name: Build
         run: cargo build --tests --bins
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: cargo-wasm
+      - name: Build Terminal WASM
+        run: cargo build --release -p sam-tui --target wasm32-unknown-unknown
+  test-sam-tui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: cargo-test
+      - name: Test
+        run: cargo test -p sam-tui -p sam-tui-cli
   test-sam-run:
     runs-on: ubuntu-latest
     steps:
