@@ -19,8 +19,10 @@ pub const ACCENT: Color = Color::Rgb(59, 130, 246);
 /// blue-600 — the accent as TEXT on the light background (≈5:1); blue-500
 /// text measured too washed out.
 pub const ACCENT_TEXT: Color = Color::Rgb(37, 99, 235);
-/// Selected-card tint: blue-100, the site's `bg-blue-500 bg-opacity-10` hover.
+/// Selected-row tint: blue-100, the site's `bg-blue-500 bg-opacity-10` hover.
 pub const SELECT_BG: Color = Color::Rgb(219, 234, 254);
+/// Selected-row text: blue-900 on the blue-100 tint (≈8:1).
+pub const SELECT_FG: Color = Color::Rgb(30, 58, 138);
 /// Card surface: white, like the homepage cards on the `#f7f7f7` body.
 pub const CARD_BG: Color = Color::Rgb(255, 255, 255);
 /// Code block background `#f7f7f7`, as on the homepage.
