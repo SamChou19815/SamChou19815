@@ -468,13 +468,15 @@ fn modal_body(modal: &Modal) -> (String, Vec<Line<'static>>, Vec<Option<String>>
                 lines.push(Line::default());
                 links.push(None);
                 lines.push(Line::from(Span::styled(
-                    "links",
+                    "links (press 1-9)",
                     key_style().add_modifier(Modifier::BOLD),
                 )));
                 links.push(None);
-                for link in event.links {
+                for (index, link) in event.links.iter().enumerate() {
                     let line = markdown::bullet_link(link.name, link.url);
-                    lines.push(Line::from(line.spans.clone()));
+                    let mut spans = vec![Span::styled(format!("{:<2} ", index + 1), dim())];
+                    spans.extend(line.spans.clone());
+                    lines.push(Line::from(spans));
                     links.push(line.link.clone());
                 }
             }
@@ -495,9 +497,11 @@ fn modal_body(modal: &Modal) -> (String, Vec<Line<'static>>, Vec<Option<String>>
                 key_style().add_modifier(Modifier::BOLD),
             )));
             links.push(None);
-            for link in project.links {
+            for (index, link) in project.links.iter().enumerate() {
                 let line = markdown::bullet_link(link.name, link.url);
-                lines.push(Line::from(line.spans.clone()));
+                let mut spans = vec![Span::styled(format!("{:<2} ", index + 1), dim())];
+                spans.extend(line.spans.clone());
+                lines.push(Line::from(spans));
                 links.push(line.link.clone());
             }
             (format!("project — {}", project.id), lines, links)
@@ -508,6 +512,7 @@ fn modal_body(modal: &Modal) -> (String, Vec<Line<'static>>, Vec<Option<String>>
                 ("1 … 6", "jump to a tab"),
                 ("↑/↓ or j/k", "move selection / scroll"),
                 ("Enter", "open details (timeline, projects)"),
+                ("1 … 9", "open a button of the open dialog"),
                 ("g / G", "jump to top / bottom"),
                 ("Esc", "close this dialog"),
                 ("?", "toggle this help"),
@@ -532,7 +537,7 @@ fn modal_body(modal: &Modal) -> (String, Vec<Line<'static>>, Vec<Option<String>>
 }
 
 fn bindings_len() -> usize {
-    9
+    10
 }
 
 fn draw_modal(app: &mut App, frame: &mut Frame, content: Rect) {
@@ -579,10 +584,10 @@ fn draw_status(app: &mut App, frame: &mut Frame, area: Rect) {
         vec![
             key("↑/↓"),
             Span::styled(" scroll · ", dim()),
+            key("1-9"),
+            Span::styled(" open button · ", dim()),
             key("Esc"),
-            Span::styled(" close · ", dim()),
-            key("click"),
-            Span::styled(" a button to open", dim()),
+            Span::styled(" close", dim()),
         ]
     } else if matches!(app.tab, TIMELINE_TAB | PROJECTS_TAB) {
         vec![

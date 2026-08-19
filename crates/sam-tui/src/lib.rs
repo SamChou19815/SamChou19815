@@ -201,6 +201,19 @@ impl App {
     }
 
     fn on_modal_key(&mut self, key: Key) {
+        // Digits activate the modal's buttons directly (1-9).
+        if let Key::Char(digit @ '1'..='9') = key {
+            let index = digit as usize - '1' as usize;
+            let links: &[data::Link] = match &self.modal {
+                Some(Modal::Timeline { event, .. }) => data::TIMELINE[*event].links,
+                Some(Modal::Project { project, .. }) => data::PROJECTS[*project].links,
+                _ => &[],
+            };
+            if let Some(link) = links.get(index) {
+                self.actions.push(Action::OpenUrl(link.url.to_string()));
+            }
+            return;
+        }
         match key {
             Key::Esc | Key::Backspace | Key::Char('q') | Key::Char(' ') => self.modal = None,
             Key::Up | Key::Char('k') => self.scroll_modal(-1),
