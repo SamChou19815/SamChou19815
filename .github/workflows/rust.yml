@@ -17,6 +17,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: cargo-build-debug
+      - name: Prepare patched deps
+        run: ./scripts/prepare-patched-deps.sh
       - name: Format Check
         run: cargo fmt --all -- --check
       - name: Lint
@@ -34,6 +36,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: cargo-wasm
+      - name: Prepare patched deps
+        run: ./scripts/prepare-patched-deps.sh
       - name: Build Terminal WASM
         run: cargo build --release -p sam-tui --target wasm32-unknown-unknown
   test-sam-tui:
@@ -45,6 +49,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: cargo-test
+      - name: Prepare patched deps
+        run: ./scripts/prepare-patched-deps.sh
       - name: Test
         run: cargo test -p sam-tui -p sam-tui-cli
   test-sam-run:

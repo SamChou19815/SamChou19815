@@ -7,12 +7,12 @@
 //! highlighter), printed verbatim by xterm.js. Links use OSC 8 so they are
 //! clickable without a link-region table.
 
-use crate::ansi;
 use crate::data;
 use crate::highlight;
 use crate::theme;
-use ratatui_core::style::{Modifier, Style};
-use ratatui_core::text::Span;
+use crossterm::style::Color;
+use iocraft::components::MixedTextContent;
+use iocraft::prelude::*;
 
 pub const COMMANDS: &[&str] = &[
     "cat", "cd", "clear", "dev-sam", "echo", "help", "history", "ls", "pwd", "whoami",
@@ -108,9 +108,7 @@ impl Shell {
             out.push_str(&format!(
                 "{}{}{}{}\n",
                 paint(
-                    Style::new()
-                        .fg(theme::ACCENT_TEXT)
-                        .add_modifier(Modifier::BOLD),
+                    Style::new().fg(theme::ACCENT_TEXT).bold(),
                     &format!("  {name:<12}")
                 ),
                 reset(),
@@ -135,9 +133,7 @@ impl Shell {
                 for (name, directory) in items {
                     if directory {
                         out.push_str(&paint(
-                            Style::new()
-                                .fg(theme::ACCENT_TEXT)
-                                .add_modifier(Modifier::BOLD),
+                            Style::new().fg(theme::ACCENT_TEXT).bold(),
                             &format!("{name:<16}"),
                         ));
                     } else {
@@ -312,11 +308,18 @@ fn link(text: &str, url: &str) -> String {
 }
 
 /// Renders the highlighter's spans as one ANSI line.
-fn spans_line(spans: &[Span<'static>]) -> String {
+fn spans_line(contents: &[MixedTextContent]) -> String {
     let mut out = String::new();
-    for span in spans {
-        out.push_str(&ansi::style_sgr(span.style));
-        out.push_str(&span.content);
+    for piece in contents {
+        let style = Style {
+            fg: piece.color,
+            bg: None,
+            bold: piece.weight == Weight::Bold,
+            italic: piece.italic,
+            underline: piece.decoration == TextDecoration::Underline,
+        };
+        out.push_str(&style_sgr(style));
+        out.push_str(&piece.text);
         out.push_str("\x1b[m");
     }
     out
@@ -328,9 +331,7 @@ fn read_file(path: &[String]) -> Option<String> {
         ["readme.md"] => Some(
             [
                 paint(
-                    Style::new()
-                        .fg(theme::ACCENT_TEXT)
-                        .add_modifier(Modifier::BOLD),
+                    Style::new().fg(theme::ACCENT_TEXT).bold(),
                     "developer sam's home directory",
                 ),
                 paint(
@@ -351,7 +352,7 @@ fn read_file(path: &[String]) -> Option<String> {
         ["about.txt"] => {
             let mut out = String::new();
             for line in highlight::doc_comment_lines() {
-                out.push_str(&spans_line(&line.spans));
+                out.push_str(&spans_line(&line));
                 out.push('\n');
             }
             out.push('\n');
@@ -364,9 +365,7 @@ fn read_file(path: &[String]) -> Option<String> {
                 out.push_str(&format!(
                     "{} {}{}\n",
                     paint(
-                        Style::new()
-                            .fg(theme::ACCENT_TEXT)
-                            .add_modifier(Modifier::BOLD),
+                        Style::new().fg(theme::ACCENT_TEXT).bold(),
                         &format!("@{}:", entry.name)
                     ),
                     link(entry.url, entry.url),
@@ -381,9 +380,7 @@ fn read_file(path: &[String]) -> Option<String> {
                 out.push_str(&format!(
                     "{} {}{}\n",
                     paint(
-                        Style::new()
-                            .fg(theme::ACCENT_TEXT)
-                            .add_modifier(Modifier::BOLD),
+                        Style::new().fg(theme::ACCENT_TEXT).bold(),
                         &format!("{:<10}", entry.name)
                     ),
                     link(entry.url, entry.url),
@@ -425,21 +422,14 @@ fn read_file(path: &[String]) -> Option<String> {
             let project = data::PROJECTS.iter().find(|project| project.id == *name)?;
             let mut out = format!(
                 "{}\n{}\n\n",
-                paint(
-                    Style::new()
-                        .fg(theme::ACCENT_TEXT)
-                        .add_modifier(Modifier::BOLD),
-                    project.id
-                ),
+                paint(Style::new().fg(theme::ACCENT_TEXT).bold(), project.id),
                 paint(Style::new().fg(theme::SUBTLE), project.tagline),
             );
             for entry in project.links {
                 out.push_str(&format!(
                     "  {} {}{}\n",
                     paint(
-                        Style::new()
-                            .fg(theme::ACCENT_TEXT)
-                            .add_modifier(Modifier::BOLD),
+                        Style::new().fg(theme::ACCENT_TEXT).bold(),
                         &format!("{:<12}", entry.name)
                     ),
                     link(entry.url, entry.url),
@@ -452,8 +442,68 @@ fn read_file(path: &[String]) -> Option<String> {
     }
 }
 
+/// A minimal styled-text description for the shell's direct ANSI output.
+#[derive(Default, Clone, Copy)]
+struct Style {
+    fg: Option<Color>,
+    bg: Option<Color>,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+}
+
+impl Style {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn fg(self, color: Color) -> Self {
+        Self {
+            fg: Some(color),
+            ..self
+        }
+    }
+
+    fn bold(self) -> Self {
+        Self { bold: true, ..self }
+    }
+}
+
+/// One full SGR escape for a [`Style`].
+fn style_sgr(style: Style) -> String {
+    let mut parts = vec![String::from("0")];
+    if let Some(color) = style.fg {
+        parts.push(color_code(color, false));
+    }
+    if let Some(color) = style.bg {
+        parts.push(color_code(color, true));
+    }
+    if style.bold {
+        parts.push(String::from("1"));
+    }
+    if style.italic {
+        parts.push(String::from("3"));
+    }
+    if style.underline {
+        parts.push(String::from("4"));
+    }
+    format!("\x1b[{}m", parts.join(";"))
+}
+
+fn color_code(color: Color, background: bool) -> String {
+    let (r, g, b) = match color {
+        Color::Rgb { r, g, b } => (r, g, b),
+        _ => (0, 0, 0),
+    };
+    if background {
+        format!("48;2;{r};{g};{b}")
+    } else {
+        format!("38;2;{r};{g};{b}")
+    }
+}
+
 fn paint(style: Style, text: &str) -> String {
-    format!("{}{}\x1b[m", ansi::style_sgr(style), text)
+    format!("{}{}\x1b[m", style_sgr(style), text)
 }
 
 fn reset() -> &'static str {

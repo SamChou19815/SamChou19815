@@ -1,25 +1,23 @@
-//! Full-screen TUI core for <https://developersam.com/terminal>.
+//! Full-screen TUI core for <https://developersam.com/terminal>, built on
+//! iocraft: components are plain functions, state lives in hooks, and the
+//! same tree runs natively (crossterm over stdio) and in the browser
+//! (a wasm engine pumped by the web terminal through a plain C ABI).
 //!
-//! The crate is backend-agnostic: [`App::draw`] renders through any ratatui
-//! `Frame`, so the same code drives the native `sam-tui-cli` binary (crossterm
-//! backend) and the WebAssembly build (TestBackend serialized to ANSI for
-//! xterm.js). Input arrives as the crate's own [`Input`] events, converted
-//! from crossterm in the CLI and from browser events on the web.
+//! Mouse handling: components register clickable regions ([`hit`]) from
+//! their layout rects each frame; the app dispatches
+//! [`crossterm`] mouse events against that registry.
 
-pub mod ansi;
 pub mod data;
 #[cfg(target_arch = "wasm32")]
-mod ffi;
+pub mod ffi;
 mod highlight;
 pub mod hit;
 pub mod markdown;
 pub mod shell;
 pub mod theme;
-mod view;
+pub mod view;
 
-pub use hit::{HitAreas, HitRef, LinkRegion};
-
-use ratatui_core::layout::Rect;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 pub const TAB_NAMES: [&str; 6] = [
     "About",
@@ -37,9 +35,10 @@ pub const WORK_TAB: usize = 3;
 pub const EDUCATION_TAB: usize = 4;
 pub const CONTACT_TAB: usize = 5;
 
-/// Minimum terminal geometry; below this the app draws a "resize me" screen.
-pub const MIN_COLS: u16 = 40;
-pub const MIN_ROWS: u16 = 12;
+/// Rows of a timeline card: title, optional detail, optional buttons, gap.
+pub fn card_height(event: &data::TimelineEvent) -> usize {
+    1 + usize::from(event.detail.is_some()) + usize::from(!event.links.is_empty()) + 1
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -68,25 +67,10 @@ pub struct Mods {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum MouseButton {
-    Left,
-    Middle,
-    Right,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum MouseKind {
-    Press(MouseButton),
-    Release(MouseButton),
+pub enum MouseEv {
+    Click { col: u16, row: u16 },
     ScrollUp,
     ScrollDown,
-}
-
-#[derive(Clone, Copy)]
-pub struct MouseEv {
-    pub kind: MouseKind,
-    pub col: u16,
-    pub row: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +92,14 @@ pub enum Modal {
     Help { scroll: usize },
 }
 
+thread_local! {
+    /// Actions produced by the latest input, drained by the wasm host.
+    pub(crate) static PENDING_ACTIONS: std::cell::RefCell<Vec<Action>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Clone is used to snapshot state for pure rendering.
+#[derive(Clone)]
 pub struct App {
     pub cols: u16,
     pub rows: u16,
@@ -119,7 +111,6 @@ pub struct App {
     selected: [usize; TAB_COUNT],
     pub modal: Option<Modal>,
     pub quit: bool,
-    pub(crate) hit: HitAreas,
     actions: Vec<Action>,
 }
 
@@ -140,7 +131,6 @@ impl App {
             selected: [0; TAB_COUNT],
             modal: None,
             quit: false,
-            hit: HitAreas::default(),
             actions: Vec::new(),
         }
     }
@@ -150,9 +140,17 @@ impl App {
         self.rows = rows.max(1);
     }
 
-    /// Renders the app through any ratatui backend and records mouse hit areas.
-    pub fn draw(&mut self, frame: &mut ratatui_core::terminal::Frame) {
-        view::draw(self, frame);
+    /// Rows visible inside the content pane (border box minus chrome).
+    pub fn viewport(&self) -> usize {
+        self.rows.saturating_sub(6) as usize
+    }
+
+    pub fn scroll(&self, tab: usize) -> usize {
+        self.scroll[tab]
+    }
+
+    pub fn selected(&self, tab: usize) -> usize {
+        self.selected[tab]
     }
 
     pub fn visited_count(&self) -> usize {
@@ -160,7 +158,67 @@ impl App {
     }
 
     pub fn take_actions(&mut self) -> Vec<Action> {
-        std::mem::take(&mut self.actions)
+        let actions = std::mem::take(&mut self.actions);
+        if !actions.is_empty() {
+            PENDING_ACTIONS.with(|pending| {
+                pending.borrow_mut().extend(actions.iter().cloned());
+            });
+        }
+        actions
+    }
+
+    /// Feeds one crossterm event into the state machine.
+    pub fn handle_event(&mut self, event: &Event) {
+        match event {
+            Event::Key(key) => self.handle_key_event(key),
+            Event::Mouse(mouse) => self.handle_mouse_event(mouse),
+            _ => {}
+        }
+    }
+
+    fn handle_key_event(&mut self, key: &KeyEvent) {
+        let mods = Mods {
+            ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
+            shift: key.modifiers.contains(KeyModifiers::SHIFT),
+            alt: key.modifiers.contains(KeyModifiers::ALT),
+        };
+        let mapped = match key.code {
+            KeyCode::Up => Key::Up,
+            KeyCode::Down => Key::Down,
+            KeyCode::Left => Key::Left,
+            KeyCode::Right => Key::Right,
+            KeyCode::Enter => Key::Enter,
+            KeyCode::Esc => Key::Esc,
+            KeyCode::Tab => {
+                if mods.shift {
+                    Key::BackTab
+                } else {
+                    Key::Tab
+                }
+            }
+            KeyCode::Backspace => Key::Backspace,
+            KeyCode::PageUp => Key::PageUp,
+            KeyCode::PageDown => Key::PageDown,
+            KeyCode::Home => Key::Home,
+            KeyCode::End => Key::End,
+            KeyCode::Delete => Key::Delete,
+            KeyCode::Char(character) => Key::Char(character),
+            _ => return,
+        };
+        self.handle(Input::Key { key: mapped, mods });
+    }
+
+    fn handle_mouse_event(&mut self, mouse: &MouseEvent) {
+        let input = match mouse.kind {
+            MouseEventKind::Down(_) => MouseEv::Click {
+                col: mouse.column,
+                row: mouse.row,
+            },
+            MouseEventKind::ScrollUp => MouseEv::ScrollUp,
+            MouseEventKind::ScrollDown => MouseEv::ScrollDown,
+            _ => return,
+        };
+        self.handle(Input::Mouse(input));
     }
 
     pub fn handle(&mut self, input: Input) {
@@ -184,7 +242,7 @@ impl App {
             Key::Right | Key::Char('l') | Key::Tab => self.switch_tab(self.tab + 1),
             Key::BackTab => self.switch_tab(self.tab + TAB_COUNT - 1),
             Key::Esc => {}
-            Key::Char('?') => self.open_help(),
+            Key::Char('?') => self.modal = Some(Modal::Help { scroll: 0 }),
             Key::Char('q') => self.quit = true,
             Key::Char(c @ '1'..='6') => self.switch_tab(c as usize - '1' as usize),
             Key::Up => self.move_selection(-1, 1),
@@ -312,69 +370,79 @@ impl App {
         }
     }
 
-    fn open_help(&mut self) {
-        self.modal = Some(Modal::Help { scroll: 0 });
-    }
-
     fn on_mouse(&mut self, mouse: MouseEv) {
-        match mouse.kind {
-            MouseKind::ScrollUp => self.on_scroll(mouse, -1),
-            MouseKind::ScrollDown => self.on_scroll(mouse, 1),
-            MouseKind::Release(_) => {}
-            MouseKind::Press(_) => self.on_click(mouse.col, mouse.row),
-        }
-    }
-
-    fn on_scroll(&mut self, _mouse: MouseEv, direction: i32) {
-        if self.modal.is_some() {
-            self.scroll_modal(direction);
-        } else {
-            self.move_selection(direction, 1);
+        match mouse {
+            MouseEv::ScrollUp | MouseEv::ScrollDown => {
+                let direction = match mouse {
+                    MouseEv::ScrollUp => -1,
+                    _ => 1,
+                };
+                if self.modal.is_some() {
+                    self.scroll_modal(direction);
+                } else {
+                    self.move_selection(direction, 1);
+                }
+            }
+            MouseEv::Click { col, row } => self.on_click(col, row),
         }
     }
 
     fn on_click(&mut self, col: u16, row: u16) {
-        let click = Rect::new(col, row, 1, 1);
-        let contains = |rect: Rect| rect.intersects(click);
-        if let Some(modal_rect) = self.hit.modal {
-            if contains(modal_rect) {
-                for link in &self.hit.links {
-                    if contains(link.rect) {
-                        self.actions.push(Action::OpenUrl(link.url.clone()));
-                        break;
-                    }
-                }
-                return;
+        match hit::hit_test(col, row) {
+            Some(hit::HitTarget::Link(url)) => {
+                self.actions.push(Action::OpenUrl(url));
             }
-            // Click on the backdrop closes the modal.
-            self.modal = None;
-            return;
-        }
-        for (index, tab_rect) in self.hit.tabs.iter().enumerate() {
-            if contains(*tab_rect) {
-                self.switch_tab(index);
-                return;
-            }
-        }
-        for link in &self.hit.links {
-            if contains(link.rect) {
-                self.actions.push(Action::OpenUrl(link.url.clone()));
-                return;
-            }
-        }
-        if matches!(self.tab, TIMELINE_TAB | PROJECTS_TAB) {
-            for (row_rect, index) in &self.hit.rows {
-                if contains(*row_rect) {
-                    if self.selected[self.tab] == *index {
+            Some(hit::HitTarget::Tab(index)) => self.switch_tab(index),
+            Some(hit::HitTarget::Item(index)) => {
+                if self.tab == TIMELINE_TAB || self.tab == PROJECTS_TAB {
+                    if self.selected[self.tab] == index {
                         self.open_selected();
                     } else {
-                        self.selected[self.tab] = *index;
+                        self.selected[self.tab] = index;
                     }
-                    return;
+                }
+            }
+            // Clicks outside any region close an open dialog.
+            None => {
+                if self.modal.is_some() {
+                    self.modal = None;
                 }
             }
         }
     }
+
+    /// Clamps list scroll so the selection stays inside the viewport.
+    pub fn clamp_list_scroll(&mut self) {
+        if !matches!(self.tab, TIMELINE_TAB | PROJECTS_TAB) {
+            return;
+        }
+        let (len, heights): (usize, Vec<usize>) = if self.tab == TIMELINE_TAB {
+            (
+                data::TIMELINE.len(),
+                data::TIMELINE.iter().map(card_height).collect(),
+            )
+        } else {
+            (data::PROJECTS.len(), vec![1; data::PROJECTS.len()])
+        };
+        let selected = self.selected[self.tab].min(len.saturating_sub(1));
+        self.selected[self.tab] = selected;
+        let viewport = self.viewport().max(1);
+        let mut scroll = self.scroll[self.tab];
+        let top = offset_for(&heights, selected);
+        if top < scroll {
+            scroll = top;
+        }
+        // Ensure the selected item's bottom fits.
+        let selected_bottom = top + heights[selected];
+        if scroll + viewport < selected_bottom {
+            scroll = selected_bottom.saturating_sub(viewport);
+        }
+        self.scroll[self.tab] = scroll;
+    }
+}
+
+fn offset_for(heights: &[usize], end: usize) -> usize {
+    heights.iter().take(end).sum()
 }
 
 fn modal_scroll(modal: &mut Modal) -> &mut usize {
@@ -439,15 +507,29 @@ mod tests {
     fn timeline_selection_and_modal() {
         let mut app = app();
         key(&mut app, Key::Char('2'));
-        assert_eq!(app.selected[TIMELINE_TAB], 0);
+        assert_eq!(app.selected(TIMELINE_TAB), 0);
         key(&mut app, Key::Down);
         key(&mut app, Key::Down);
-        assert_eq!(app.selected[TIMELINE_TAB], 2);
+        key(&mut app, Key::Char('j'));
+        assert_eq!(app.selected(TIMELINE_TAB), 3);
         key(&mut app, Key::Enter);
-        assert!(matches!(app.modal, Some(Modal::Timeline { event: 2, .. })));
+        assert!(matches!(app.modal, Some(Modal::Timeline { event: 3, .. })));
         key(&mut app, Key::Down);
         key(&mut app, Key::Esc);
         assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn modal_digits_open_buttons() {
+        let mut app = app();
+        key(&mut app, Key::Char('2'));
+        key(&mut app, Key::Enter);
+        key(&mut app, Key::Char('1'));
+        let actions = app.take_actions();
+        assert!(matches!(
+            actions.as_slice(),
+            [Action::OpenUrl(url)] if url.contains("flow.org")
+        ));
     }
 
     #[test]
@@ -455,18 +537,18 @@ mod tests {
         let mut app = app();
         key(&mut app, Key::Char('q'));
         assert!(app.quit);
-        let mut app = App::new();
-        app.resize(100, 30);
-        key(&mut app, Key::Char('c'));
-        assert!(!app.quit);
-        app.handle(Input::Key {
+        let mut fresh = App::new();
+        fresh.resize(100, 30);
+        key(&mut fresh, Key::Char('c'));
+        assert!(!fresh.quit);
+        fresh.handle(Input::Key {
             key: Key::Char('c'),
             mods: Mods {
                 ctrl: true,
                 ..Mods::default()
             },
         });
-        assert!(app.quit);
+        assert!(fresh.quit);
     }
 
     #[test]
@@ -475,10 +557,28 @@ mod tests {
         key(&mut app, Key::Char('2'));
         key(&mut app, Key::Up);
         key(&mut app, Key::Up);
-        assert_eq!(app.selected[TIMELINE_TAB], 0);
+        assert_eq!(app.selected(TIMELINE_TAB), 0);
         key(&mut app, Key::End);
-        assert_eq!(app.selected[TIMELINE_TAB], data::TIMELINE.len() - 1);
+        assert_eq!(app.selected(TIMELINE_TAB), data::TIMELINE.len() - 1);
         key(&mut app, Key::Down);
-        assert_eq!(app.selected[TIMELINE_TAB], data::TIMELINE.len() - 1);
+        assert_eq!(app.selected(TIMELINE_TAB), data::TIMELINE.len() - 1);
+    }
+
+    #[test]
+    fn crossterm_events_feed_the_machine() {
+        let mut app = app();
+        app.handle_event(&Event::Key(KeyEvent::new(
+            KeyCode::Char('2'),
+            KeyModifiers::NONE,
+        )));
+        assert_eq!(app.tab, TIMELINE_TAB);
+        app.handle_event(&Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }));
+        // Column 0/row 0 is the header title, not a tab; nothing changes.
+        assert_eq!(app.tab, TIMELINE_TAB);
     }
 }
