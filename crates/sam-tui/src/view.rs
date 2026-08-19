@@ -329,40 +329,34 @@ fn spans_width(spans: &[Span<'static>]) -> usize {
     spans.iter().map(|span| span.content.chars().count()).sum()
 }
 
-// --- About: the code block plus links ---------------------------------------------
+// --- About: the homepage's code block, nothing more -------------------------------
 
-fn about_code_lines() -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = highlight::doc_comment_lines()
-        .into_iter()
-        .map(Line::from)
-        .collect();
+/// The About pane is exactly the homepage's left column: the license header
+/// (with clickable `@doc` links) and the samlang program on the code surface.
+fn about_code_lines() -> (Vec<Line<'static>>, Vec<(usize, usize, String)>) {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut links: Vec<(usize, usize, String)> = Vec::new();
+    for (line_index, doc_line) in highlight::doc_comment_lines().into_iter().enumerate() {
+        if let Some(doc_link) = &doc_line.link {
+            links.push((line_index, doc_link.offset, doc_link.url.clone()));
+        }
+        lines.push(Line::from(doc_line.spans));
+    }
     // A blank line separates the doc block from the program, as on the site.
     lines.push(Line::default());
     lines.extend(highlight::program_lines().into_iter().map(Line::from));
-    lines
-}
-
-fn about_link_lines() -> Vec<ContentLine> {
-    let mut lines = markdown::parse("### links");
-    for link in data::ABOUT_DOC_LINKS {
-        lines.push(markdown::bullet_link(link.name, link.url));
-    }
-    lines
+    (lines, links)
 }
 
 fn about_doc_len() -> usize {
-    // code lines + one padding row top and bottom, plus the links section
-    about_code_lines().len() + 2 + about_link_lines().len()
+    // code lines + one padding row top and bottom
+    about_code_lines().0.len() + 2
 }
 
 fn draw_about(app: &mut App, frame: &mut Frame, inner: Rect, interactive: bool) {
-    let code_lines = about_code_lines();
-    let link_lines = about_link_lines();
-    let code_len = code_lines.len() + 2;
+    let (code_lines, doc_links) = about_code_lines();
     let scroll = app.scroll[ABOUT_TAB].min(about_doc_len().saturating_sub(1));
     app.scroll[ABOUT_TAB] = scroll;
-    let [code_area, rest_area] =
-        Layout::vertical([Constraint::Length(code_len as u16), Constraint::Min(0)]).areas(inner);
     // The homepage code block: its own surface with one cell of padding.
     let code_block = Block::default()
         .style(Style::new().bg(theme::CODE_BG))
@@ -370,20 +364,38 @@ fn draw_about(app: &mut App, frame: &mut Frame, inner: Rect, interactive: bool) 
     frame.render_widget(
         Paragraph::new(code_lines)
             .block(code_block)
-            .scroll((scroll.min(code_len) as u16, 0)),
-        code_area,
+            .scroll((scroll as u16, 0)),
+        inner,
     );
-    let rest_scroll = scroll.saturating_sub(code_len);
-    let rendered: Vec<Line<'static>> = link_lines
-        .iter()
-        .map(|line| Line::from(line.spans.clone()))
-        .collect();
-    frame.render_widget(
-        Paragraph::new(rendered).scroll((rest_scroll as u16, 0)),
-        rest_area,
+    if !interactive {
+        return;
+    }
+    // The doc links sit inside the padded, scrolled paragraph; map each
+    // (line, offset) back onto the screen to register click regions.
+    let content = Rect::new(
+        inner.x + 1,
+        inner.y + 1,
+        inner.width.saturating_sub(2),
+        inner.height.saturating_sub(2),
     );
-    if interactive {
-        collect_paragraph_links(&link_lines, rest_scroll, rest_area, &mut app.hit);
+    for (line_index, offset, url) in doc_links {
+        let visible = line_index as i64 - scroll as i64;
+        if visible < 0 {
+            continue;
+        }
+        let y = content.y + visible as u16;
+        if y >= content.bottom() {
+            continue;
+        }
+        let x = content.x + offset as u16;
+        let width = url.chars().count() as u16;
+        if x >= content.right() {
+            continue;
+        }
+        app.hit.links.push(LinkRegion {
+            rect: Rect::new(x, y, width.min(content.right() - x), 1),
+            url,
+        });
     }
 }
 

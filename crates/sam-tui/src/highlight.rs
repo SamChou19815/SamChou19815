@@ -43,19 +43,45 @@ fn plain_style() -> Style {
 }
 
 /// Renders the license header as comment-styled code lines.
-pub fn doc_comment_lines() -> Vec<Vec<Span<'static>>> {
-    let mut lines = vec![vec![styled("/**", comment_style())]];
-    lines.push(vec![styled(
-        &format!(" * {}", crate::data::COPYRIGHT),
-        comment_style(),
-    )]);
+/// A clickable URL embedded in a doc-comment line: its character offset
+/// within the line and its target.
+pub struct DocLink {
+    pub offset: usize,
+    pub url: String,
+}
+
+/// One doc-comment line: styled spans plus an optional embedded link.
+pub struct DocLine {
+    pub spans: Vec<Span<'static>>,
+    pub link: Option<DocLink>,
+}
+
+/// The license header as comment-styled code lines. The `@doc` URLs render
+/// like the homepage's doc links: comment-colored but underlined, and their
+/// positions are reported so the view can make them clickable.
+pub fn doc_comment_lines() -> Vec<DocLine> {
+    let plain = |text: &str| DocLine {
+        spans: vec![styled(text, comment_style())],
+        link: None,
+    };
+    let mut lines = vec![
+        plain("/**"),
+        plain(&format!(" * {}", crate::data::COPYRIGHT)),
+    ];
     for link in crate::data::ABOUT_DOC_LINKS {
-        lines.push(vec![
-            styled(&format!(" * @{} ", link.name), comment_style()),
-            styled(link.url, comment_style()),
-        ]);
+        let prefix = format!(" * @{} ", link.name);
+        lines.push(DocLine {
+            spans: vec![
+                styled(&prefix, comment_style()),
+                styled(link.url, comment_style().add_modifier(Modifier::UNDERLINED)),
+            ],
+            link: Some(DocLink {
+                offset: prefix.chars().count(),
+                url: link.url.to_string(),
+            }),
+        });
     }
-    lines.push(vec![styled(" */", comment_style())]);
+    lines.push(plain(" */"));
     lines
 }
 
