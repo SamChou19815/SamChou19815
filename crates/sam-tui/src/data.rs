@@ -4,7 +4,7 @@
 
 pub const COPYRIGHT: &str = "Copyright (C) 2015-2026 Developer Sam.";
 
-use ratatui_core::style::Color;
+use crossterm::style::Color;
 
 pub struct Link {
     pub name: &'static str,
@@ -41,11 +41,31 @@ impl Category {
     /// (tailwind 600-series: readable on the white homepage cards).
     pub fn color(self) -> Color {
         match self {
-            Category::Work => Color::Rgb(37, 99, 235),      // blue-600
-            Category::Education => Color::Rgb(22, 163, 74), // green-600
-            Category::Language => Color::Rgb(147, 51, 234), // purple-600
-            Category::Project => Color::Rgb(217, 119, 6),   // amber-600
-            Category::Milestone => Color::Rgb(8, 145, 178), // cyan-600
+            Category::Work => Color::Rgb {
+                r: 37,
+                g: 99,
+                b: 235,
+            }, // blue-600
+            Category::Education => Color::Rgb {
+                r: 22,
+                g: 163,
+                b: 74,
+            }, // green-600
+            Category::Language => Color::Rgb {
+                r: 147,
+                g: 51,
+                b: 234,
+            }, // purple-600
+            Category::Project => Color::Rgb {
+                r: 217,
+                g: 119,
+                b: 6,
+            }, // amber-600
+            Category::Milestone => Color::Rgb {
+                r: 8,
+                g: 145,
+                b: 178,
+            }, // cyan-600
         }
     }
 }

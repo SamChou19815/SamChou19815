@@ -27,3 +27,7 @@ packages/private-tools/**/commands/secret-*
 
 # Local Vercel folder
 .vercel
+
+# patched third-party crates, materialized by scripts/prepare-patched-deps.sh
+.patched-deps/*
+!.patched-deps/README.md

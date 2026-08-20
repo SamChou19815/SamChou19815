@@ -1,49 +1,45 @@
-//! The view layer: one component function per screen region, rendering
-//! through ratatui's widget system (`Layout`, `Block`, `Paragraph`, `List`).
-//! Interaction regions are collected next to the widgets that own them
-//! ([`crate::hit`]); mouse hit-testing itself stays in [`crate::App`].
+//! The iocraft component tree: one component per screen region, mirroring
+//! the homepage's design ([`crate::theme`]). Interactive regions register
+//! themselves with [`crate::hit`] each frame via `use_component_rect`.
 
-use crate::highlight;
-use crate::hit::HitAreas;
-use crate::markdown::{self, accent, dim, key_style, ContentLine};
-use crate::theme;
+use crate::hit::{self, HitTarget, Rect};
 use crate::{
-    data, App, LinkRegion, Modal, ABOUT_TAB, CONTACT_TAB, EDUCATION_TAB, MIN_COLS, MIN_ROWS,
-    PROJECTS_TAB, TAB_NAMES, TIMELINE_TAB, WORK_TAB,
+    data, markdown, theme, App, Modal, ABOUT_TAB, CONTACT_TAB, EDUCATION_TAB, PROJECTS_TAB,
+    TAB_NAMES, TIMELINE_TAB, WORK_TAB,
 };
-use ratatui_core::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui_core::style::{Modifier, Style};
-use ratatui_core::terminal::Frame;
-use ratatui_core::text::{Line, Span};
-use ratatui_widgets::block::{Block, Padding};
-use ratatui_widgets::clear::Clear;
-use ratatui_widgets::list::{List, ListItem, ListState};
-use ratatui_widgets::paragraph::Paragraph;
+use crossterm::style::Color;
+use iocraft::components::MixedTextContent;
+use iocraft::prelude::*;
+use iocraft::AnyElement;
 
-fn text_bold() -> Style {
-    Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD)
+/// The rect type reported by `use_component_rect`.
+type ComponentRect = taffy::Rect<i32>;
+
+const TITLE: &str = " DEVELOPER SAM ";
+const TAG: &str = " rust · wasm ";
+
+fn text(content: impl ToString) -> MixedTextContent {
+    MixedTextContent::new(content)
 }
 
-fn subtle() -> Style {
-    Style::new().fg(theme::SUBTLE)
+fn colored(content: impl ToString, color: Color) -> MixedTextContent {
+    text(content).color(color)
 }
 
-fn border_style() -> Style {
-    Style::new().fg(theme::BORDER)
+fn bold_colored(content: impl ToString, color: Color) -> MixedTextContent {
+    colored(content, color).weight(Weight::Bold)
 }
 
-fn select_style() -> Style {
-    // The homepage's own hover treatment (`bg-blue-500 bg-opacity-10`),
-    // scaled up to a selection: a soft blue tint with deep blue text.
-    Style::new().bg(theme::SELECT_BG).fg(theme::SELECT_FG)
+fn muted(content: impl ToString) -> MixedTextContent {
+    colored(content, theme::MUTED)
 }
 
 /// Total number of lines a scrolling tab pane can show.
 pub fn tab_line_count(tab: usize) -> usize {
     match tab {
-        TIMELINE_TAB => data::TIMELINE.iter().map(card_height).sum(),
+        TIMELINE_TAB => data::TIMELINE.iter().map(crate::card_height).sum(),
         PROJECTS_TAB => data::PROJECTS.len(),
-        ABOUT_TAB => about_doc_len(),
+        ABOUT_TAB => about_lines().len(),
         WORK_TAB => markdown::parse(data::WORK_MARKDOWN).len(),
         EDUCATION_TAB => markdown::parse(data::EDUCATION_MARKDOWN).len(),
         CONTACT_TAB => markdown::parse(data::CONTACT_MARKDOWN).len(),
@@ -53,770 +49,663 @@ pub fn tab_line_count(tab: usize) -> usize {
 
 /// Total number of lines a modal's scrollable body can show.
 pub fn modal_line_count(modal: &Modal) -> usize {
-    modal_body(modal).1.len()
+    modal_lines(modal).len()
 }
 
-pub fn draw(app: &mut App, frame: &mut Frame) {
-    app.hit = HitAreas::default();
-    let area = frame.area();
-    if area.width < MIN_COLS || area.height < MIN_ROWS {
-        let message = if area.width >= 34 {
-            " please resize to at least 40×12 "
-        } else {
-            " 40×12+ "
-        };
-        frame.render_widget(Paragraph::new(message).alignment(Alignment::Center), area);
-        return;
-    }
-    let [header, content, status] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(0),
-        Constraint::Length(1),
-    ])
-    .areas(area);
-    let modal_open = app.modal.is_some();
-    draw_header(app, frame, header);
-    draw_content(app, frame, content, !modal_open);
-    if modal_open {
-        draw_modal(app, frame, content);
-    }
-    draw_status(app, frame, status);
-}
+// --- Leaf components that register hit regions --------------------------------
 
-// --- Header: title, tabs, tag -------------------------------------------------
-
-const TITLE: &str = " DEVELOPER SAM ";
-const TAG: &str = " rust · wasm ";
-
-fn draw_header(app: &mut App, frame: &mut Frame, area: Rect) {
-    let mut constraints = Vec::with_capacity(TAB_NAMES.len() + 3);
-    let mut labels: Vec<(usize, String, bool)> = Vec::with_capacity(TAB_NAMES.len());
-    constraints.push(Constraint::Length(TITLE.len() as u16));
-    for (index, name) in TAB_NAMES.iter().enumerate() {
-        let label = format!(" {} {} ", index + 1, name);
-        constraints.push(Constraint::Length(label.len() as u16));
-        labels.push((index, label, index == app.tab));
-    }
-    constraints.push(Constraint::Min(0));
-    constraints.push(Constraint::Length(TAG.len() as u16));
-    let areas = Layout::horizontal(&constraints).split(area);
-
-    frame.render_widget(
-        Paragraph::new(Span::styled(TITLE, accent().add_modifier(Modifier::BOLD))),
-        areas[0],
-    );
-    for (position, (index, label, selected)) in labels.iter().enumerate() {
-        let style = if *selected {
-            select_style().add_modifier(Modifier::BOLD)
-        } else {
-            subtle()
-        };
-        let separator = if index + 1 < TAB_NAMES.len() {
-            "│"
-        } else {
-            ""
-        };
-        let line = Line::from(vec![
-            Span::styled(label.clone(), style),
-            Span::styled(separator, dim()),
-        ]);
-        frame.render_widget(Paragraph::new(line), areas[position + 1]);
-        app.hit.tabs.push(*areas.get(position + 1).unwrap_or(&area));
-    }
-    frame.render_widget(
-        Paragraph::new(Span::styled(TAG, dim())),
-        *areas.last().unwrap(),
-    );
-}
-
-// --- Content pane: one white card per tab ---------------------------------------
-
-fn draw_content(app: &mut App, frame: &mut Frame, area: Rect, interactive: bool) {
-    let total = tab_line_count(app.tab);
-    let position = match app.tab {
-        TIMELINE_TAB | PROJECTS_TAB => app.selected[app.tab] + 1,
-        _ => app.scroll[app.tab] + 1,
-    };
-    let counter = Line::from(Span::styled(
-        format!(" {}/{} ", position, total.max(1)),
-        dim(),
-    ))
-    .right_aligned();
-    let block = Block::bordered()
-        .border_style(border_style())
-        .style(Style::new().bg(theme::CARD_BG))
-        .title(Span::styled(
-            format!(" {} ", TAB_NAMES[app.tab]),
-            accent().add_modifier(Modifier::BOLD),
-        ))
-        .title(counter);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    match app.tab {
-        TIMELINE_TAB => draw_timeline(app, frame, inner, interactive),
-        PROJECTS_TAB => draw_projects(app, frame, inner, interactive),
-        ABOUT_TAB => draw_about(app, frame, inner, interactive),
-        WORK_TAB | EDUCATION_TAB | CONTACT_TAB => draw_markdown(app, frame, inner, interactive),
-        _ => {}
-    }
-}
-
-/// Timeline rows per card: title, optional detail, optional buttons, gap.
-fn card_height(event: &data::TimelineEvent) -> usize {
-    1 + usize::from(event.detail.is_some()) + usize::from(!event.links.is_empty()) + 1
-}
-
-fn card_item(event: &data::TimelineEvent, selected: bool) -> ListItem<'static> {
-    let mut lines = vec![Line::from(vec![
-        Span::styled(
-            if selected { "▸" } else { "●" },
-            accent().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-        Span::styled(event.title, text_bold()),
-        Span::raw("  "),
-        Span::styled(event.time, dim()),
-        Span::raw("  "),
-        Span::styled(
-            format!("[{}]", event.category.label()),
-            Style::new().fg(event.category.color()),
-        ),
-    ])];
-    if let Some(detail) = event.detail {
-        lines.push(Line::from(vec![
-            Span::styled("│", accent()),
-            Span::raw(" "),
-            Span::styled(detail, subtle()),
-        ]));
-    }
-    if !event.links.is_empty() {
-        let mut spans = vec![Span::styled("│", accent()), Span::raw(" ")];
-        for (index, link) in event.links.iter().enumerate() {
-            if index > 0 {
-                spans.push(Span::raw("  "));
-            }
-            spans.push(Span::styled(
-                format!(" {} ", link.name.to_uppercase()),
-                markdown::link_style(),
-            ));
-        }
-        lines.push(Line::from(spans));
-    }
-    lines.push(Line::default());
-    ListItem::new(lines)
-}
-
-fn draw_timeline(app: &mut App, frame: &mut Frame, inner: Rect, interactive: bool) {
-    let selected = app.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
-    let items: Vec<ListItem<'static>> = data::TIMELINE
-        .iter()
-        .enumerate()
-        .map(|(index, event)| card_item(event, index == selected))
-        .collect();
-    let list = List::new(items).highlight_style(select_style().add_modifier(Modifier::BOLD));
-    let mut state = ListState::default();
-    state.select(Some(selected));
-    frame.render_stateful_widget(list, inner, &mut state);
-    if interactive {
-        collect_timeline_hits(&mut app.hit, inner, state.offset());
-    }
-}
-
-fn collect_timeline_hits(hits: &mut HitAreas, inner: Rect, offset: usize) {
-    let mut y = inner.y;
-    for (index, event) in data::TIMELINE.iter().enumerate().skip(offset) {
-        if y >= inner.bottom() {
-            break;
-        }
-        let height = card_height(event) as u16;
-        // The trailing gap row is not part of the card's click target.
-        let rect = Rect::new(
-            inner.x,
-            y,
-            inner.width,
-            height.saturating_sub(1).min(inner.bottom() - y),
+fn register_rect(
+    rect: Option<crate::view::ComponentRect>,
+    kind: u8,
+    index: usize,
+    target: HitTarget,
+) {
+    if let Some(rect) = rect {
+        hit::register(
+            kind,
+            index,
+            Rect {
+                x: rect.left.max(0) as u16,
+                y: rect.top.max(0) as u16,
+                width: (rect.right - rect.left).max(0) as u16,
+                height: (rect.bottom - rect.top).max(0) as u16,
+            },
+            target,
         );
-        hits.rows.push((rect, index));
-        if !event.links.is_empty() {
-            let buttons_y = y + 1 + u16::from(event.detail.is_some());
-            if buttons_y < inner.bottom() {
-                let mut x = inner.x + 2;
-                for link in event.links {
-                    let width = (link.name.chars().count() + 2) as u16;
-                    if x + width > inner.right() {
-                        break;
-                    }
-                    hits.links.push(LinkRegion {
-                        rect: Rect::new(x, buttons_y, width, 1),
-                        url: link.url.to_string(),
-                    });
-                    x += width + 2;
-                }
+    }
+}
+
+#[derive(Props, Default)]
+struct TabLabelProps {
+    label: String,
+    selected: bool,
+    index: usize,
+}
+
+#[component]
+fn TabLabel(props: &TabLabelProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let rect = hooks.use_component_rect();
+    register_rect(rect, hit::TAB, props.index, HitTarget::Tab(props.index));
+    element! {
+        Text(
+            content: props.label.clone(),
+            color: if props.selected { theme::SELECT_FG } else { theme::SUBTLE },
+            weight: if props.selected { Weight::Bold } else { Weight::Normal },
+        )
+    }
+}
+
+#[derive(Props, Default)]
+struct TimelineTitleProps {
+    index: usize,
+    contents: Vec<MixedTextContent>,
+    selected: bool,
+}
+
+#[component]
+fn TimelineTitle(props: &TimelineTitleProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let rect = hooks.use_component_rect();
+    register_rect(rect, hit::ITEM, props.index, HitTarget::Item(props.index));
+    element! {
+        View(
+            flex_direction: FlexDirection::Row,
+            width: 100pct,
+            background_color: if props.selected { Some(theme::SELECT_BG) } else { None },
+        ) {
+            MixedText(contents: props.contents.clone())
+        }
+    }
+}
+
+#[derive(Props, Default)]
+struct ButtonProps {
+    label: String,
+    url: String,
+    index: usize,
+}
+
+#[component]
+fn Button(props: &ButtonProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let rect = hooks.use_component_rect();
+    register_rect(
+        rect,
+        hit::LINK,
+        props.index,
+        HitTarget::Link(props.url.clone()),
+    );
+    element! {
+        Text(content: props.label.clone(), color: theme::ACCENT_TEXT, weight: Weight::Bold)
+    }
+}
+
+#[derive(Props, Default)]
+struct ProjectRowProps {
+    index: usize,
+    id: String,
+    tagline: String,
+    selected: bool,
+}
+
+#[component]
+fn ProjectRow(props: &ProjectRowProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let rect = hooks.use_component_rect();
+    register_rect(rect, hit::ITEM, props.index, HitTarget::Item(props.index));
+    element! {
+        View(
+            flex_direction: FlexDirection::Row,
+            width: 100pct,
+            background_color: if props.selected { Some(theme::SELECT_BG) } else { None },
+        ) {
+            Text(content: if props.selected { "▸ " } else { "  " }, color: theme::SELECT_FG)
+            Text(content: format!("{:>2} ", props.index + 1), color: theme::MUTED)
+            Text(content: format!("{:<17}", props.id), color: theme::ACCENT_TEXT, weight: Weight::Bold)
+            Text(content: props.tagline.clone(), color: theme::SUBTLE)
+        }
+    }
+}
+
+#[derive(Props, Default)]
+struct LineProps {
+    contents: Vec<MixedTextContent>,
+    url: Option<String>,
+    index: usize,
+}
+
+#[component]
+fn Line(props: &LineProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let rect = hooks.use_component_rect();
+    if let Some(url) = props.url.as_deref() {
+        register_rect(
+            rect,
+            hit::LINK,
+            props.index,
+            HitTarget::Link(url.to_string()),
+        )
+    }
+    element! {
+        MixedText(contents: props.contents.clone())
+    }
+}
+
+// --- Root --------------------------------------------------------------------
+
+#[component]
+fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let mut system = hooks.use_context_mut::<SystemContext>();
+    let app = hooks.use_state(App::new);
+    let bump = hooks.use_state(|| 0u32);
+    // The render loop hands the tree a max width, not a definite size, so
+    // percentage width/height resolve to content. Anchor the tree to the
+    // real terminal size so the pane stretches and the card fills the screen.
+    let (terminal_width, terminal_height) = hooks.use_terminal_size();
+
+    {
+        let mut app = app;
+        let mut bump = bump;
+        hooks.use_terminal_events(move |event| {
+            let current = (*app.read()).clone();
+            let mut next = current;
+            if let Some(event) = terminal_event_to_crossterm(&event) {
+                next.handle_event(&event);
+                // Surface OpenUrl actions to the host.
+                next.take_actions();
             }
-        }
-        y = y.saturating_add(height);
-    }
-}
-
-fn draw_projects(app: &mut App, frame: &mut Frame, inner: Rect, interactive: bool) {
-    let selected = app.selected[PROJECTS_TAB].min(data::PROJECTS.len() - 1);
-    let items: Vec<ListItem<'static>> = data::PROJECTS
-        .iter()
-        .enumerate()
-        .map(|(index, project)| {
-            let line = Line::from(vec![
-                Span::raw(if index == selected { "▸ " } else { "  " }),
-                Span::styled(format!("{:>2} ", index + 1), dim()),
-                Span::styled(
-                    format!("{:<17}", project.id),
-                    Style::new()
-                        .fg(theme::ACCENT_TEXT)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(project.tagline, subtle()),
-            ]);
-            ListItem::new(line)
-        })
-        .collect();
-    let list = List::new(items).highlight_style(select_style().add_modifier(Modifier::BOLD));
-    let mut state = ListState::default();
-    state.select(Some(selected));
-    frame.render_stateful_widget(list, inner, &mut state);
-    if interactive {
-        for (y, index) in (inner.y..inner.bottom()).zip(state.offset()..data::PROJECTS.len()) {
-            app.hit
-                .rows
-                .push((Rect::new(inner.x, y, inner.width, 1), index));
-        }
-    }
-}
-
-// --- Markdown panes (work, education, contact) -----------------------------------
-
-fn draw_markdown(app: &mut App, frame: &mut Frame, inner: Rect, interactive: bool) {
-    let source = match app.tab {
-        WORK_TAB => data::WORK_MARKDOWN,
-        EDUCATION_TAB => data::EDUCATION_MARKDOWN,
-        _ => data::CONTACT_MARKDOWN,
-    };
-    let lines = markdown::parse(source);
-    let scroll = app.scroll[app.tab].min(lines.len().saturating_sub(1));
-    app.scroll[app.tab] = scroll;
-    let rendered: Vec<Line<'static>> = lines
-        .iter()
-        .map(|line| Line::from(line.spans.clone()))
-        .collect();
-    frame.render_widget(Paragraph::new(rendered).scroll((scroll as u16, 0)), inner);
-    if interactive {
-        collect_paragraph_links(&lines, scroll, inner, &mut app.hit);
-    }
-}
-
-/// Records link regions for the visible rows of a scrolled paragraph.
-fn collect_paragraph_links(lines: &[ContentLine], scroll: usize, area: Rect, hits: &mut HitAreas) {
-    for (index, y) in (scroll..lines.len()).zip(area.y..area.bottom()) {
-        if let Some(url) = &lines[index].link {
-            let width = spans_width(&lines[index].spans).min(area.width as usize) as u16;
-            hits.links.push(LinkRegion {
-                rect: Rect::new(area.x, y, width, 1),
-                url: url.clone(),
-            });
-        }
-    }
-}
-
-fn spans_width(spans: &[Span<'static>]) -> usize {
-    spans.iter().map(|span| span.content.chars().count()).sum()
-}
-
-// --- About: the homepage's code block, nothing more -------------------------------
-
-/// The About pane is exactly the homepage's left column: the license header
-/// (with clickable `@doc` links) and the samlang program on the code surface.
-fn about_code_lines() -> (Vec<Line<'static>>, Vec<(usize, usize, String)>) {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut links: Vec<(usize, usize, String)> = Vec::new();
-    for (line_index, doc_line) in highlight::doc_comment_lines().into_iter().enumerate() {
-        if let Some(doc_link) = &doc_line.link {
-            links.push((line_index, doc_link.offset, doc_link.url.clone()));
-        }
-        lines.push(Line::from(doc_line.spans));
-    }
-    // A blank line separates the doc block from the program, as on the site.
-    lines.push(Line::default());
-    lines.extend(highlight::program_lines().into_iter().map(Line::from));
-    (lines, links)
-}
-
-fn about_doc_len() -> usize {
-    // code lines + one padding row top and bottom
-    about_code_lines().0.len() + 2
-}
-
-fn draw_about(app: &mut App, frame: &mut Frame, inner: Rect, interactive: bool) {
-    let (code_lines, doc_links) = about_code_lines();
-    let scroll = app.scroll[ABOUT_TAB].min(about_doc_len().saturating_sub(1));
-    app.scroll[ABOUT_TAB] = scroll;
-    // The homepage code block: its own surface with one cell of padding.
-    let code_block = Block::default()
-        .style(Style::new().bg(theme::CODE_BG))
-        .padding(Padding::uniform(1));
-    frame.render_widget(
-        Paragraph::new(code_lines)
-            .block(code_block)
-            .scroll((scroll as u16, 0)),
-        inner,
-    );
-    if !interactive {
-        return;
-    }
-    // The doc links sit inside the padded, scrolled paragraph; map each
-    // (line, offset) back onto the screen to register click regions.
-    let content = Rect::new(
-        inner.x + 1,
-        inner.y + 1,
-        inner.width.saturating_sub(2),
-        inner.height.saturating_sub(2),
-    );
-    for (line_index, offset, url) in doc_links {
-        let visible = line_index as i64 - scroll as i64;
-        if visible < 0 {
-            continue;
-        }
-        let y = content.y + visible as u16;
-        if y >= content.bottom() {
-            continue;
-        }
-        let x = content.x + offset as u16;
-        let width = url.chars().count() as u16;
-        if x >= content.right() {
-            continue;
-        }
-        app.hit.links.push(LinkRegion {
-            rect: Rect::new(x, y, width.min(content.right() - x), 1),
-            url,
+            app.set(next);
+            bump.set(bump.get() + 1);
         });
     }
-}
 
-// --- Modals ----------------------------------------------------------------------
-
-/// The classic centered-rect helper from the ratatui popup guide.
-fn centered_rect(area: Rect) -> Rect {
-    let width = (area.width * 4 / 5).clamp(40, area.width.saturating_sub(2));
-    let height = (area.height * 4 / 5).clamp(10, area.height.saturating_sub(2));
-    Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + (area.height - height) / 2,
-        width,
-        height,
-    )
-}
-
-fn field(label: &str, value: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label}: "), accent()),
-        Span::raw(value.to_string()),
-    ])
-}
-
-/// Word-wraps `text` to `width` columns, one span per line.
-fn wrapped(text: &str, width: usize, style: Style) -> Vec<Span<'static>> {
-    if width < 8 {
-        return vec![Span::styled(text.to_string(), style)];
+    if app.read().quit {
+        system.exit();
     }
-    let mut lines = Vec::new();
-    let mut current = String::new();
-    for word in text.split(' ') {
-        let candidate_len = current.len() + word.len() + usize::from(!current.is_empty());
-        if !current.is_empty() && candidate_len > width {
-            lines.push(Span::styled(current.trim_end().to_string(), style));
-            current = word.to_string();
-        } else {
-            if !current.is_empty() {
-                current.push(' ');
+    let app = (*app.read()).clone();
+
+    let counter = pane_counter(&app);
+    element! {
+        View(
+            flex_direction: FlexDirection::Column,
+            width: terminal_width,
+            height: terminal_height,
+            background_color: theme::CARD_BG,
+        ) {
+            Header(tab: app.tab)
+            Pane(title: TAB_NAMES[app.tab].to_string(), counter: counter) {
+                #(content_element(&app))
             }
-            current.push_str(word);
-        }
-        while current.len() > width {
-            lines.push(Span::styled(current[..width].to_string(), style));
-            current = current[width..].trim_start().to_string();
+            StatusBar(tab: app.tab, modal_open: app.modal.is_some(), visited: app.visited_count())
+            #(app.modal.map(|modal| modal_element(&modal)))
         }
     }
-    lines.push(Span::styled(current, style));
+}
+
+/// "position/total" for the pane's title row, matching the old border title.
+fn pane_counter(app: &App) -> String {
+    let total = tab_line_count(app.tab);
+    let position = match app.tab {
+        TIMELINE_TAB | PROJECTS_TAB => app.selected(app.tab) + 1,
+        _ => app.scroll(app.tab) + 1,
+    };
+    format!(" {}/{} ", position, total.max(1))
+}
+
+/// The homepage's white card: a bordered box filling the remaining height,
+/// with the tab name and scroll counter as its title row.
+#[component]
+fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
+    element! {
+        View(
+            flex_direction: FlexDirection::Column,
+            width: 100pct,
+            flex_grow: 1.0_f32,
+            border_style: BorderStyle::Round,
+            border_color: theme::BORDER,
+            background_color: theme::CARD_BG,
+            overflow: Overflow::Hidden,
+        ) {
+            View(flex_direction: FlexDirection::Row, width: 100pct, justify_content: JustifyContent::SpaceBetween, padding_left: 1, padding_right: 1) {
+                Text(content: format!(" {} ", props.title), color: theme::ACCENT_TEXT, weight: Weight::Bold)
+                Text(content: props.counter.clone(), color: theme::MUTED)
+            }
+            View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden, padding_left: 1, padding_right: 1) {
+                #(props.children.drain(..))
+            }
+        }
+    }
+}
+
+#[derive(Props, Default)]
+struct PaneProps {
+    title: String,
+    counter: String,
+    children: Vec<AnyElement<'static>>,
+}
+
+/// The element tree for a given app state; exposed for tests.
+pub fn root_element() -> AnyElement<'static> {
+    element!(Root).into_any()
+}
+
+// --- Header ------------------------------------------------------------------
+
+#[derive(Props, Default)]
+struct HeaderProps {
+    tab: usize,
+}
+
+#[component]
+fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
+    let tab = props.tab;
+    element! {
+        View(flex_direction: FlexDirection::Row, width: 100pct) {
+            Text(content: TITLE, color: theme::ACCENT_TEXT, weight: Weight::Bold)
+            #(TAB_NAMES.iter().enumerate().map(|(index, name)| {
+                element! {
+                    TabLabel(
+                        label: format!(" {} {} ", index + 1, name),
+                        selected: index == tab,
+                        index: index,
+                    )
+                }
+            }))
+            View(flex_grow: 1.0_f32)
+            Text(content: TAG, color: theme::BORDER)
+        }
+    }
+}
+
+// --- Content panes -------------------------------------------------------------
+
+fn content_element(app: &App) -> AnyElement<'static> {
+    element_to_any(content_tree(app))
+}
+
+fn content_tree(app: &App) -> AnyElement<'static> {
+    match app.tab {
+        TIMELINE_TAB => timeline_element(app),
+        PROJECTS_TAB => projects_element(app),
+        ABOUT_TAB => about_element(app.scroll(ABOUT_TAB)),
+        WORK_TAB => markdown_element(data::WORK_MARKDOWN, app.scroll(WORK_TAB)),
+        EDUCATION_TAB => markdown_element(data::EDUCATION_MARKDOWN, app.scroll(EDUCATION_TAB)),
+        CONTACT_TAB => markdown_element(data::CONTACT_MARKDOWN, app.scroll(CONTACT_TAB)),
+        _ => element!(View).into_any(),
+    }
+}
+
+fn timeline_element(app: &App) -> AnyElement<'static> {
+    element_to_any(timeline_tree(app))
+}
+
+fn timeline_tree(app: &App) -> impl Into<AnyElement<'static>> {
+    let selected = app.selected(TIMELINE_TAB);
+    let cards: Vec<AnyElement<'static>> = data::TIMELINE
+        .iter()
+        .enumerate()
+        .skip(app.scroll(TIMELINE_TAB))
+        .map(|(index, event)| card_element(event, index, index == selected))
+        .collect();
+    element! {
+        View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
+            View(flex_direction: FlexDirection::Column, width: 100pct) {
+                #(cards)
+            }
+        }
+    }
+}
+
+fn card_element(event: &data::TimelineEvent, index: usize, selected: bool) -> AnyElement<'static> {
+    element_to_any(card_tree(event, index, selected))
+}
+
+fn card_tree(
+    event: &data::TimelineEvent,
+    index: usize,
+    selected: bool,
+) -> impl Into<AnyElement<'static>> {
+    let selected_color = if selected {
+        theme::SELECT_FG
+    } else {
+        theme::TEXT
+    };
+    let time_color = if selected {
+        theme::SELECT_FG
+    } else {
+        theme::MUTED
+    };
+    let tag_color = if selected {
+        theme::SELECT_FG
+    } else {
+        event.category.color()
+    };
+    let marker = if selected { "▸" } else { "●" };
+    let title_contents = vec![
+        colored(marker, theme::ACCENT_TEXT).weight(Weight::Bold),
+        colored(format!(" {}  ", event.title), selected_color),
+        colored(event.time, time_color),
+        colored(format!("  [{}]", event.category.label()), tag_color),
+    ];
+    element! {
+        View(flex_direction: FlexDirection::Column, width: 100pct) {
+            TimelineTitle(index: index, contents: title_contents, selected: selected)
+            #(event.detail.map(|detail| element! {
+                View(flex_direction: FlexDirection::Row, width: 100pct, background_color: if selected { Some(theme::SELECT_BG) } else { None }) {
+                    Text(content: "│ ", color: theme::ACCENT_TEXT)
+                    Text(content: detail, color: theme::SUBTLE)
+                }
+            }))
+            #(if event.links.is_empty() { None } else { Some(element! {
+                View(flex_direction: FlexDirection::Row, width: 100pct, background_color: if selected { Some(theme::SELECT_BG) } else { None }) {
+                    Text(content: "│", color: theme::ACCENT_TEXT)
+                    #(event.links.iter().enumerate().map(|(link_index, link)| element! {
+                        Button(label: format!(" {} ", link.name.to_uppercase()), url: link.url.to_string(), index: link_index)
+                    }))
+                }
+            }) })
+        }
+    }
+}
+
+fn projects_element(app: &App) -> AnyElement<'static> {
+    element_to_any(projects_tree(app))
+}
+
+fn projects_tree(app: &App) -> impl Into<AnyElement<'static>> {
+    let selected = app.selected(PROJECTS_TAB);
+    let rows: Vec<AnyElement<'static>> = data::PROJECTS
+        .iter()
+        .enumerate()
+        .skip(app.scroll(PROJECTS_TAB))
+        .map(|(index, project)| {
+            element_to_any(element! {
+                ProjectRow(index: index, id: project.id.to_string(), tagline: project.tagline.to_string(), selected: index == selected)
+            })
+        })
+        .collect();
+    element! {
+        View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
+            #(rows)
+        }
+    }
+}
+
+fn markdown_element(source: &'static str, scroll: usize) -> AnyElement<'static> {
+    element_to_any(markdown_tree(source, scroll))
+}
+
+fn markdown_tree(source: &'static str, scroll: usize) -> impl Into<AnyElement<'static>> {
+    let lines = markdown::parse(source);
+    let rows: Vec<AnyElement<'static>> = lines
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .map(|(index, line)| line_element(line, index))
+        .collect();
+    element! {
+        View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
+            #(rows)
+        }
+    }
+}
+
+fn line_element(line: &markdown::ContentLine, index: usize) -> AnyElement<'static> {
+    element_to_any(element! {
+        Line(contents: line.contents.clone(), url: line.link.clone(), index: index)
+    })
+}
+
+fn about_lines() -> Vec<markdown::ContentLine> {
+    let mut lines = Vec::new();
+    for code in crate::highlight::doc_comment_lines() {
+        lines.push(markdown::ContentLine {
+            contents: code,
+            link: None,
+        });
+    }
+    lines.push(markdown::ContentLine {
+        contents: Vec::new(),
+        link: None,
+    });
+    for code in crate::highlight::program_lines() {
+        lines.push(markdown::ContentLine {
+            contents: code,
+            link: None,
+        });
+    }
     lines
 }
 
-fn modal_body(modal: &Modal) -> (String, Vec<Line<'static>>, Vec<Option<String>>) {
-    match modal {
+fn about_element(scroll: usize) -> AnyElement<'static> {
+    element_to_any(about_tree(scroll))
+}
+
+fn about_tree(scroll: usize) -> impl Into<AnyElement<'static>> {
+    let lines = about_lines();
+    let rows: Vec<AnyElement<'static>> = lines
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .map(|(index, line)| line_element(line, index))
+        .collect();
+    element! {
+        View(
+            flex_direction: FlexDirection::Column,
+            width: 100pct,
+            flex_grow: 1.0_f32,
+            overflow: Overflow::Hidden,
+            background_color: theme::CODE_BG,
+            padding: 1,
+        ) {
+            #(rows)
+        }
+    }
+}
+
+// --- Modal --------------------------------------------------------------------
+
+fn modal_lines(modal: &Modal) -> Vec<markdown::ContentLine> {
+    let mut lines = Vec::new();
+    let (fields, links): (Vec<String>, &[data::Link]) = match modal {
         Modal::Timeline { event, .. } => {
             let event = &data::TIMELINE[*event];
-            let mut lines = vec![
-                field("time", event.time),
-                field("category", event.category.label()),
-            ];
-            let mut links = vec![None, None];
-            if let Some(detail) = event.detail {
-                lines.push(Line::default());
-                links.push(None);
-                for span in wrapped(detail, 60, subtle()) {
-                    lines.push(Line::from(vec![span]));
-                    links.push(None);
-                }
-            }
-            if !event.links.is_empty() {
-                lines.push(Line::default());
-                links.push(None);
-                lines.push(Line::from(Span::styled(
-                    "links (press 1-9)",
-                    key_style().add_modifier(Modifier::BOLD),
-                )));
-                links.push(None);
-                for (index, link) in event.links.iter().enumerate() {
-                    let line = markdown::bullet_link(link.name, link.url);
-                    let mut spans = vec![Span::styled(format!("{:<2} ", index + 1), dim())];
-                    spans.extend(line.spans.clone());
-                    lines.push(Line::from(spans));
-                    links.push(line.link.clone());
-                }
-            }
-            (event.title.to_string(), lines, links)
+            (
+                vec![
+                    format!("time: {}", event.time),
+                    format!("category: {}", event.category.label()),
+                ],
+                event.links,
+            )
         }
         Modal::Project { project, .. } => {
             let project = &data::PROJECTS[*project];
-            let mut lines = Vec::new();
-            let mut links = Vec::new();
-            for span in wrapped(project.tagline, 60, subtle()) {
-                lines.push(Line::from(vec![span]));
-                links.push(None);
-            }
-            lines.push(Line::default());
-            links.push(None);
-            lines.push(Line::from(Span::styled(
-                "links",
-                key_style().add_modifier(Modifier::BOLD),
-            )));
-            links.push(None);
-            for (index, link) in project.links.iter().enumerate() {
-                let line = markdown::bullet_link(link.name, link.url);
-                let mut spans = vec![Span::styled(format!("{:<2} ", index + 1), dim())];
-                spans.extend(line.spans.clone());
-                lines.push(Line::from(spans));
-                links.push(line.link.clone());
-            }
-            (format!("project — {}", project.id), lines, links)
+            (vec![project.tagline.to_string()], project.links)
         }
-        Modal::Help { .. } => {
-            let bindings = [
-                ("←/→ or h/l", "switch between tabs"),
-                ("1 … 6", "jump to a tab"),
-                ("↑/↓ or j/k", "move selection / scroll"),
-                ("Enter", "open details (timeline, projects)"),
-                ("1 … 9", "open a button of the open dialog"),
-                ("g / G", "jump to top / bottom"),
-                ("Esc", "close this dialog"),
-                ("?", "toggle this help"),
-                ("q / Ctrl+C", "quit"),
-                ("mouse", "click tabs, cards and buttons · wheel scrolls"),
-            ];
-            let lines = bindings
-                .into_iter()
-                .map(|(keys, description)| {
-                    Line::from(vec![
-                        Span::styled(
-                            format!("  {keys:<14}"),
-                            key_style().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(description, subtle()),
-                    ])
-                })
-                .collect();
-            ("help".to_string(), lines, vec![None; bindings_len()])
-        }
-    }
-}
-
-fn bindings_len() -> usize {
-    10
-}
-
-fn draw_modal(app: &mut App, frame: &mut Frame, content: Rect) {
-    let modal = app
-        .modal
-        .clone()
-        .expect("draw_modal called without a modal");
-    let rect = centered_rect(content);
-    app.hit.modal = Some(rect);
-    frame.render_widget(Clear, rect);
-    let (title, body, links) = modal_body(&modal);
-    let scroll = *match &modal {
-        Modal::Timeline { scroll, .. } | Modal::Project { scroll, .. } | Modal::Help { scroll } => {
-            scroll
-        }
+        Modal::Help { .. } => (Vec::new(), &[]),
     };
-    let block = Block::bordered()
-        .border_style(border_style())
-        .style(Style::new().bg(theme::CARD_BG))
-        .title(Span::styled(
-            format!(" {title} "),
-            select_style().add_modifier(Modifier::BOLD),
-        ));
-    let inner = block.inner(rect);
-    frame.render_widget(
-        Paragraph::new(body).block(block).scroll((scroll as u16, 0)),
-        rect,
-    );
-    for (index, y) in (scroll..links.len()).zip(inner.y..inner.bottom()) {
-        if let Some(url) = &links[index] {
-            app.hit.links.push(LinkRegion {
-                rect: Rect::new(inner.x, y, inner.width, 1),
-                url: url.clone(),
+    for field in fields {
+        lines.push(markdown::ContentLine {
+            contents: vec![colored(field, theme::TEXT)],
+            link: None,
+        });
+    }
+    lines.push(markdown::ContentLine {
+        contents: Vec::new(),
+        link: None,
+    });
+    if !matches!(modal, Modal::Help { .. }) {
+        lines.push(markdown::ContentLine {
+            contents: vec![bold_colored("links (press 1-9)", theme::ACCENT_TEXT)],
+            link: None,
+        });
+        for link in links {
+            lines.push(markdown::bullet_link(link.name, link.url));
+        }
+    } else {
+        for (keys, description) in [
+            ("←/→ or h/l", "switch between tabs"),
+            ("1 … 6", "jump to a tab"),
+            ("↑/↓ or j/k", "move selection / scroll"),
+            ("Enter", "open details (timeline, projects)"),
+            ("1 … 9", "open a button of the open dialog"),
+            ("g / G", "jump to top / bottom"),
+            ("Esc", "close this dialog"),
+            ("?", "toggle this help"),
+            ("q / Ctrl+C", "quit"),
+            ("mouse", "click tabs, cards and buttons · wheel scrolls"),
+        ] {
+            lines.push(markdown::ContentLine {
+                contents: vec![
+                    bold_colored(format!("  {keys:<14}"), theme::ACCENT_TEXT),
+                    colored(description, theme::SUBTLE),
+                ],
+                link: None,
             });
         }
     }
+    lines
 }
 
-// --- Status bar -------------------------------------------------------------------
-
-fn draw_status(app: &mut App, frame: &mut Frame, area: Rect) {
-    let key = |text: &str| Span::styled(text.to_string(), key_style().add_modifier(Modifier::BOLD));
-    let spans: Vec<Span<'static>> = if app.modal.is_some() {
-        vec![
-            key("↑/↓"),
-            Span::styled(" scroll · ", dim()),
-            key("1-9"),
-            Span::styled(" open button · ", dim()),
-            key("Esc"),
-            Span::styled(" close", dim()),
-        ]
-    } else if matches!(app.tab, TIMELINE_TAB | PROJECTS_TAB) {
-        vec![
-            key("↑/↓"),
-            Span::styled(" select · ", dim()),
-            key("Enter"),
-            Span::styled(" details · ", dim()),
-            key("←/→"),
-            Span::styled(" tabs · ", dim()),
-            key("?"),
-            Span::styled(" help · ", dim()),
-            key("q"),
-            Span::styled(" quit", dim()),
-        ]
-    } else {
-        vec![
-            key("↑/↓"),
-            Span::styled(" scroll · ", dim()),
-            key("←/→"),
-            Span::styled(" tabs · ", dim()),
-            key("?"),
-            Span::styled(" help · ", dim()),
-            key("q"),
-            Span::styled(" quit", dim()),
-        ]
-    };
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-
-    let visited = app.visited_count();
-    let complete = visited == 6;
-    let progress_style = if complete {
-        Style::new().fg(theme::STAR).add_modifier(Modifier::BOLD)
-    } else {
-        subtle()
-    };
-    let progress = Line::from(vec![
-        Span::styled(if complete { "★" } else { "◆" }, progress_style),
-        Span::styled(format!(" {visited}/6"), progress_style),
-    ]);
-    frame.render_widget(Paragraph::new(progress).alignment(Alignment::Right), area);
+fn modal_element(modal: &Modal) -> AnyElement<'static> {
+    element_to_any(modal_tree(modal))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Input, Key, Mods};
-    use ratatui_core::backend::TestBackend;
-    use ratatui_core::terminal::Terminal;
-
-    fn app(cols: u16, rows: u16) -> App {
-        let mut app = App::new();
-        app.resize(cols, rows);
-        app
-    }
-
-    fn frame_text(app: &mut App) -> String {
-        let mut terminal =
-            Terminal::new(TestBackend::new(app.cols, app.rows)).expect("TestBackend cannot fail");
-        terminal
-            .draw(|frame| app.draw(frame))
-            .expect("TestBackend cannot fail");
-        let buffer = terminal.backend().buffer();
-        let mut text = String::new();
-        for y in 0..buffer.area.height {
-            for x in 0..buffer.area.width {
-                text.push_str(buffer.content[(y * buffer.area.width + x) as usize].symbol());
-            }
-            text.push('\n');
+fn modal_tree(modal: &Modal) -> impl Into<AnyElement<'static>> {
+    let scroll = match modal {
+        Modal::Timeline { scroll, .. } | Modal::Project { scroll, .. } | Modal::Help { scroll } => {
+            *scroll
         }
-        text
-    }
-
-    fn press(app: &mut App, key: Key) {
-        app.handle(Input::Key {
-            key,
-            mods: Mods::default(),
-        });
-    }
-
-    #[test]
-    fn renders_header_tabs_and_timeline_cards() {
-        let mut app = app(110, 30);
-        press(&mut app, Key::Char('2'));
-        let text = frame_text(&mut app);
-        assert!(text.contains("DEVELOPER SAM"));
-        assert!(text.contains("Timeline"));
-        assert!(text.contains("● Facebook SWE"));
-        assert!(text.contains("│ Working on Flow's type system"));
-        assert!(text.contains("[work]"));
-        assert!(!text.contains("please resize"));
-    }
-
-    #[test]
-    fn timeline_cards_have_homepage_buttons() {
-        let mut app = app(110, 30);
-        press(&mut app, Key::Char('2'));
-        frame_text(&mut app);
-        assert!(app
-            .hit
-            .links
-            .iter()
-            .any(|link| link.url == "https://flow.org"));
-    }
-
-    #[test]
-    fn opens_timeline_detail_modal_with_links() {
-        let mut app = app(110, 30);
-        press(&mut app, Key::Char('2'));
-        press(&mut app, Key::Enter);
-        let text = frame_text(&mut app);
-        assert!(text.contains("time:"));
-        assert!(text.contains("category:"));
-        assert!(text.contains("https://flow.org"));
-        assert!(app.hit.modal.is_some());
-        assert!(app
-            .hit
-            .links
-            .iter()
-            .any(|link| link.url.contains("flow.org")));
-        assert!(app.hit.rows.is_empty());
-    }
-
-    #[test]
-    fn records_clickable_links_on_contact_tab() {
-        let mut app = app(110, 30);
-        press(&mut app, Key::Char('6'));
-        let text = frame_text(&mut app);
-        assert!(text.contains("Ways to reach Developer Sam"));
-        assert!(text.contains("GITHUB"));
-        assert!(app
-            .hit
-            .links
-            .iter()
-            .any(|link| link.url == "https://github.com/SamChou19815"));
-    }
-
-    #[test]
-    fn renders_about_program_on_code_panel() {
-        let mut app = app(110, 40);
-        let text = frame_text(&mut app);
-        assert!(text.contains("import {List} from std.list;"));
-        assert!(text.contains("Developer.init(github, projects)"));
-        assert!(text.contains("@demo https://samlang.io/demo"));
-        assert!(app
-            .hit
-            .links
-            .iter()
-            .any(|link| link.url.contains("samlang.io/demo")));
-    }
-
-    #[test]
-    fn code_panel_paints_the_code_block_background() {
-        let mut app = app(110, 40);
-        let mut terminal =
-            Terminal::new(TestBackend::new(app.cols, app.rows)).expect("TestBackend cannot fail");
-        terminal
-            .draw(|frame| app.draw(frame))
-            .expect("TestBackend cannot fail");
-        let buffer = terminal.backend().buffer();
-        let width = buffer.area.width as usize;
-        let mut found = false;
-        for (index, cell) in buffer.content.iter().enumerate() {
-            if cell.symbol() == "i"
-                && index % width != 0
-                && buffer
-                    .content
-                    .get(index - 1)
-                    .map(|c| c.symbol() == " ")
-                    .unwrap_or(false)
-            {
-                let row: String = buffer.content
-                    [(index / width) * width..(index / width + 1) * width]
-                    .iter()
-                    .map(|c| c.symbol())
-                    .collect();
-                if row.contains("import {List} from std.list") {
-                    assert_eq!(
-                        cell.style().bg,
-                        Some(theme::CODE_BG),
-                        "code rows must sit on the code-block background"
-                    );
-                    found = true;
-                    break;
+    };
+    let title = match modal {
+        Modal::Timeline { event, .. } => format!(" {} ", data::TIMELINE[*event].title),
+        Modal::Project { project, .. } => format!(" project — {} ", data::PROJECTS[*project].id),
+        Modal::Help { .. } => " help ".to_string(),
+    };
+    let lines = modal_lines(modal);
+    let rows: Vec<AnyElement<'static>> = lines
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .map(|(index, line)| line_element(line, index))
+        .collect();
+    element! {
+        View(
+            position: Position::Absolute,
+            inset: 0,
+            width: 100pct,
+            height: 100pct,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+        ) {
+            View(
+                width: 80pct,
+                height: 80pct,
+                border_style: BorderStyle::Round,
+                border_color: theme::BORDER,
+                background_color: theme::CARD_BG,
+                flex_direction: FlexDirection::Column,
+                overflow: Overflow::Hidden,
+            ) {
+                Text(content: title, color: theme::SELECT_FG, weight: Weight::Bold)
+                View(flex_direction: FlexDirection::Column, width: 100pct, padding: 1, overflow: Overflow::Hidden) {
+                    #(rows)
                 }
             }
         }
-        assert!(found, "the program's import line must be rendered");
     }
+}
 
-    #[test]
-    fn renders_markdown_structure_on_work_tab() {
-        let mut app = app(110, 40);
-        press(&mut app, Key::Char('4'));
-        let text = frame_text(&mut app);
-        assert!(text.contains("Software Engineer, Flow — Meta"));
-        assert!(text.contains("February 2022 — present"));
-        assert!(text.contains("https://flow.org"));
-        assert!(app
-            .hit
-            .links
-            .iter()
-            .any(|link| link.url == "https://flow.org"));
-    }
+// --- Status bar ----------------------------------------------------------------
 
-    #[test]
-    fn tiny_terminal_shows_resize_hint_instead_of_panicking() {
-        let mut tiny = app(20, 8);
-        assert!(frame_text(&mut tiny).contains("40×12"));
-        let mut narrow = app(80, 10);
-        assert!(frame_text(&mut narrow).contains("please resize"));
-    }
+#[derive(Props, Default)]
+struct StatusBarProps {
+    tab: usize,
+    modal_open: bool,
+    visited: usize,
+}
 
-    #[test]
-    fn serializes_to_ansi_with_link_table() {
-        let mut app = app(110, 30);
-        press(&mut app, Key::Char('6'));
-        let mut terminal =
-            Terminal::new(TestBackend::new(app.cols, app.rows)).expect("TestBackend cannot fail");
-        terminal
-            .draw(|frame| app.draw(frame))
-            .expect("TestBackend cannot fail");
-        let buffer = terminal.backend().buffer().clone();
-        let bytes = crate::ansi::serialize_frame(&buffer, &app.hit.links);
-        let frame =
-            String::from_utf8(bytes.split(|byte| *byte == 0).next().unwrap().to_vec()).unwrap();
-        assert!(frame.contains("\x1b[1;1H"));
-        assert!(frame.contains("developersam.com"));
-        let separator = bytes.iter().position(|byte| *byte == 0).unwrap();
-        let count = u32::from_le_bytes(bytes[separator + 1..separator + 5].try_into().unwrap());
-        assert_eq!(count as usize, app.hit.links.len());
+#[component]
+fn StatusBar(props: &StatusBarProps) -> impl Into<AnyElement<'static>> {
+    let (tab, modal_open, visited) = (props.tab, props.modal_open, props.visited);
+    let key = |text: String| bold_colored(text, theme::ACCENT_TEXT);
+    let mut contents: Vec<MixedTextContent> = Vec::new();
+    if modal_open {
+        contents.push(key("↑/↓".into()));
+        contents.push(muted(" scroll · "));
+        contents.push(key("1-9".into()));
+        contents.push(muted(" open button · "));
+        contents.push(key("Esc".into()));
+        contents.push(muted(" close"));
+    } else if matches!(tab, TIMELINE_TAB | PROJECTS_TAB) {
+        contents.push(key("↑/↓".into()));
+        contents.push(muted(" select · "));
+        contents.push(key("Enter".into()));
+        contents.push(muted(" details · "));
+        contents.push(key("←/→".into()));
+        contents.push(muted(" tabs · "));
+        contents.push(key("?".into()));
+        contents.push(muted(" help · "));
+        contents.push(key("q".into()));
+        contents.push(muted(" quit"));
+    } else {
+        contents.push(key("↑/↓".into()));
+        contents.push(muted(" scroll · "));
+        contents.push(key("←/→".into()));
+        contents.push(muted(" tabs · "));
+        contents.push(key("?".into()));
+        contents.push(muted(" help · "));
+        contents.push(key("q".into()));
+        contents.push(muted(" quit"));
     }
+    let complete = visited == 6;
+    let progress_color = if complete { theme::STAR } else { theme::MUTED };
+    element! {
+        View(flex_direction: FlexDirection::Row, width: 100pct, justify_content: JustifyContent::SpaceBetween) {
+            MixedText(contents: contents)
+            MixedText(contents: vec![
+                colored(format!(" {} {}/6 ", if complete { "★" } else { "◆" }, visited), progress_color),
+            ])
+        }
+    }
+}
+
+/// Clones enough of the app to render a pure frame.
+impl App {
+    pub fn clone_snapshot(&self) -> AppSnapshot {
+        AppSnapshot {
+            tab: self.tab,
+            scroll: self.scroll,
+            selected: self.selected,
+            modal: self.modal.clone(),
+            visited_count: self.visited_count(),
+        }
+    }
+}
+
+pub struct AppSnapshot {
+    pub tab: usize,
+    pub scroll: [usize; 6],
+    pub selected: [usize; 6],
+    pub modal: Option<Modal>,
+    pub visited_count: usize,
+}
+
+fn terminal_event_to_crossterm(event: &TerminalEvent) -> Option<crossterm::event::Event> {
+    match event {
+        TerminalEvent::Key(key) => Some(crossterm::event::Event::Key(
+            crossterm::event::KeyEvent::new(key.code, key.modifiers),
+        )),
+        // iocraft wraps crossterm mouse events losslessly; route them back so
+        // handle_event can hit-test clicks against the registered rects.
+        TerminalEvent::FullscreenMouse(mouse) => Some(crossterm::event::Event::Mouse(
+            crossterm::event::MouseEvent {
+                kind: mouse.kind,
+                column: mouse.column,
+                row: mouse.row,
+                modifiers: mouse.modifiers,
+            },
+        )),
+        _ => None,
+    }
+}
+
+fn element_to_any(element: impl Into<AnyElement<'static>>) -> AnyElement<'static> {
+    element.into()
 }

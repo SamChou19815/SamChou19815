@@ -19,6 +19,8 @@ rustup target add wasm32-unknown-unknown 2>/dev/null || true
 
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$REPO_ROOT"
+# Materialize the patched crossterm/iocraft sources [patch.crates-io] needs.
+./scripts/prepare-patched-deps.sh
 cargo build --release -p sam-tui --target wasm32-unknown-unknown
 mkdir -p packages/www/public/wasm
 cp target/wasm32-unknown-unknown/release/sam_tui.wasm packages/www/public/wasm/sam-tui.wasm

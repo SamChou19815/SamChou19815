@@ -2,6 +2,12 @@
 resolver = "2"
 members = ["crates/*"]
 
+# wasm32-patched third-party crates, materialized into .patched-deps/ by
+# scripts/prepare-patched-deps.sh; see patches/README.md.
+[patch.crates-io]
+crossterm = { path = ".patched-deps/crossterm" }
+iocraft = { path = ".patched-deps/iocraft" }
+
 [workspace.package]
 edition = "2021"
 license = "MIT"
