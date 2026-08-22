@@ -352,7 +352,13 @@ fn read_file(path: &[String]) -> Option<String> {
         ["about.txt"] => {
             let mut out = String::new();
             for line in highlight::doc_comment_lines() {
-                out.push_str(&spans_line(&line));
+                // The `@` tags carry a URL; make them the hyperlinks a terminal
+                // can open, as they are anchors on the homepage's docblock.
+                let rendered = spans_line(&line.contents);
+                out.push_str(&match &line.link {
+                    Some(url) => link(&rendered, url),
+                    None => rendered,
+                });
                 out.push('\n');
             }
             out.push('\n');

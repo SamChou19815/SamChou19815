@@ -461,6 +461,9 @@ impl App {
                     }
                 }
             }
+            // A click that lands on the open dialog itself, on anything but one
+            // of its links: it is already where the reader wants to be.
+            Some(hit::HitTarget::Dialog) => {}
             // Clicks outside any region close an open dialog.
             None => {
                 if self.modal.is_some() {
@@ -531,6 +534,25 @@ mod tests {
             key,
             mods: Mods::default(),
         });
+    }
+
+    fn click(app: &mut App, col: u16, row: u16) {
+        app.handle(Input::Mouse(MouseEv::Click { col, row }));
+    }
+
+    fn rect(x: u16, y: u16, width: u16, height: u16) -> hit::Rect {
+        hit::Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// Opens the timeline's first card, as a click on it would.
+    fn open_first_card(app: &mut App) {
+        key(app, Key::Char('2'));
+        key(app, Key::Enter);
     }
 
     #[test]
@@ -651,6 +673,63 @@ mod tests {
         app.handle_event(&right(KeyEventKind::Repeat));
         app.handle_event(&right(KeyEventKind::Release));
         assert_eq!(app.tab, PROJECTS_TAB);
+    }
+
+    #[test]
+    fn a_click_on_a_card_selects_it_then_opens_it() {
+        let mut app = app();
+        key(&mut app, Key::Char('2'));
+        hit::begin_frame(false);
+        hit::register(hit::PANE, rect(0, 3, 80, 6), hit::HitTarget::Item(4));
+        click(&mut app, 10, 5);
+        assert_eq!(app.selected(TIMELINE_TAB), 4);
+        assert!(app.modal.is_none());
+        click(&mut app, 10, 5);
+        assert!(matches!(app.modal, Some(Modal::Timeline { event: 4, .. })));
+    }
+
+    /// The pane keeps laying out its cards behind an open dialog. A click that
+    /// lands on the dialog used to fall through to whichever card it covered,
+    /// selecting it — or opening its dialog instead of the one on screen.
+    #[test]
+    fn a_click_does_not_fall_through_a_dialog_to_the_pane() {
+        let mut app = app();
+        open_first_card(&mut app);
+        hit::begin_frame(true);
+        hit::register(hit::PANE, rect(0, 3, 80, 6), hit::HitTarget::Item(4));
+        click(&mut app, 10, 5);
+        assert_eq!(
+            app.selected(TIMELINE_TAB),
+            0,
+            "the card behind the dialog stays untouched"
+        );
+        assert!(app.modal.is_none(), "the click dismisses the dialog");
+    }
+
+    #[test]
+    fn a_click_on_the_dialog_leaves_it_open() {
+        let mut app = app();
+        open_first_card(&mut app);
+        hit::begin_frame(true);
+        hit::register(hit::DIALOG, rect(8, 3, 60, 20), hit::HitTarget::Dialog);
+        hit::register(
+            hit::DIALOG_BODY,
+            rect(10, 8, 30, 1),
+            hit::HitTarget::Link("https://flow.org".to_string()),
+        );
+        click(&mut app, 30, 6);
+        assert!(
+            app.modal.is_some(),
+            "clicking the dialog does not dismiss it"
+        );
+        assert!(app.take_actions().is_empty());
+        // Its links still open, and leave the dialog up.
+        click(&mut app, 12, 8);
+        assert!(matches!(
+            app.take_actions().as_slice(),
+            [Action::OpenUrl(url)] if url == "https://flow.org"
+        ));
+        assert!(app.modal.is_some());
     }
 
     #[test]

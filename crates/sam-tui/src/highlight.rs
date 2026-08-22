@@ -2,8 +2,10 @@
 //! homepage's Prism light token colors.
 
 use crate::data;
+use crate::markdown::ContentLine;
 use crate::theme;
 use iocraft::components::MixedTextContent;
+use iocraft::prelude::TextDecoration;
 
 const KEYWORDS: &[&str] = &["import", "from", "class", "function", "let", "val"];
 
@@ -48,20 +50,25 @@ fn styled_italic(text: &str, color: crossterm::style::Color) -> MixedTextContent
     styled(text, color).italic()
 }
 
-/// Renders the license header as comment-styled code lines.
-pub fn doc_comment_lines() -> Vec<Vec<MixedTextContent>> {
-    let mut lines = vec![vec![styled("/**", comment_color())]];
-    lines.push(vec![styled(
-        &format!(" * {}", data::COPYRIGHT),
-        comment_color(),
-    )]);
+/// Renders the license header as comment-styled code lines. Its `@` tags carry
+/// their URL, so the reader can open one the way the homepage's docblock lets
+/// them click it — underlined in the comment color, exactly as it is there.
+pub fn doc_comment_lines() -> Vec<ContentLine> {
+    let plain = |text: &str| ContentLine {
+        contents: vec![styled(text, comment_color())],
+        link: None,
+    };
+    let mut lines = vec![plain("/**"), plain(&format!(" * {}", data::COPYRIGHT))];
     for link in data::ABOUT_DOC_LINKS {
-        lines.push(vec![
-            styled(&format!(" * @{} ", link.name), comment_color()),
-            styled(link.url, comment_color()),
-        ]);
+        lines.push(ContentLine {
+            contents: vec![
+                styled(&format!(" * @{} ", link.name), comment_color()),
+                styled(link.url, comment_color()).decoration(TextDecoration::Underline),
+            ],
+            link: Some(link.url.to_string()),
+        });
     }
-    lines.push(vec![styled(" */", comment_color())]);
+    lines.push(plain(" */"));
     lines
 }
 
