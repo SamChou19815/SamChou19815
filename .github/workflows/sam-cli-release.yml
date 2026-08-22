@@ -40,6 +40,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: sam-cli-release-${{ matrix.runner }}
+      - name: Prepare patched deps
+        run: ./scripts/prepare-patched-deps.sh
       - name: Build
         run: |
           mkdir -p dist
