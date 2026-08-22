@@ -115,6 +115,10 @@ pub const ABOUT_DOC_LINKS: &[Link] = &[
         url: "https://github.com/SamChou19815",
     },
     Link {
+        name: "blog",
+        url: "https://developersam.com/blog",
+    },
+    Link {
         name: "bsky",
         url: "https://bsky.app/profile/developersam.com",
     },

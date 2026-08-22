@@ -73,24 +73,27 @@ pub fn modal_line_count(modal: &Modal, cols: u16) -> usize {
 
 // --- Leaf components that register hit regions --------------------------------
 
-fn register_rect(
-    rect: Option<crate::view::ComponentRect>,
-    kind: u8,
-    index: usize,
-    target: HitTarget,
-) {
+fn to_rect(rect: ComponentRect) -> Rect {
+    Rect {
+        x: rect.left.max(0) as u16,
+        y: rect.top.max(0) as u16,
+        width: (rect.right - rect.left).max(0) as u16,
+        height: (rect.bottom - rect.top).max(0) as u16,
+    }
+}
+
+fn register_rect(rect: Option<ComponentRect>, surface: u8, target: HitTarget) {
     if let Some(rect) = rect {
-        hit::register(
-            kind,
-            index,
-            Rect {
-                x: rect.left.max(0) as u16,
-                y: rect.top.max(0) as u16,
-                width: (rect.right - rect.left).max(0) as u16,
-                height: (rect.bottom - rect.top).max(0) as u16,
-            },
-            target,
-        );
+        hit::register(surface, to_rect(rect), target);
+    }
+}
+
+/// Records a clipping container's rect as the bounds of its surface. Both
+/// containers that do this hide their overflow, and iocraft clips children to
+/// the container's box, so the rect is exactly what the surface painted.
+fn register_clip(rect: Option<ComponentRect>, surface: u8) {
+    if let Some(rect) = rect {
+        hit::clip(surface, to_rect(rect));
     }
 }
 
@@ -104,7 +107,7 @@ struct TabLabelProps {
 #[component]
 fn TabLabel(props: &TabLabelProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let rect = hooks.use_component_rect();
-    register_rect(rect, hit::TAB, props.index, HitTarget::Tab(props.index));
+    register_rect(rect, hit::CHROME, HitTarget::Tab(props.index));
     element! {
         Text(
             content: props.label.clone(),
@@ -127,7 +130,7 @@ struct HitBlockProps {
 #[component]
 fn HitBlock(props: &mut HitBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let rect = hooks.use_component_rect();
-    register_rect(rect, hit::ITEM, props.index, HitTarget::Item(props.index));
+    register_rect(rect, hit::PANE, HitTarget::Item(props.index));
     element! {
         View(flex_direction: FlexDirection::Column, width: 100pct) {
             #(props.children.drain(..))
@@ -169,18 +172,12 @@ fn TimelineTitle(props: &TimelineTitleProps) -> impl Into<AnyElement<'static>> {
 struct ButtonProps {
     label: String,
     url: String,
-    index: usize,
 }
 
 #[component]
 fn Button(props: &ButtonProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let rect = hooks.use_component_rect();
-    register_rect(
-        rect,
-        hit::LINK,
-        props.index,
-        HitTarget::Link(props.url.clone()),
-    );
+    register_rect(rect, hit::PANE, HitTarget::Link(props.url.clone()));
     element! {
         Text(content: props.label.clone(), color: theme::ACCENT_TEXT, weight: Weight::Bold)
     }
@@ -218,19 +215,15 @@ fn ProjectRow(props: &ProjectRowProps) -> impl Into<AnyElement<'static>> {
 struct LineProps {
     contents: Vec<MixedTextContent>,
     url: Option<String>,
-    index: usize,
+    /// The surface the line is drawn on: the pane, or an open dialog's body.
+    surface: u8,
 }
 
 #[component]
 fn Line(props: &LineProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let rect = hooks.use_component_rect();
     if let Some(url) = props.url.as_deref() {
-        register_rect(
-            rect,
-            hit::LINK,
-            props.index,
-            HitTarget::Link(url.to_string()),
-        )
+        register_rect(rect, props.surface, HitTarget::Link(url.to_string()))
     }
     element! {
         MixedText(contents: props.contents.clone())
@@ -275,14 +268,17 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let app = (*app.read()).clone();
 
     // The top of the update pass, which iocraft always follows with a draw pass
-    // before handing control back. Every image redraws itself into an empty
-    // registry, so what the host reads is exactly this frame — and an open
-    // dialog raises the top layer, hiding the card artwork it covers.
-    image::begin_frame(if app.modal.is_some() {
+    // before handing control back. Every image and every click region redraws
+    // itself into an empty registry, so what the host reads and what a click
+    // hits is exactly this frame — and an open dialog raises the top layer,
+    // hiding the card artwork and the card hit regions it covers.
+    let dialog_open = app.modal.is_some();
+    image::begin_frame(if dialog_open {
         image::LAYER_DIALOG
     } else {
         image::LAYER_PANE
     });
+    hit::begin_frame(dialog_open);
     let counter = pane_counter(&app);
     let cols = terminal_width as usize;
     element! {
@@ -336,7 +332,7 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
                 Text(content: format!(" {} ", props.title), color: theme::ACCENT_TEXT, weight: Weight::Bold)
                 Text(content: props.counter.clone(), color: theme::MUTED)
             }
-            View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden, padding_left: 1, padding_right: 1) {
+            PaneBody {
                 #(props.children.drain(..))
             }
         }
@@ -347,6 +343,34 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
 struct PaneProps {
     title: String,
     counter: String,
+    children: Vec<AnyElement<'static>>,
+}
+
+/// The pane's scrolling body, a component of its own so that it can report
+/// where it painted. The pane lays out every card of a tab and shows only the
+/// ones that fit, so the card after the last visible one is laid out past the
+/// bottom edge, over the status bar — close enough to click. Recording this box
+/// as the [`hit::PANE`] surface's bounds keeps those clicks off it.
+#[component]
+fn PaneBody(props: &mut PaneBodyProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let rect = hooks.use_component_rect();
+    register_clip(rect, hit::PANE);
+    element! {
+        View(
+            flex_direction: FlexDirection::Column,
+            width: 100pct,
+            flex_grow: 1.0_f32,
+            overflow: Overflow::Hidden,
+            padding_left: 1,
+            padding_right: 1,
+        ) {
+            #(props.children.drain(..))
+        }
+    }
+}
+
+#[derive(Props, Default)]
+struct PaneBodyProps {
     children: Vec<AnyElement<'static>>,
 }
 
@@ -621,8 +645,8 @@ fn card_tree(
             }))))
             #(if event.links.is_empty() { None } else { Some(gutter_row("│  ", selected, element_to_any(element! {
                 View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::Wrap) {
-                    #(event.links.iter().enumerate().map(|(link_index, link)| element! {
-                        Button(label: format!("{} ", link.name.to_uppercase()), url: link.url.to_string(), index: link_index)
+                    #(event.links.iter().map(|link| element! {
+                        Button(label: format!("{} ", link.name.to_uppercase()), url: link.url.to_string())
                     }))
                 }
             }))) })
@@ -682,9 +706,8 @@ fn markdown_tree(source: &'static str, scroll: usize) -> impl Into<AnyElement<'s
     let lines = markdown::parse(source);
     let rows: Vec<AnyElement<'static>> = lines
         .iter()
-        .enumerate()
         .skip(scroll)
-        .map(|(index, line)| line_element(line, index))
+        .map(|line| line_element(line, hit::PANE))
         .collect();
     element! {
         View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
@@ -693,20 +716,14 @@ fn markdown_tree(source: &'static str, scroll: usize) -> impl Into<AnyElement<'s
     }
 }
 
-fn line_element(line: &markdown::ContentLine, index: usize) -> AnyElement<'static> {
+fn line_element(line: &markdown::ContentLine, surface: u8) -> AnyElement<'static> {
     element_to_any(element! {
-        Line(contents: line.contents.clone(), url: line.link.clone(), index: index)
+        Line(contents: line.contents.clone(), url: line.link.clone(), surface: surface)
     })
 }
 
 fn about_lines() -> Vec<markdown::ContentLine> {
-    let mut lines = Vec::new();
-    for code in crate::highlight::doc_comment_lines() {
-        lines.push(markdown::ContentLine {
-            contents: code,
-            link: None,
-        });
-    }
+    let mut lines = crate::highlight::doc_comment_lines();
     lines.push(markdown::ContentLine {
         contents: Vec::new(),
         link: None,
@@ -728,9 +745,8 @@ fn about_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
     let lines = about_lines();
     let rows: Vec<AnyElement<'static>> = lines
         .iter()
-        .enumerate()
         .skip(scroll)
-        .map(|(index, line)| line_element(line, index))
+        .map(|line| line_element(line, hit::PANE))
         .collect();
     // The portrait sits beside the program rather than above it, so it stays
     // put while the code scrolls and `tab_line_count` keeps counting lines.
@@ -884,8 +900,6 @@ fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'st
         Modal::Project { project, .. } => format!(" project — {} ", data::PROJECTS[*project].id),
         Modal::Help { .. } => " help ".to_string(),
     };
-    // A narrow screen has no room to spare for a margin.
-    let modal_width = Percent(if cols < 60 { 96.0 } else { 80.0 });
     // The hero is fixed above the scrolling body rather than part of it, so
     // `modal_line_count` keeps counting only text and every line stays
     // reachable however tall the artwork is.
@@ -901,9 +915,8 @@ fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'st
     let lines = modal_lines(modal, cols);
     let rows: Vec<AnyElement<'static>> = lines
         .iter()
-        .enumerate()
         .skip(scroll)
-        .map(|(index, line)| line_element(line, index))
+        .map(|line| line_element(line, hit::DIALOG_BODY))
         .collect();
     element! {
         View(
@@ -914,24 +927,65 @@ fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'st
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
         ) {
-            View(
-                // A narrow screen has no room to spare for a margin.
-                width: modal_width,
-                height: 80pct,
-                border_style: BorderStyle::Round,
-                border_color: theme::BORDER,
-                background_color: theme::CARD_BG,
-                flex_direction: FlexDirection::Column,
-                overflow: Overflow::Hidden,
-            ) {
-                View(width: 100pct, padding_left: 1, padding_right: 1) {
-                    Text(content: title, color: theme::SELECT_FG, weight: Weight::Bold)
-                }
-                View(flex_direction: FlexDirection::Column, width: 100pct, padding: 1, overflow: Overflow::Hidden) {
-                    #(hero)
-                    #(rows)
-                }
+            // A narrow screen has no room to spare for a margin.
+            Dialog(title: title, narrow: cols < 60) {
+                #(hero)
+                #(rows)
             }
+        }
+    }
+}
+
+#[derive(Props, Default)]
+struct DialogProps {
+    title: String,
+    narrow: bool,
+    children: Vec<AnyElement<'static>>,
+}
+
+/// The dialog's own box. It registers itself as a click region that does
+/// nothing: a click anywhere on the dialog is not a click on the pane it
+/// covers, so it must neither select the card underneath nor — as a click
+/// outside the dialog does — dismiss it.
+#[component]
+fn Dialog(props: &mut DialogProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let rect = hooks.use_component_rect();
+    register_rect(rect, hit::DIALOG, HitTarget::Dialog);
+    element! {
+        View(
+            width: Percent(if props.narrow { 96.0 } else { 80.0 }),
+            height: 80pct,
+            border_style: BorderStyle::Round,
+            border_color: theme::BORDER,
+            background_color: theme::CARD_BG,
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::Hidden,
+        ) {
+            View(width: 100pct, padding_left: 1, padding_right: 1) {
+                Text(content: props.title.clone(), color: theme::SELECT_FG, weight: Weight::Bold)
+            }
+            DialogBody {
+                #(props.children.drain(..))
+            }
+        }
+    }
+}
+
+#[derive(Props, Default)]
+struct DialogBodyProps {
+    children: Vec<AnyElement<'static>>,
+}
+
+/// The dialog's scrolling body, split out for the same reason [`PaneBody`] is:
+/// its lines run past the bottom edge, out under the dialog — where a click
+/// means "dismiss", not "open the link that is scrolled out of sight".
+#[component]
+fn DialogBody(props: &mut DialogBodyProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let rect = hooks.use_component_rect();
+    register_clip(rect, hit::DIALOG_BODY);
+    element! {
+        View(flex_direction: FlexDirection::Column, width: 100pct, padding: 1, overflow: Overflow::Hidden) {
+            #(props.children.drain(..))
         }
     }
 }
@@ -1077,6 +1131,246 @@ fn element_to_any(element: impl Into<AnyElement<'static>>) -> AnyElement<'static
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::stream::StreamExt;
+
+    /// Yields once, so that whatever is waiting on this task — the render loop
+    /// — gets to run before the next poll.
+    async fn yield_once() {
+        let mut yielded = false;
+        std::future::poll_fn(move |context| {
+            if yielded {
+                std::task::Poll::Ready(())
+            } else {
+                yielded = true;
+                context.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+        })
+        .await;
+    }
+
+    /// Drives the whole app through a mock terminal and leaves the last frame's
+    /// state — its click regions, its image regions — behind for inspection.
+    ///
+    /// The events are paced apart. A stream that is always ready hands the app
+    /// its whole script in a single poll, which the app answers with a single
+    /// frame — and `use_component_rect` reports the *previous* frame's layout,
+    /// so nothing on screen would ever have registered a region. Yielding
+    /// between events lets the loop draw, learn its rects and draw again before
+    /// the next one, which is what the frames between two keystrokes do.
+    ///
+    /// The script has to quit at the end: the loop runs until the app exits.
+    fn run(events: Vec<TerminalEvent>) -> Vec<Canvas> {
+        crate::PENDING_ACTIONS.with(|pending| pending.borrow_mut().clear());
+        let paced = futures::stream::iter(events).then(|event| async move {
+            for _ in 0..4 {
+                yield_once().await;
+            }
+            event
+        });
+        futures::executor::block_on(
+            root_element()
+                .mock_terminal_render_loop(MockTerminalConfig::with_events(paced))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn press(character: char) -> TerminalEvent {
+        TerminalEvent::Key(KeyEvent::new(
+            crossterm::event::KeyEventKind::Press,
+            crossterm::event::KeyCode::Char(character),
+        ))
+    }
+
+    /// Ends the run from outside the app. The terminal breaks the render loop
+    /// on Ctrl+C without drawing another frame, so the frame the last click was
+    /// tested against — an open dialog and all — is the one left to inspect.
+    fn interrupt() -> TerminalEvent {
+        let mut event = KeyEvent::new(
+            crossterm::event::KeyEventKind::Press,
+            crossterm::event::KeyCode::Char('c'),
+        );
+        event.modifiers = crossterm::event::KeyModifiers::CONTROL;
+        TerminalEvent::Key(event)
+    }
+
+    fn enter() -> TerminalEvent {
+        TerminalEvent::Key(KeyEvent::new(
+            crossterm::event::KeyEventKind::Press,
+            crossterm::event::KeyCode::Enter,
+        ))
+    }
+
+    fn click_at(col: u16, row: u16) -> TerminalEvent {
+        TerminalEvent::FullscreenMouse(FullscreenMouseEvent::new(
+            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            col,
+            row,
+        ))
+    }
+
+    /// The URLs the run asked the host to open.
+    fn opened_urls() -> Vec<String> {
+        crate::PENDING_ACTIONS.with(|pending| {
+            pending
+                .borrow()
+                .iter()
+                .map(|crate::Action::OpenUrl(url)| url.clone())
+                .collect()
+        })
+    }
+
+    /// Where the About pane's portrait landed in the last frame.
+    fn portrait_region() -> image::Region {
+        image::regions()
+            .into_iter()
+            .find(|region| region.url == image::PORTRAIT)
+            .expect("the About pane draws the portrait")
+    }
+
+    /// A reader's way to the About tab, through everything that registers a
+    /// region: the timeline's cards and buttons, then the link lists of the
+    /// markdown panes, then home.
+    fn tour_back_to_about() -> Vec<TerminalEvent> {
+        vec![
+            TerminalEvent::Resize(100, 40),
+            press('2'),
+            press('4'),
+            press('6'),
+            press('1'),
+        ]
+    }
+
+    /// A tab's regions belong to that tab. They used to outlive it: the cards
+    /// and links of the tabs visited before answered clicks on the pane that
+    /// replaced them, which is how a click on the About portrait opened a link
+    /// belonging to the Contact pane.
+    #[test]
+    fn a_tab_leaves_no_click_regions_behind() {
+        let mut script = tour_back_to_about();
+        script.push(press('q'));
+        run(script);
+        for row in 0..40 {
+            for col in 0..100 {
+                match hit::hit_test(col, row) {
+                    None => {}
+                    Some(HitTarget::Tab(_)) => assert_eq!(row, 0, "a tab label off the header row"),
+                    // The docblock's `@` tags, and nothing else: no card of the
+                    // timeline, no link of a markdown pane.
+                    Some(HitTarget::Link(url)) => assert!(
+                        data::ABOUT_DOC_LINKS.iter().any(|link| link.url == url),
+                        "the About pane answers a click at {col},{row} with {url}, \
+                         which belongs to another tab"
+                    ),
+                    Some(target) => {
+                        panic!("the About pane answers a click at {col},{row} with {target:?}")
+                    }
+                }
+            }
+        }
+    }
+
+    /// The docblock's `@` tags are links, as they are on the homepage.
+    #[test]
+    fn the_about_docblock_opens_its_links() {
+        let blog = data::ABOUT_DOC_LINKS
+            .iter()
+            .find(|link| link.name == "blog")
+            .expect("the docblock links the blog");
+        // One run to find the line the blog tag is on, one to click it.
+        let mut locate = tour_back_to_about();
+        locate.push(press('q'));
+        run(locate);
+        let &(col, row) =
+            cells_answering(|target| matches!(target, HitTarget::Link(url) if url == blog.url))
+                .first()
+                .expect("the @blog line answers a click");
+        let mut script = tour_back_to_about();
+        script.push(click_at(col, row));
+        script.push(press('q'));
+        run(script);
+        assert_eq!(
+            opened_urls(),
+            vec![blog.url.to_string()],
+            "clicking the docblock's @blog line at {col},{row}"
+        );
+    }
+
+    /// The report this all came from: on the About tab, clicking the portrait
+    /// opened one of the Contact pane's links — its rows sat exactly where that
+    /// pane's link lines had been, and the regions had never been retired.
+    #[test]
+    fn a_click_on_the_about_portrait_opens_nothing() {
+        // One run to find the portrait, one to click its every row.
+        let mut locate = tour_back_to_about();
+        locate.push(press('q'));
+        run(locate);
+        let portrait = portrait_region();
+        let mut script = tour_back_to_about();
+        for row in portrait.y..portrait.y + portrait.rows {
+            for col in [
+                portrait.x,
+                portrait.x + portrait.cols / 2,
+                portrait.x + portrait.cols - 1,
+            ] {
+                script.push(click_at(col, row));
+            }
+        }
+        script.push(press('q'));
+        run(script);
+        assert_eq!(
+            opened_urls(),
+            Vec::<String>::new(),
+            "clicking the portrait opened links"
+        );
+    }
+
+    /// Every cell of the last frame whose click lands on `target`.
+    fn cells_answering(matches: impl Fn(&HitTarget) -> bool) -> Vec<(u16, u16)> {
+        (0..40)
+            .flat_map(|row| (0..100).map(move |col| (col, row)))
+            .filter(|&(col, row)| hit::hit_test(col, row).as_ref().is_some_and(&matches))
+            .collect()
+    }
+
+    /// The pane goes on laying its cards out behind an open dialog, buttons and
+    /// all. A click on the dialog must not reach them.
+    #[test]
+    fn a_click_on_a_dialog_never_reaches_the_pane_behind_it() {
+        let timeline = || vec![TerminalEvent::Resize(100, 40), press('2')];
+        // The card buttons, as the pane alone registers them...
+        let mut probe = timeline();
+        probe.push(interrupt());
+        run(probe);
+        let buttons = cells_answering(|target| matches!(target, HitTarget::Link(_)));
+        assert!(!buttons.is_empty(), "the timeline draws link buttons");
+        // ...and the cells the dialog covers once one is open.
+        let mut probe = timeline();
+        probe.extend([enter(), interrupt()]);
+        run(probe);
+        let covered = cells_answering(|target| matches!(target, HitTarget::Dialog));
+        assert!(!covered.is_empty(), "the dialog registers itself");
+
+        let mut script = timeline();
+        script.push(enter());
+        script.extend(
+            buttons
+                .iter()
+                .filter(|cell| covered.contains(cell))
+                .map(|&(col, row)| click_at(col, row)),
+        );
+        script.push(interrupt());
+        run(script);
+        assert_eq!(
+            opened_urls(),
+            Vec::<String>::new(),
+            "a click on the dialog opened a link of the card behind it"
+        );
+        assert!(
+            !cells_answering(|target| matches!(target, HitTarget::Dialog)).is_empty(),
+            "the dialog was dismissed by a click that landed on it"
+        );
+    }
 
     /// Renders a list row inside the width the pane really gives it: the screen
     /// less the pane's border and padding. The width has to be *definite* —

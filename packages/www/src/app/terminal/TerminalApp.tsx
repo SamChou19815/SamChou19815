@@ -1,6 +1,7 @@
 "use client";
 
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -26,6 +27,16 @@ declare global {
   }
 }
 
+/**
+ * Opens a link the terminal printed. Only http(s): the page renders whatever
+ * bytes reach it, and a `javascript:` URL would run in this document.
+ */
+function openLink(url: string): void {
+  if (/^https?:\/\//i.test(url)) {
+    window.open(url, "_blank", "noopener");
+  }
+}
+
 export default function TerminalApp(): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -36,6 +47,10 @@ export default function TerminalApp(): React.JSX.Element {
     }
 
     const terminal = new Terminal({
+      // The shell writes its URLs as OSC 8 hyperlinks — the `@` tags of
+      // `cat about.txt`, the contact list, resume.pdf. xterm draws those as
+      // plain text unless it is told what activating one means.
+      linkHandler: { activate: (_event, uri) => openLink(uri) },
       scrollback: 1000,
       cursorBlink: true,
       fontSize: 15,
@@ -63,6 +78,8 @@ export default function TerminalApp(): React.JSX.Element {
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+    // Bare URLs in the shell's output are links too, not just the OSC 8 ones.
+    terminal.loadAddon(new WebLinksAddon((_event, uri) => openLink(uri)));
     terminal.open(container);
     fitAddon.fit();
     // xterm.css hardcodes a black viewport; the site body is #f7f7f7.
@@ -194,7 +211,7 @@ export default function TerminalApp(): React.JSX.Element {
         syncImages();
       }
       for (let url = backend.pollAction(); url != null; url = backend.pollAction()) {
-        window.open(url, "_blank", "noopener");
+        openLink(url);
       }
       if (appRunning && backend.shouldQuit()) {
         exitToShell();

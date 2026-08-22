@@ -94,7 +94,7 @@ pub fn sam_start(cols: u16, rows: u16) {
     // Seed the app with the real size before the first frame, so layout and
     // scroll math never run against the placeholder width.
     crossterm::push_event(crossterm::event::Event::Resize(cols, rows));
-    crate::hit::clear();
+    crate::hit::begin_frame(false);
     ENGINE.with(|cell| {
         let mut engine = cell.borrow_mut();
         // Restart after quit: drop the finished engine and leak a fresh tree.
