@@ -41,7 +41,7 @@ jobs:
         # Also runs prepare-patched-deps.sh.
         run: ./scripts/build-wasm.sh
       - name: Check committed wasm-bindgen types are up to date
-        run: git diff --exit-code packages/www/src/app/terminal/generated/sam_tui.d.ts
+        run: git diff --exit-code packages/www/src/app/generated/sam_tui.d.ts
   test-sam-tui:
     runs-on: ubuntu-latest
     steps:
