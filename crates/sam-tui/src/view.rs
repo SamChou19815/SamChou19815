@@ -515,9 +515,10 @@ fn image_row(
     cols: u16,
 ) -> Option<AnyElement<'static>> {
     let url = url.filter(|_| image::enabled(cols))?;
-    image::size(url, image::THUMBNAIL)?;
-    Some(gutter_row(
+    let (_, rows) = image::size(url, image::THUMBNAIL)?;
+    Some(gutter_block(
         gutter,
+        rows,
         selected,
         element_to_any(element! {
             Image(url: url, bounds: image::THUMBNAIL)
@@ -533,13 +534,30 @@ fn gutter_row(
     selected: bool,
     body: AnyElement<'static>,
 ) -> AnyElement<'static> {
+    gutter_block(gutter, 1, selected, body)
+}
+
+/// The same, for a body that is `height` rows tall. The gutter is one text per
+/// row rather than a single line beside a tall body: a card's rail is drawn,
+/// not stretched, so an eight-row thumbnail with one `│` next to it would break
+/// the timeline's spine into pieces wherever a card has artwork.
+fn gutter_block(
+    gutter: &'static str,
+    height: u16,
+    selected: bool,
+    body: AnyElement<'static>,
+) -> AnyElement<'static> {
     element_to_any(element! {
         View(
             flex_direction: FlexDirection::Row,
             width: 100pct,
             background_color: if selected { Some(theme::SELECT_BG) } else { None },
         ) {
-            Text(content: gutter, color: theme::ACCENT_TEXT, wrap: TextWrap::NoWrap)
+            View(flex_direction: FlexDirection::Column, flex_shrink: 0.0_f32) {
+                #((0..height).map(|_| element! {
+                    Text(content: gutter, color: theme::ACCENT_TEXT, wrap: TextWrap::NoWrap)
+                }))
+            }
             View(flex_direction: FlexDirection::Column, flex_grow: 1.0_f32) {
                 #(Some(body))
             }
@@ -1264,6 +1282,28 @@ mod tests {
             usize::from(rows),
             "artwork rows are not all painted"
         );
+    }
+
+    /// The rail is drawn per row, not stretched, so a body taller than a line
+    /// has to repeat it. An eight-row thumbnail beside a single `│` left the
+    /// timeline's spine broken on every illustrated card.
+    #[test]
+    fn the_rail_runs_unbroken_past_the_artwork() {
+        let (index, event) = data::TIMELINE
+            .iter()
+            .enumerate()
+            .find(|(_, event)| event.image.is_some())
+            .expect("an illustrated card");
+        let canvas = pane_width(
+            120,
+            card_element(event, index, false, crate::content_width(120), 120),
+        );
+        // Every row between the title, which carries the dot, and the trailing
+        // blank separator.
+        let broken: Vec<usize> = (1..canvas.height() - 1)
+            .filter(|&y| !canvas.get_text(0, y, 1, 1).starts_with('│'))
+            .collect();
+        assert!(broken.is_empty(), "the rail is missing on rows {broken:?}");
     }
 
     #[test]
