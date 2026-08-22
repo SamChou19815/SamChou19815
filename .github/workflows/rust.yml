@@ -36,10 +36,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: cargo-wasm
-      - name: Prepare patched deps
-        run: ./scripts/prepare-patched-deps.sh
+      - uses: jetli/wasm-pack-action@v0.4.0
       - name: Build Terminal WASM
-        run: cargo build --release -p sam-tui --target wasm32-unknown-unknown
+        # Also runs prepare-patched-deps.sh.
+        run: ./scripts/build-wasm.sh
+      - name: Check committed wasm-bindgen types are up to date
+        run: git diff --exit-code packages/www/src/app/terminal/generated/sam_tui.d.ts
   test-sam-tui:
     runs-on: ubuntu-latest
     steps:

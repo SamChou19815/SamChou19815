@@ -1,8 +1,9 @@
 #!/bin/sh
-# Builds the sam-tui wasm artifact for the website into
-# packages/www/public/wasm/. Works whether or not a Rust toolchain is
-# preinstalled: Cloudflare Pages build images ship without one, so a minimal
-# stable toolchain is bootstrapped via rustup when cargo is missing.
+# Builds the sam-tui wasm bundle for the website — the binary plus the
+# wasm-bindgen JS glue and .d.ts — into packages/www/src/app/terminal/generated/,
+# where Next bundles it as a static asset. Works whether or not a Rust toolchain
+# is preinstalled: Cloudflare Pages build images ship without one, so a minimal
+# stable toolchain and wasm-pack are bootstrapped when missing.
 set -eu
 
 if ! command -v cargo >/dev/null 2>&1; then
@@ -10,6 +11,12 @@ if ! command -v cargo >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --profile minimal --default-toolchain stable
   . "$HOME/.cargo/env"
+fi
+
+if ! command -v wasm-pack >/dev/null 2>&1; then
+  echo "wasm-pack not found; installing the prebuilt binary"
+  curl --proto '=https' --tlsv1.2 -sSf \
+    https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
 fi
 
 # A no-op when the target is already installed; tolerated when the toolchain
@@ -21,6 +28,9 @@ REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$REPO_ROOT"
 # Materialize the patched crossterm/iocraft sources [patch.crates-io] needs.
 ./scripts/prepare-patched-deps.sh
-cargo build --release -p sam-tui --target wasm32-unknown-unknown
-mkdir -p packages/www/public/wasm
-cp target/wasm32-unknown-unknown/release/sam_tui.wasm packages/www/public/wasm/sam-tui.wasm
+
+OUT_DIR="$REPO_ROOT/packages/www/src/app/terminal/generated"
+rm -rf "$OUT_DIR"
+wasm-pack build crates/sam-tui --release --target web --no-pack --out-dir "$OUT_DIR"
+
+rm -f "$OUT_DIR/.gitignore" "$OUT_DIR/sam_tui_bg.wasm.d.ts"
