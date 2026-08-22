@@ -12,6 +12,7 @@ pub mod data;
 pub mod ffi;
 mod highlight;
 pub mod hit;
+pub mod image;
 pub mod markdown;
 pub mod shell;
 pub mod theme;
@@ -53,7 +54,8 @@ fn wrapped_rows(text: &str, width: usize) -> usize {
 }
 
 /// Rows of a timeline card, mirroring the homepage card: title, the time as a
-/// subheader, the wrapped detail, a button row, then a blank separator.
+/// subheader, the artwork, the wrapped detail, a button row, then a blank
+/// separator.
 pub fn card_height(event: &data::TimelineEvent, cols: u16) -> usize {
     let inner = content_width(cols);
     let detail = event.detail.map_or(0, |detail| wrapped_rows(detail, inner));
@@ -62,12 +64,22 @@ pub fn card_height(event: &data::TimelineEvent, cols: u16) -> usize {
     } else {
         wrapped_rows(&link_row_label(event.links), inner)
     };
-    1 + 1 + detail + links + 1
+    let image = image::rows(event.image, cols, image::THUMBNAIL);
+    1 + 1 + image + detail + links + 1
 }
 
-/// Rows of a project row: the name line, its wrapped tagline, then a blank.
+/// Usable width inside a project row's text column. The projects pane indents
+/// its body two columns further than the timeline's rail does, so it has that
+/// much less room than [`content_width`] reports.
+fn project_content_width(cols: u16) -> usize {
+    content_width(cols).saturating_sub(2).max(12)
+}
+
+/// Rows of a project row: the name line, the artwork, its wrapped tagline,
+/// then a blank.
 pub fn project_height(project: &data::Project, cols: u16) -> usize {
-    1 + wrapped_rows(project.tagline, content_width(cols)) + 1
+    let image = image::rows(project.image, cols, image::THUMBNAIL);
+    1 + image + wrapped_rows(project.tagline, project_content_width(cols)) + 1
 }
 
 /// The button row as it is rendered, for width math.

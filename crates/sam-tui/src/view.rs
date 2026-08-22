@@ -3,6 +3,7 @@
 //! themselves with [`crate::hit`] each frame via `use_component_rect`.
 
 use crate::hit::{self, HitTarget, Rect};
+use crate::image::{self, Image};
 use crate::{
     data, markdown, theme, App, Modal, ABOUT_TAB, CONTACT_TAB, EDUCATION_TAB, PROJECTS_TAB,
     TAB_NAMES, TIMELINE_TAB, WORK_TAB,
@@ -273,6 +274,15 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     }
     let app = (*app.read()).clone();
 
+    // The top of the update pass, which iocraft always follows with a draw pass
+    // before handing control back. Every image redraws itself into an empty
+    // registry, so what the host reads is exactly this frame — and an open
+    // dialog raises the top layer, hiding the card artwork it covers.
+    image::begin_frame(if app.modal.is_some() {
+        image::LAYER_DIALOG
+    } else {
+        image::LAYER_PANE
+    });
     let counter = pane_counter(&app);
     let cols = terminal_width as usize;
     element! {
@@ -292,7 +302,7 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
                 visited: app.visited_count(),
                 cols: cols,
             )
-            #(app.modal.map(|modal| modal_element(&modal, cols)))
+            #(app.modal.map(|modal| modal_element(&modal, cols, terminal_height)))
         }
     }
 }
@@ -455,7 +465,7 @@ fn content_tree(app: &App) -> AnyElement<'static> {
     match app.tab {
         TIMELINE_TAB => timeline_element(app),
         PROJECTS_TAB => projects_element(app),
-        ABOUT_TAB => about_element(app.scroll(ABOUT_TAB)),
+        ABOUT_TAB => about_element(app.scroll(ABOUT_TAB), app.cols),
         WORK_TAB => markdown_element(data::WORK_MARKDOWN, app.scroll(WORK_TAB)),
         EDUCATION_TAB => markdown_element(data::EDUCATION_MARKDOWN, app.scroll(EDUCATION_TAB)),
         CONTACT_TAB => markdown_element(data::CONTACT_MARKDOWN, app.scroll(CONTACT_TAB)),
@@ -474,7 +484,7 @@ fn timeline_tree(app: &App) -> impl Into<AnyElement<'static>> {
         .iter()
         .enumerate()
         .skip(app.scroll(TIMELINE_TAB))
-        .map(|(index, event)| card_element(event, index, index == selected, inner))
+        .map(|(index, event)| card_element(event, index, index == selected, inner, app.cols))
         .collect();
     element! {
         View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
@@ -490,8 +500,29 @@ fn card_element(
     index: usize,
     selected: bool,
     inner: usize,
+    cols: u16,
 ) -> AnyElement<'static> {
-    element_to_any(card_tree(event, index, selected, inner))
+    element_to_any(card_tree(event, index, selected, inner, cols))
+}
+
+/// A card's artwork, indented under the timeline rail like the rest of its
+/// body. `None` whenever [`crate::image::rows`] would report zero, so the row
+/// count the scroll math assumes and the row count drawn stay the same number.
+fn image_row(
+    url: Option<&'static str>,
+    gutter: &'static str,
+    selected: bool,
+    cols: u16,
+) -> Option<AnyElement<'static>> {
+    let url = url.filter(|_| image::enabled(cols))?;
+    image::size(url, image::THUMBNAIL)?;
+    Some(gutter_row(
+        gutter,
+        selected,
+        element_to_any(element! {
+            Image(url: url, bounds: image::THUMBNAIL)
+        }),
+    ))
 }
 
 /// One row of a card: the timeline gutter, then a content column wide enough
@@ -521,6 +552,7 @@ fn card_tree(
     index: usize,
     selected: bool,
     inner: usize,
+    cols: u16,
 ) -> impl Into<AnyElement<'static>> {
     let selected_color = if selected {
         theme::SELECT_FG
@@ -563,6 +595,9 @@ fn card_tree(
             #(gutter_row("│  ", selected, element_to_any(element! {
                 Text(content: event.time, color: time_color, wrap: TextWrap::NoWrap)
             })))
+            // The artwork, between the date and the description, as the
+            // homepage card leads with its media.
+            #(image_row(event.image, "│  ", selected, cols))
             #(event.detail.map(|detail| gutter_row("│  ", selected, element_to_any(element! {
                 Text(content: detail, color: detail_color)
             }))))
@@ -605,6 +640,7 @@ fn projects_tree(app: &App) -> impl Into<AnyElement<'static>> {
                         id: project.id.to_string(),
                         selected: is_selected,
                     )
+                    #(image_row(project.image, "     ", is_selected, app.cols))
                     #(gutter_row("     ", is_selected, element_to_any(element! {
                         Text(content: project.tagline, color: tagline_color)
                     })))
@@ -666,11 +702,11 @@ fn about_lines() -> Vec<markdown::ContentLine> {
     lines
 }
 
-fn about_element(scroll: usize) -> AnyElement<'static> {
-    element_to_any(about_tree(scroll))
+fn about_element(scroll: usize, cols: u16) -> AnyElement<'static> {
+    element_to_any(about_tree(scroll, cols))
 }
 
-fn about_tree(scroll: usize) -> impl Into<AnyElement<'static>> {
+fn about_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
     let lines = about_lines();
     let rows: Vec<AnyElement<'static>> = lines
         .iter()
@@ -678,16 +714,32 @@ fn about_tree(scroll: usize) -> impl Into<AnyElement<'static>> {
         .skip(scroll)
         .map(|(index, line)| line_element(line, index))
         .collect();
+    // The portrait sits beside the program rather than above it, so it stays
+    // put while the code scrolls and `tab_line_count` keeps counting lines.
+    let portrait = image::enabled(cols).then(|| {
+        element_to_any(element! {
+            View(margin_left: 2, flex_shrink: 0.0_f32) {
+                Image(url: image::PORTRAIT, bounds: image::AVATAR)
+            }
+        })
+    });
     element! {
         View(
-            flex_direction: FlexDirection::Column,
+            flex_direction: FlexDirection::Row,
             width: 100pct,
             flex_grow: 1.0_f32,
             overflow: Overflow::Hidden,
             background_color: theme::CODE_BG,
             padding: 1,
         ) {
-            #(rows)
+            View(
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0_f32,
+                overflow: Overflow::Hidden,
+            ) {
+                #(rows)
+            }
+            #(portrait)
         }
     }
 }
@@ -775,11 +827,35 @@ fn modal_lines(modal: &Modal, cols: usize) -> Vec<markdown::ContentLine> {
     lines
 }
 
-fn modal_element(modal: &Modal, cols: usize) -> AnyElement<'static> {
-    element_to_any(modal_tree(modal, cols))
+/// The hero's cell box, shrunk to whatever the dialog can spare. The dialog is
+/// 80% of the screen, less its border, title row and padding; six rows are held
+/// back for the fields and links so the artwork can never crowd them out.
+/// `None` when what is left is too short to read as a picture.
+fn hero_bounds(cols: usize, rows: u16) -> Option<(u16, u16)> {
+    if !image::enabled(cols as u16) {
+        return None;
+    }
+    let body = (u32::from(rows) * 4 / 5).saturating_sub(5) as u16;
+    let max_rows = body.saturating_sub(6).min(image::HERO.1);
+    // Below six rows the artwork reads as a smear rather than a picture, so a
+    // short dialog spends its rows on the fields instead.
+    (max_rows >= 6).then_some((image::HERO.0, max_rows))
 }
 
-fn modal_tree(modal: &Modal, cols: usize) -> impl Into<AnyElement<'static>> {
+/// The artwork the open dialog leads with, if any.
+fn modal_image(modal: &Modal) -> Option<&'static str> {
+    match modal {
+        Modal::Timeline { event, .. } => data::TIMELINE[*event].image,
+        Modal::Project { project, .. } => data::PROJECTS[*project].image,
+        Modal::Help { .. } => None,
+    }
+}
+
+fn modal_element(modal: &Modal, cols: usize, rows: u16) -> AnyElement<'static> {
+    element_to_any(modal_tree(modal, cols, rows))
+}
+
+fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'static>> {
     let scroll = match modal {
         Modal::Timeline { scroll, .. } | Modal::Project { scroll, .. } | Modal::Help { scroll } => {
             *scroll
@@ -792,6 +868,18 @@ fn modal_tree(modal: &Modal, cols: usize) -> impl Into<AnyElement<'static>> {
     };
     // A narrow screen has no room to spare for a margin.
     let modal_width = Percent(if cols < 60 { 96.0 } else { 80.0 });
+    // The hero is fixed above the scrolling body rather than part of it, so
+    // `modal_line_count` keeps counting only text and every line stays
+    // reachable however tall the artwork is.
+    let hero = hero_bounds(cols, rows)
+        .zip(modal_image(modal))
+        .map(|(bounds, url)| {
+            element_to_any(element! {
+                View(width: 100pct, justify_content: JustifyContent::Center, padding_bottom: 1) {
+                    Image(url: url, bounds: bounds, layer: image::LAYER_DIALOG)
+                }
+            })
+        });
     let lines = modal_lines(modal, cols);
     let rows: Vec<AnyElement<'static>> = lines
         .iter()
@@ -822,6 +910,7 @@ fn modal_tree(modal: &Modal, cols: usize) -> impl Into<AnyElement<'static>> {
                     Text(content: title, color: theme::SELECT_FG, weight: Weight::Bold)
                 }
                 View(flex_direction: FlexDirection::Column, width: 100pct, padding: 1, overflow: Overflow::Hidden) {
+                    #(hero)
                     #(rows)
                 }
             }
@@ -971,6 +1060,20 @@ fn element_to_any(element: impl Into<AnyElement<'static>>) -> AnyElement<'static
 mod tests {
     use super::*;
 
+    /// Renders a list row inside the width the pane really gives it: the screen
+    /// less the pane's border and padding. The width has to be *definite* —
+    /// under a bare `max_width` every `100pct` collapses to its content and
+    /// nothing wraps, which is the same reason `Root` anchors the tree to the
+    /// terminal size rather than to a percentage.
+    fn pane_width(cols: u16, row: AnyElement<'static>) -> Canvas {
+        element_to_any(element! {
+            View(width: cols - 4, flex_direction: FlexDirection::Column) {
+                #(Some(row))
+            }
+        })
+        .render(Some(usize::from(cols)))
+    }
+
     /// Width of a header plan as it will be laid out on one row.
     fn plan_width(plan: &HeaderPlan) -> usize {
         plan.title.map_or(0, |title| title.chars().count())
@@ -1053,25 +1156,212 @@ mod tests {
 
     #[test]
     fn card_height_matches_the_rows_a_card_renders() {
-        // A card with a detail and links: title, time, detail, buttons, blank.
-        let event = data::TIMELINE
+        // A card with a detail and links, and no artwork: title, time, detail,
+        // buttons, blank.
+        let plain = data::TIMELINE
             .iter()
-            .find(|event| event.detail.is_some() && !event.links.is_empty())
-            .expect("a card with both a detail and links");
+            .find(|event| {
+                event.detail.is_some() && !event.links.is_empty() && event.image.is_none()
+            })
+            .expect("a card with a detail and links but no artwork");
         // Wide enough that neither the detail nor the buttons wrap.
-        assert_eq!(crate::card_height(event, 400), 5);
+        assert_eq!(crate::card_height(plain, 400), 5);
+
+        // The same card with artwork is exactly its thumbnail taller.
+        let illustrated = data::TIMELINE
+            .iter()
+            .find(|event| {
+                event.detail.is_some() && !event.links.is_empty() && event.image.is_some()
+            })
+            .expect("a card with a detail, links and artwork");
+        let (_, rows) = image::size(illustrated.image.unwrap(), image::THUMBNAIL)
+            .expect("the artwork is baked");
+        assert_eq!(crate::card_height(illustrated, 400), 5 + usize::from(rows));
     }
 
     #[test]
     fn narrow_cards_grow_as_their_detail_wraps() {
         let event = data::TIMELINE
             .iter()
-            .find(|event| {
-                event
-                    .detail
-                    .is_some_and(|detail| detail.chars().count() > 40)
+            .max_by_key(|event| event.detail.map_or(0, |detail| detail.chars().count()))
+            .expect("the timeline is not empty");
+        // Both widths keep their artwork, so this isolates the wrapping.
+        assert!(crate::card_height(event, 60) > crate::card_height(event, 400));
+    }
+
+    /// The invariant the timeline scroll rests on: `card_height` is what a
+    /// card actually draws. It counts items, not lines, so a card that renders
+    /// taller than it claims drifts the selection off screen with nothing else
+    /// to catch it.
+    #[test]
+    fn every_card_draws_the_height_it_claims() {
+        // From 60 columns up — the widths that carry artwork. Below that
+        // `wrapped_rows` divides a character count by the width where the
+        // renderer breaks on words, and the two can disagree by a row; that
+        // predates artwork and is untouched by it.
+        for cols in [60u16, 80, 120] {
+            let inner = crate::content_width(cols);
+            for (index, event) in data::TIMELINE.iter().enumerate() {
+                let canvas = pane_width(cols, card_element(event, index, false, inner, cols));
+                assert_eq!(
+                    canvas.height(),
+                    crate::card_height(event, cols),
+                    "{} at {cols} cols draws {} rows but claims {}",
+                    event.title,
+                    canvas.height(),
+                    crate::card_height(event, cols),
+                );
+            }
+        }
+    }
+
+    /// The same for the projects pane.
+    #[test]
+    fn every_project_draws_the_height_it_claims() {
+        for cols in [60u16, 80, 120] {
+            for (index, project) in data::PROJECTS.iter().enumerate() {
+                let canvas = pane_width(
+                    cols,
+                    element_to_any(element! {
+                        HitBlock(index: index) {
+                            ProjectRow(index: index, id: project.id.to_string(), selected: false)
+                            #(image_row(project.image, "     ", false, cols))
+                            #(gutter_row("     ", false, element_to_any(element! {
+                                Text(content: project.tagline, color: theme::SUBTLE)
+                            })))
+                            #(gutter_row("   ", false, element_to_any(element! { Text(content: "") })))
+                        }
+                    }),
+                );
+                assert_eq!(
+                    canvas.height(),
+                    crate::project_height(project, cols),
+                    "{} at {cols} cols",
+                    project.id,
+                );
+            }
+        }
+    }
+
+    /// An illustrated card really does paint half-blocks where the artwork goes.
+    #[test]
+    fn an_illustrated_card_paints_its_artwork() {
+        let (index, event) = data::TIMELINE
+            .iter()
+            .enumerate()
+            .find(|(_, event)| event.image.is_some())
+            .expect("an illustrated card");
+        let canvas = pane_width(
+            120,
+            card_element(event, index, false, crate::content_width(120), 120),
+        );
+        let painted = (0..canvas.height())
+            .filter(|&y| canvas.get_text(0, y, canvas.width(), 1).contains('▀'))
+            .count();
+        let (_, rows) = image::size(event.image.unwrap(), image::THUMBNAIL).expect("baked");
+        assert_eq!(
+            painted,
+            usize::from(rows),
+            "artwork rows are not all painted"
+        );
+    }
+
+    #[test]
+    fn a_narrow_terminal_drops_the_artwork() {
+        let event = data::TIMELINE
+            .iter()
+            .find(|event| event.image.is_some())
+            .expect("an illustrated card");
+        // Same content width either side of the threshold, so any difference is
+        // the artwork alone.
+        let text_only = crate::card_height(event, 59);
+        assert!(crate::card_height(event, 60) > text_only);
+        assert_eq!(
+            text_only,
+            crate::card_height(
+                &data::TimelineEvent {
+                    image: None,
+                    ..*event
+                },
+                59
+            )
+        );
+    }
+
+    /// The row count the scroll math assumes and the row the card actually
+    /// draws come from one decision. If these ever disagree, the timeline
+    /// scrolls out of step with the selection and nothing else catches it.
+    #[test]
+    fn artwork_rows_and_the_drawn_row_agree() {
+        for event in data::TIMELINE {
+            for cols in [0, 20, 40, 59, 60, 80, 200] {
+                let counted = image::rows(event.image, cols, image::THUMBNAIL);
+                let drawn = image_row(event.image, "│  ", false, cols).is_some();
+                assert_eq!(
+                    counted > 0,
+                    drawn,
+                    "{} at {cols} cols: counted {counted} rows, drawn = {drawn}",
+                    event.title,
+                );
+            }
+        }
+        for project in data::PROJECTS {
+            for cols in [0, 40, 59, 60, 200] {
+                let counted = image::rows(project.image, cols, image::THUMBNAIL);
+                let drawn = image_row(project.image, "     ", false, cols).is_some();
+                assert_eq!(counted > 0, drawn, "{} at {cols} cols", project.id);
+            }
+        }
+    }
+
+    /// The dialog's artwork has to land on the dialog layer, or the overlay
+    /// hides it along with the cards it covers.
+    #[test]
+    fn the_dialog_hero_draws_on_the_dialog_layer() {
+        let modal = Modal::Timeline {
+            event: 0,
+            scroll: 0,
+        };
+        let render = || {
+            // A definite size, as `Root` gives it: the dialog is `100pct` of
+            // its parent and collapses to nothing under a bare max width.
+            element_to_any(element! {
+                View(width: 140u16, height: 45u16) { #(Some(modal_element(&modal, 140, 45))) }
             })
-            .expect("a card with a long detail");
-        assert!(crate::card_height(event, 40) > crate::card_height(event, 400));
+            .render(Some(140))
+        };
+
+        image::begin_frame(image::LAYER_DIALOG);
+        let _ = render();
+        let placed = image::regions();
+        assert_eq!(
+            placed.len(),
+            1,
+            "the hero is reported while a dialog is open"
+        );
+        assert_eq!(
+            placed[0].url,
+            data::TIMELINE[0].image.expect("card 0 has artwork")
+        );
+
+        // Nothing in a dialog belongs to the pane layer.
+        image::begin_frame(image::LAYER_PANE);
+        let _ = render();
+        assert!(image::regions().is_empty());
+    }
+
+    #[test]
+    fn the_hero_yields_to_a_short_dialog() {
+        // Tall enough for artwork and the fields beneath it.
+        assert!(hero_bounds(100, 40).is_some());
+        // A short screen keeps the links rather than the picture.
+        assert_eq!(hero_bounds(100, 20), None);
+        // The classic 80x24 still has room for a modest one.
+        assert!(hero_bounds(80, 24).is_some_and(|(_, rows)| rows >= 6));
+        // A narrow one drops it for the same reason cards do.
+        assert_eq!(hero_bounds(40, 40), None);
+        // It never asks for more rows than are baked.
+        let (_, rows) = hero_bounds(100, 200).expect("a tall screen has room");
+        assert!(rows <= image::HERO.1);
     }
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
@@ -9,6 +10,12 @@ import { loadSamTui, type SamTui } from "./sam-tui";
 // The page is a true terminal: xterm.js relays raw bytes to and from the
 // iocraft backend, which speaks full ANSI (alternate screen, mouse capture,
 // synchronized updates). No frame protocol, no key mapping.
+//
+// Card artwork is the one thing layered on top. The backend already draws it
+// in-band as truecolor half-blocks — that is what the native `dev-sam` binary
+// shows — and reports where each one landed. Here we cover those cells with the
+// real asset, so the web gets full resolution and the half-blocks become the
+// fallback if an image fails to load.
 
 const PROMPT = "\x1b[1;32msam@developersam\x1b[0m\x1b[90m:\x1b[0m\x1b[34m~\x1b[0m\x1b[90m$\x1b[0m ";
 
@@ -65,9 +72,114 @@ export default function TerminalApp(): React.JSX.Element {
     // oxlint-disable-next-line no-underscore-dangle -- test hook
     window.__samTerminal = terminal;
 
+    // Try WebGL: its renderer draws block elements procedurally, so the
+    // half-block artwork tiles seamlessly. The DOM renderer leaves hairline
+    // gaps between rows because it depends on font metrics and line height.
+    try {
+      terminal.loadAddon(new WebglAddon());
+    } catch {
+      // No WebGL here; the DOM renderer still draws everything, just seamed.
+    }
+
     let disposed = false;
     let backend: SamTui | null = null;
     let appRunning = false;
+
+    // --- Card artwork ---------------------------------------------------------
+    const imageLayer = document.createElement("div");
+    Object.assign(imageLayer.style, {
+      position: "absolute",
+      inset: "0",
+      pointerEvents: "none",
+      overflow: "hidden",
+    });
+    container.appendChild(imageLayer);
+    // Pooled per URL: an image that stays on screen across frames is moved
+    // rather than torn down and refetched, since rebuilding the layer every
+    // frame would flicker at scroll rate. A pool rather than one element per
+    // URL because an asset can appear more than once at the same time —
+    // `flow.webp` and `graduation-sam.webp` each illustrate two timeline
+    // events, and both can be on screen together.
+    const pool = new Map<string, HTMLImageElement[]>();
+
+    const syncImages = (): void => {
+      const regions = backend?.imageRegions() ?? [];
+      if (regions.length === 0 && pool.size === 0) {
+        return;
+      }
+      const screen = container.querySelector(".xterm-screen");
+      if (screen == null) {
+        return;
+      }
+      const screenRect = screen.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const cellWidth = screenRect.width / terminal.cols;
+      const cellHeight = screenRect.height / terminal.rows;
+      const offsetLeft = screenRect.left - containerRect.left;
+      const offsetTop = screenRect.top - containerRect.top;
+
+      const used = new Map<string, number>();
+      for (const region of regions) {
+        // "x y cols rows visibleX visibleY visibleCols visibleRows url" in
+        // canvas cells; the app owns the alternate screen, so cell (0, 0) is
+        // the top left of the viewport.
+        const [x, y, cols, rows, vx, vy, vcols, vrows, ...rest] = region.split(" ");
+        const url = rest.join(" ");
+        if (url === "") {
+          continue;
+        }
+        const index = used.get(url) ?? 0;
+        used.set(url, index + 1);
+        let elements = pool.get(url);
+        if (elements == null) {
+          elements = [];
+          pool.set(url, elements);
+        }
+        let element = elements[index];
+        if (element == null) {
+          element = document.createElement("img");
+          element.src = url;
+          element.alt = "";
+          Object.assign(element.style, { position: "absolute", objectFit: "cover" });
+          elements.push(element);
+          imageLayer.appendChild(element);
+        }
+        // Placed at the full rectangle so the picture keeps its shape, then
+        // clipped to the part the pane actually painted — otherwise a card
+        // half off the bottom would spill its artwork over the status bar.
+        const inset = [
+          (Number(vy) - Number(y)) * cellHeight,
+          (Number(x) + Number(cols) - Number(vx) - Number(vcols)) * cellWidth,
+          (Number(y) + Number(rows) - Number(vy) - Number(vrows)) * cellHeight,
+          (Number(vx) - Number(x)) * cellWidth,
+        ];
+        Object.assign(element.style, {
+          left: `${offsetLeft + Number(x) * cellWidth}px`,
+          top: `${offsetTop + Number(y) * cellHeight}px`,
+          width: `${Number(cols) * cellWidth}px`,
+          height: `${Number(rows) * cellHeight}px`,
+          clipPath: inset.every((side) => side === 0)
+            ? "none"
+            : `inset(${inset.map((side) => `${side}px`).join(" ")})`,
+        });
+      }
+      // Retire whatever this frame did not place — a card that scrolled off,
+      // or a duplicate that is no longer doubled up.
+      for (const [url, elements] of pool) {
+        const keep = used.get(url) ?? 0;
+        for (const element of elements.splice(keep)) {
+          element.remove();
+        }
+        if (elements.length === 0) {
+          pool.delete(url);
+        }
+      }
+    };
+
+    const clearImages = (): void => {
+      imageLayer.replaceChildren();
+      pool.clear();
+    };
 
     /** Pump everything the backend produced into xterm, plus side effects. */
     const pump = (): void => {
@@ -77,6 +189,9 @@ export default function TerminalApp(): React.JSX.Element {
       const output = backend.drain();
       if (output !== "") {
         terminal.write(output);
+      }
+      if (appRunning) {
+        syncImages();
       }
       for (let url = backend.pollAction(); url != null; url = backend.pollAction()) {
         window.open(url, "_blank", "noopener");
@@ -99,6 +214,7 @@ export default function TerminalApp(): React.JSX.Element {
     const exitToShell = (): void => {
       appRunning = false;
       pump();
+      clearImages();
       terminal.write("\x1b[90mdev-sam exited — type dev-sam to run it again, or help\x1b[0m\r\n");
       terminal.write(PROMPT);
       terminal.focus();
@@ -275,6 +391,7 @@ export default function TerminalApp(): React.JSX.Element {
       container.removeEventListener("click", refocus);
       resizeObserver.disconnect();
       viewportStyle.remove();
+      imageLayer.remove();
       // oxlint-disable-next-line no-underscore-dangle -- test hook
       delete window.__samTerminal;
       terminal.dispose();
@@ -285,7 +402,7 @@ export default function TerminalApp(): React.JSX.Element {
     <div className="fixed inset-0 overflow-hidden bg-[#f7f7f7]">
       <div
         ref={containerRef}
-        className="h-full w-full p-1"
+        className="relative h-full w-full p-1"
         aria-label="Developer Sam's portfolio as a full-screen terminal app"
         role="application"
       />

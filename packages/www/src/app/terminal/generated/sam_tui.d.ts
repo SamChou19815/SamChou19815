@@ -6,6 +6,21 @@
  */
 export function drain(): string;
 
+/**
+ * Where the current frame drew its artwork, one row per image, as
+ * `"x y cols rows visibleX visibleY visibleCols visibleRows url"` in canvas
+ * cells. The app owns the alternate screen, so cell (0, 0) is the top left of
+ * the viewport and the host can place an `<img>` straight onto it.
+ *
+ * The second rectangle is the part that survived the pane's clipping: a card
+ * scrolled half off the bottom paints only some of its artwork, and the
+ * overlay has to crop to match. Images with nothing on screen are omitted.
+ *
+ * Space-separated rather than JSON: no asset path contains a space, and a
+ * serializer would cost the wasm binary more than the artwork itself does.
+ */
+export function imageRegions(): string[];
+
 export function input(bytes: Uint8Array): void;
 
 /**
@@ -28,6 +43,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly drain: (a: number) => void;
+    readonly imageRegions: (a: number) => void;
     readonly input: (a: number, b: number) => void;
     readonly pollAction: (a: number) => void;
     readonly resize: (a: number, b: number) => void;

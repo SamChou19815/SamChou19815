@@ -13,6 +13,8 @@ pub struct Link {
 
 pub struct Project {
     pub id: &'static str,
+    /// Site-root-relative artwork, as on the homepage project cards.
+    pub image: Option<&'static str>,
     pub tagline: &'static str,
     pub links: &'static [Link],
 }
@@ -73,6 +75,9 @@ impl Category {
 pub struct TimelineEvent {
     pub title: &'static str,
     pub time: &'static str,
+    /// Site-root-relative artwork, as on the homepage timeline cards. Ten of
+    /// the twenty-seven events have none.
+    pub image: Option<&'static str>,
     pub category: Category,
     pub detail: Option<&'static str>,
     pub links: &'static [Link],
@@ -122,6 +127,7 @@ pub const ABOUT_DOC_LINKS: &[Link] = &[
 pub const PROJECTS: &[Project] = &[
     Project {
         id: "samlang",
+        image: Some("/projects/samlang.webp"),
         tagline: "Sam's programming language with full type-inference.",
         links: &[
             Link { name: "GitHub Repo", url: "https://github.com/SamChou19815/samlang" },
@@ -131,6 +137,7 @@ pub const PROJECTS: &[Project] = &[
     },
     Project {
         id: "mini-react",
+        image: Some("/projects/mini-react.webp"),
         tagline: "A simplified version of the React runtime with useState and useEffect hooks, built from scratch.",
         links: &[
             Link { name: "GitHub Repo", url: "https://github.com/SamChou19815/mini-react" },
@@ -140,11 +147,13 @@ pub const PROJECTS: &[Project] = &[
     },
     Project {
         id: "samwise",
+        image: Some("/projects/samwise.webp"),
         tagline: "A todo-list app by Cornell DTI, built with React, Redux and Firebase.",
         links: &[Link { name: "GitHub Repo", url: "https://github.com/cornell-dti/samwise" }],
     },
     Project {
         id: "courseplan",
+        image: Some("/timeline/courseplan-promotion.png"),
         tagline: "Course planning tool for Cornell students by Cornell DTI.",
         links: &[
             Link { name: "Product", url: "https://courseplan.io" },
@@ -153,11 +162,13 @@ pub const PROJECTS: &[Project] = &[
     },
     Project {
         id: "ten",
+        image: Some("/projects/ten.webp"),
         tagline: "A tiny esoteric language implemented in Go.",
         links: &[Link { name: "GitHub Repo", url: "https://github.com/SamChou19815/ten-golang" }],
     },
     Project {
         id: "critter-compiler",
+        image: Some("/timeline/critter-compiler.webp"),
         tagline: "A compiler for the Critter World language from Cornell CS 2112. Proved the language is Turing complete.",
         links: &[
             Link { name: "GitHub Repo", url: "https://github.com/SamChou19815/primitivize" },
@@ -169,6 +180,7 @@ pub const PROJECTS: &[Project] = &[
     },
     Project {
         id: "sampl",
+        image: Some("/timeline/sampl.webp"),
         tagline: "Sam's first programming language. Archived in favor of samlang.",
         links: &[
             Link { name: "GitHub Repo", url: "https://github.com/SamChou19815/sampl" },
@@ -265,6 +277,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Facebook SWE",
         time: "February 2022",
+        image: Some("/timeline/flow.webp"),
         category: Category::Work,
         detail: Some("Working on Flow's type system, IDE, and performance."),
         links: &[
@@ -275,6 +288,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Graduated from Cornell University, Again",
         time: "December 2021",
+        image: Some("/fan-arts/graduation-sam.webp"),
         category: Category::Education,
         detail: Some("Graduated as an M.Eng student. 👋"),
         links: &[],
@@ -282,6 +296,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "samlang emits WASM code",
         time: "October 2021",
+        image: None,
         category: Category::Language,
         detail: None,
         links: &[Link {
@@ -292,6 +307,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Facebook SWE Intern",
         time: "June 2021",
+        image: Some("/timeline/flow.webp"),
         category: Category::Work,
         detail: Some("Working on the Flow team. Implemented the extraction code action for Flow LSP."),
         links: &[
@@ -303,6 +319,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Cornell DTI Software Developer",
         time: "September 2021",
+        image: Some("/timeline/courseplan-promotion.png"),
         category: Category::Work,
         detail: Some("Developer on CoursePlan"),
         links: &[
@@ -314,6 +331,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Graduated from Cornell University",
         time: "May 2021",
+        image: Some("/fan-arts/graduation-sam.webp"),
         category: Category::Education,
         detail: Some("Graduated as an undergrad."),
         links: &[],
@@ -321,6 +339,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "samlang emits LLVM code",
         time: "January 2021",
+        image: None,
         category: Category::Language,
         detail: None,
         links: &[Link {
@@ -331,6 +350,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "samlang rewritten in TypeScript",
         time: "August 2020",
+        image: None,
         category: Category::Language,
         detail: None,
         links: &[Link {
@@ -341,6 +361,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Facebook SWE Intern",
         time: "June 2020",
+        image: Some("/timeline/fb-sticker-pen.webp"),
         category: Category::Work,
         detail: Some("Working on the Feed Expressions team."),
         links: &[],
@@ -348,6 +369,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "mini-react",
         time: "May 2020",
+        image: Some("/projects/mini-react.webp"),
         category: Category::Project,
         detail: Some(
             "A simplified version of the React runtime with useState and useEffect hooks, built from scratch.",
@@ -361,6 +383,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Tech Talk: Build your programming language",
         time: "March 2020",
+        image: None,
         category: Category::Milestone,
         detail: Some("A tutorial of making a simple programming language derived from lambda-calculus."),
         links: &[Link {
@@ -371,6 +394,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Cornell DTI Developer Lead",
         time: "June 2019",
+        image: None,
         category: Category::Work,
         detail: None,
         links: &[Link { name: "Cornell DTI Website", url: "https://www.cornelldti.org" }],
@@ -378,6 +402,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Facebook SWE Intern",
         time: "May 2019",
+        image: Some("/timeline/pyre-check.webp"),
         category: Category::Work,
         detail: Some("Working on the Pyre team."),
         links: &[
@@ -388,6 +413,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Website Redesign v3.0",
         time: "March 2019",
+        image: Some("/timeline/website-v3.webp"),
         category: Category::Milestone,
         detail: Some("This is the first version that includes a samlang program about myself."),
         links: &[Link {
@@ -398,6 +424,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Cornell DTI TPM",
         time: "January 2019",
+        image: None,
         category: Category::Work,
         detail: Some("Technical product manager of the Samwise subteam."),
         links: &[Link { name: "Cornell DTI Website", url: "https://www.cornelldti.org" }],
@@ -405,6 +432,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "samlang",
         time: "January 2019",
+        image: Some("/projects/samlang.webp"),
         category: Category::Language,
         detail: Some("Sam's programming language with full type-inference."),
         links: &[
@@ -415,6 +443,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Cornell DTI Software Developer",
         time: "September 2018",
+        image: Some("/projects/samwise.webp"),
         category: Category::Work,
         detail: Some("Frontend Developer of Samwise"),
         links: &[Link { name: "GitHub Repo", url: "https://github.com/cornell-dti/samwise" }],
@@ -422,6 +451,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Critter Compiler",
         time: "August 2018",
+        image: Some("/timeline/critter-compiler.webp"),
         category: Category::Project,
         detail: None,
         links: &[
@@ -435,6 +465,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Website Redesign v2",
         time: "July 2018",
+        image: Some("/timeline/website-v2.webp"),
         category: Category::Milestone,
         detail: None,
         links: &[Link {
@@ -445,6 +476,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "SAMPL",
         time: "June 2018",
+        image: Some("/timeline/sampl.webp"),
         category: Category::Language,
         detail: Some("Sam's first programming language. Archived in favor of samlang."),
         links: &[
@@ -458,6 +490,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "CS 2112 Critter World",
         time: "December 2017",
+        image: Some("/timeline/critter-world.webp"),
         category: Category::Project,
         detail: Some(
             "Sam's critter world implementation. Used as course staff reference solution in Fall 2018 and Fall 2019.",
@@ -467,6 +500,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Entered Cornell University",
         time: "August 2017",
+        image: None,
         category: Category::Education,
         detail: None,
         links: &[],
@@ -474,6 +508,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "TEN",
         time: "July 2017",
+        image: Some("/projects/ten.webp"),
         category: Category::Project,
         detail: None,
         links: &[Link { name: "GitHub Repo", url: "https://github.com/SamChou19815/ten-golang" }],
@@ -481,6 +516,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Graduated from High School",
         time: "June 2016",
+        image: None,
         category: Category::Education,
         detail: None,
         links: &[Link {
@@ -491,6 +527,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Computerization Club President",
         time: "September 2015",
+        image: Some("/timeline/sam-later.webp"),
         category: Category::Milestone,
         detail: None,
         links: &[],
@@ -498,6 +535,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Computerization Software Developer",
         time: "February 2015",
+        image: None,
         category: Category::Milestone,
         detail: None,
         links: &[],
@@ -505,6 +543,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: "Bought developersam.com",
         time: "February 2015",
+        image: None,
         category: Category::Milestone,
         detail: Some("Check how it looks initially!"),
         links: &[Link {
