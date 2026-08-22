@@ -1,4 +1,4 @@
-//! Full-screen TUI core for <https://developersam.com/terminal>, built on
+//! Full-screen TUI core for <https://developersam.com>, built on
 //! iocraft: components are plain functions, state lives in hooks, and the
 //! same tree runs natively (crossterm over stdio) and in the browser
 //! (a wasm engine pumped by the web terminal through a plain C ABI).

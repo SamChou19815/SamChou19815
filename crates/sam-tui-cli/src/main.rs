@@ -1,6 +1,6 @@
 //! Native front-end for the Developer Sam TUI. Runs the same
 //! backend-agnostic [`sam_tui::view`] component tree that powers
-//! developersam.com/terminal, so behavior can be exercised in a real terminal.
+//! developersam.com, so behavior can be exercised in a real terminal.
 
 use anyhow::Result;
 use crossterm::tty::IsTty;
