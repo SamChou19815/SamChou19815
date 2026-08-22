@@ -90,6 +90,9 @@ fn pump() {
 #[wasm_bindgen(js_name = start)]
 pub fn sam_start(cols: u16, rows: u16) {
     crossterm::set_size(cols, rows);
+    // Seed the app with the real size before the first frame, so layout and
+    // scroll math never run against the placeholder width.
+    crossterm::push_event(crossterm::event::Event::Resize(cols, rows));
     crate::hit::clear();
     ENGINE.with(|cell| {
         let mut engine = cell.borrow_mut();
