@@ -16,6 +16,7 @@
     "**/dist/**",
     "**/out/**",
     "**/node_modules/**",
+    "packages/www/src/app/terminal/generated/**",
     "packages/vscode-intentionally-slow-extension/test.ts"
   ]
 }
