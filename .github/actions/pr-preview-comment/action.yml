@@ -1,0 +1,78 @@
+name: PR preview comment
+description: Create or update the single preview deployment comment on a pull request
+
+inputs:
+  status:
+    description: One of building, success, failure
+    required: true
+  preview-url:
+    description: Unique deployment URL, once the upload finished
+    default: ""
+  alias-url:
+    description: Branch alias URL, once the upload finished
+    default: ""
+  github-token:
+    description: Token used to read and write pull request comments
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Upsert comment
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        STATUS: ${{ inputs.status }}
+        PREVIEW_URL: ${{ inputs.preview-url }}
+        ALIAS_URL: ${{ inputs.alias-url }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "$PR_NUMBER" ]]; then
+          echo "::error::pr-preview-comment only runs on pull_request events"
+          exit 1
+        fi
+
+        case "$STATUS" in
+          building) status_line='🔨 Building…' ;;
+          success)  status_line='✅ Deploy successful!' ;;
+          *)        status_line='❌ Deploy failed' ;;
+        esac
+
+        body_file="$RUNNER_TEMP/pr-preview-comment.md"
+        {
+          # A hidden marker identifies the comment this workflow owns, so every
+          # run edits that one instead of piling new comments onto the PR.
+          echo '<!-- pr-preview-comment -->'
+          echo '### ⚡️ Website preview'
+          echo
+          echo '|  |  |'
+          echo '| --- | --- |'
+          echo "| **Latest commit** | \`${COMMIT_SHA:0:7}\` |"
+          echo "| **Status** | $status_line |"
+          if [[ -n "$PREVIEW_URL" ]]; then
+            echo "| **Preview URL** | $PREVIEW_URL |"
+          fi
+          if [[ -n "$ALIAS_URL" ]]; then
+            echo "| **Branch preview URL** | $ALIAS_URL |"
+          fi
+          echo "| **Build log** | [run #$GITHUB_RUN_NUMBER]($RUN_URL) |"
+        } > "$body_file"
+
+        # --paginate applies the filter per page, so keep the first id it yields.
+        existing=$(
+          gh api --paginate "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
+            --jq '[.[] | select((.body // "") | startswith("<!-- pr-preview-comment -->")) | .id] | first // empty'
+        )
+        existing=${existing%%$'\n'*}
+
+        payload=$(jq -n --rawfile body "$body_file" '{body: $body}')
+        if [[ -n "$existing" ]]; then
+          echo "$payload" | gh api -X PATCH "repos/$GH_REPO/issues/comments/$existing" --input - > /dev/null
+        else
+          echo "$payload" | gh api -X POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" --input - > /dev/null
+        fi

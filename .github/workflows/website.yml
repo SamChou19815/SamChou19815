@@ -1,0 +1,101 @@
+name: Website
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# The site used to be built by the Cloudflare Pages git integration. It is built
+# here instead — the Rust toolchain and cargo artifacts are cached, so the wasm
+# bundle no longer has to be bootstrapped from scratch on every deploy — and only
+# the static output is uploaded to Cloudflare through the direct upload API.
+env:
+  PAGES_PROJECT_NAME: website
+
+concurrency:
+  group: website-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Comment build in progress
+        # Pull requests from forks cannot read the Cloudflare credentials, so the
+        # deploy job below is skipped for them and no preview must be promised.
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/pr-preview-comment
+        with:
+          status: building
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: cargo-wasm
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: PNPM Install
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        # Also runs build-wasm.sh, which the wasm toolchain above is set up for.
+        run: pnpm --filter www build
+      - name: Upload static output
+        uses: actions/upload-artifact@v4
+        with:
+          name: www-out
+          path: packages/www/out
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      deployments: write
+      pull-requests: write
+    steps:
+      # Only the composite action is needed here; the site itself arrives as an
+      # artifact from the build job.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions
+      - name: Download static output
+        uses: actions/download-artifact@v4
+        with:
+          name: www-out
+          path: out
+      - name: Upload to Cloudflare Pages
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          gitHubToken: ${{ github.token }}
+          packageManager: npm
+          # A deploy on the project's production branch is a production deploy;
+          # every other branch gets a preview URL plus a stable branch alias.
+          command: >-
+            pages deploy out
+            --project-name=${{ env.PAGES_PROJECT_NAME }}
+            --branch=${{ github.event.pull_request.head.ref || github.ref_name }}
+            --commit-hash=${{ github.event.pull_request.head.sha || github.sha }}
+            --commit-dirty=true
+      - name: Comment deploy result
+        if: always() && github.event_name == 'pull_request'
+        uses: ./.github/actions/pr-preview-comment
+        with:
+          status: ${{ steps.deploy.outcome }}
+          preview-url: ${{ steps.deploy.outputs.deployment-url }}
+          alias-url: ${{ steps.deploy.outputs.pages-deployment-alias-url }}

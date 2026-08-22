@@ -2,8 +2,8 @@
 # Builds the sam-tui wasm bundle for the website — the binary plus the
 # wasm-bindgen JS glue and .d.ts — into packages/www/src/app/generated/,
 # where Next bundles it as a static asset. Works whether or not a Rust toolchain
-# is preinstalled: Cloudflare Pages build images ship without one, so a minimal
-# stable toolchain and wasm-pack are bootstrapped when missing.
+# is preinstalled: CI sets one up before calling this, but a minimal stable
+# toolchain and wasm-pack are bootstrapped when missing.
 set -eu
 
 if ! command -v cargo >/dev/null 2>&1; then
