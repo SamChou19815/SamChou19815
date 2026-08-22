@@ -21,39 +21,33 @@ use std::io::{self, Write};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, Poll, Wake, Waker};
 use wasm_bindgen::prelude::*;
 
 struct Engine {
     task: Pin<Box<dyn Future<Output = io::Result<()>> + Send>>,
     output: Arc<Mutex<Vec<u8>>>,
-    woken: Arc<AtomicBool>,
+    woken: Arc<Woken>,
     done: bool,
 }
 
 thread_local! {
-    static ENGINE: RefCell<Option<Engine>> = RefCell::new(None);
+    static ENGINE: RefCell<Option<Engine>> = const { RefCell::new(None) };
 }
 
-fn clone_waker(data: *const ()) -> RawWaker {
-    let arc = unsafe { Arc::from_raw(data as *const AtomicBool) };
-    let cloned = arc.clone();
-    std::mem::forget(arc);
-    RawWaker::new(Arc::into_raw(cloned) as *const (), &VTABLE)
-}
+/// Wake flag for the render future. The host drives polling synchronously, so
+/// waking just records "poll once more" for the loop in [`pump`].
+struct Woken(AtomicBool);
 
-fn wake_waker(data: *const ()) {
-    let arc = unsafe { Arc::from_raw(data as *const AtomicBool) };
-    arc.store(true, Ordering::Release);
-    std::mem::forget(arc);
-}
+impl Wake for Woken {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
 
-fn drop_waker(data: *const ()) {
-    drop(unsafe { Arc::from_raw(data as *const AtomicBool) });
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.store(true, Ordering::Release);
+    }
 }
-
-static VTABLE: RawWakerVTable =
-    RawWakerVTable::new(clone_waker, wake_waker, wake_waker, drop_waker);
 
 struct SinkWriter(Arc<Mutex<Vec<u8>>>);
 
@@ -76,10 +70,9 @@ fn pump() {
         if engine.done {
             return;
         }
+        let waker = Waker::from(engine.woken.clone());
+        let mut context = Context::from_waker(&waker);
         loop {
-            let raw = RawWaker::new(Arc::into_raw(engine.woken.clone()) as *const (), &VTABLE);
-            let waker = unsafe { Waker::from_raw(raw) };
-            let mut context = Context::from_waker(&waker);
             match engine.task.as_mut().poll(&mut context) {
                 Poll::Ready(_) => {
                     engine.done = true;
@@ -87,7 +80,7 @@ fn pump() {
                 }
                 Poll::Pending => {}
             }
-            if !engine.woken.swap(false, Ordering::AcqRel) {
+            if !engine.woken.0.swap(false, Ordering::AcqRel) {
                 return;
             }
         }
@@ -97,6 +90,9 @@ fn pump() {
 #[wasm_bindgen(js_name = start)]
 pub fn sam_start(cols: u16, rows: u16) {
     crossterm::set_size(cols, rows);
+    // Seed the app with the real size before the first frame, so layout and
+    // scroll math never run against the placeholder width.
+    crossterm::push_event(crossterm::event::Event::Resize(cols, rows));
     crate::hit::clear();
     ENGINE.with(|cell| {
         let mut engine = cell.borrow_mut();
@@ -106,7 +102,7 @@ pub fn sam_start(cols: u16, rows: u16) {
         }
         if engine.is_none() {
             let output = Arc::new(Mutex::new(Vec::new()));
-            let woken = Arc::new(AtomicBool::new(true));
+            let woken = Arc::new(Woken(AtomicBool::new(true)));
             let element: &'static mut _ = Box::leak(Box::new(view::root_element()));
             let future = element
                 .fullscreen()
