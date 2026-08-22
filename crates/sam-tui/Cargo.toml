@@ -24,11 +24,5 @@ wasm-bindgen = "0.2"
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-O", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
 
-[lints.rust]
-# The wasm module hand-rolls a `RawWaker` to drive the render future, which the
-# workspace-wide `unsafe_code = "forbid"` (passed as -F unsafe-code) rejects.
-# Re-declaring the lint here opts this crate out; ffi.rs is the only user.
-unsafe_code = "allow"
-
-[lints.clippy]
-all = "warn"
+[lints]
+workspace = true
