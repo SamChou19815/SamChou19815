@@ -52,6 +52,16 @@ pub enum InCanadaCommand {
         #[arg(required = true, value_name = "YYYY-MM-DD")]
         dates: Vec<String>,
     },
+    /// Show, set, or clear the date permanent residency began. Days before it
+    /// count as half a day toward citizenship, capped at 365 days of credit.
+    PrDate {
+        /// The new PR date; omit to show the recorded one.
+        #[arg(value_name = "YYYY-MM-DD", conflicts_with = "clear")]
+        date: Option<String>,
+        /// Forget the recorded PR date.
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 #[derive(Debug, Args)]
