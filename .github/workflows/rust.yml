@@ -54,7 +54,7 @@ jobs:
       - name: Prepare patched deps
         run: ./scripts/prepare-patched-deps.sh
       - name: Test
-        run: cargo test -p sam-tui -p sam-tui-cli
+        run: cargo test -p sam-cli -p sam-tui -p sam-tui-cli
   test-sam-run:
     runs-on: ubuntu-latest
     steps:
