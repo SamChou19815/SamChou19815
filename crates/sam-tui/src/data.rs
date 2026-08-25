@@ -1,7 +1,3 @@
-//! Static site content, mirroring the homepage of developersam.com
-//! (`packages/www/src/lib/home-timeline-data.ts`, `site-data.ts` and the
-//! samlang program on the landing page).
-
 pub const COPYRIGHT: &str = "Copyright (C) 2015-2026 Developer Sam.";
 
 use crossterm::style::Color;
@@ -294,7 +290,7 @@ pub const TIMELINE: &[TimelineEvent] = &[
         time: "December 2021",
         image: Some("/fan-arts/graduation-sam.webp"),
         category: Category::Education,
-        detail: Some("Graduated as an M.Eng student. 👋"),
+        detail: Some("Graduated as an M.Eng student."),
         links: &[],
     },
     TimelineEvent {
