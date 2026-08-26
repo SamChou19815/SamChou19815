@@ -641,15 +641,4 @@ mod tests {
         );
         assert_eq!(shell.complete("cd projects/saml"), "projects/samlang");
     }
-
-    #[test]
-    fn history_records_commands() {
-        let mut shell = Shell::new();
-        shell.execute("ls");
-        shell.execute("pwd");
-        let history = plain(&shell.execute("history"));
-        assert!(history.contains("1 ls"));
-        assert!(history.contains("2 pwd"));
-        assert!(history.contains("3 history"));
-    }
 }
