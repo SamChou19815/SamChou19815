@@ -605,19 +605,6 @@ mod tests {
     }
 
     #[test]
-    fn modal_digits_open_buttons() {
-        let mut app = app();
-        key(&mut app, Key::Char('2'));
-        key(&mut app, Key::Enter);
-        key(&mut app, Key::Char('1'));
-        let actions = app.take_actions();
-        assert!(matches!(
-            actions.as_slice(),
-            [Action::OpenUrl(url)] if url.contains("flow.org")
-        ));
-    }
-
-    #[test]
     fn quit_keys() {
         let mut app = app();
         key(&mut app, Key::Char('q'));

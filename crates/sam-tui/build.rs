@@ -20,6 +20,7 @@ const MAX_ROWS: u32 = 16;
 /// Site-root-relative asset paths, which double as the `<img src>` the web
 /// overlay needs and as the key `data.rs` refers to them by.
 const ASSETS: &[&str] = &[
+    "/timeline/canada.webp",
     "/timeline/courseplan-promotion.png",
     "/timeline/critter-compiler.webp",
     "/timeline/critter-world.webp",

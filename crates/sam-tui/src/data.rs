@@ -275,6 +275,14 @@ pub const CONTACT_MARKDOWN: &str = r#"Ways to reach Developer Sam:
 /// The homepage timeline, newest first, mirroring `DATASET_TIMELINE`.
 pub const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
+        title: "Became a Canadian permanent resident",
+        time: "August 2026",
+        image: Some("/timeline/canada.webp"),
+        category: Category::Milestone,
+        detail: None,
+        links: &[],
+    },
+    TimelineEvent {
         title: "Facebook SWE",
         time: "February 2022",
         image: Some("/timeline/flow.webp"),
