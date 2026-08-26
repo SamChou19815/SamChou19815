@@ -398,7 +398,11 @@ export default function TerminalApp(): React.JSX.Element {
         "\x1b[90mdev-sam-sh 1.0 — developer sam's terminal\x1b[0m\r\n" +
           "\x1b[90mtype help for commands, or run dev-sam\x1b[0m\r\n\r\n",
       );
-      terminal.write(PROMPT);
+      // Pre-type the headline command so a visitor only has to press Enter.
+      // Seeded into the line editor's buffer, not just painted, so backspace
+      // and the rest of the editing keys see it as text they typed.
+      shellLine = "dev-sam";
+      renderShellLine();
       terminal.focus();
     };
     void boot();
