@@ -22,21 +22,10 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
 
-pub const TAB_NAMES: [&str; 6] = [
-    "About",
-    "Timeline",
-    "Projects",
-    "Work",
-    "Education",
-    "Contact",
-];
-pub const TAB_COUNT: usize = 6;
+pub const TAB_NAMES: [&str; 2] = ["About", "Timeline"];
+pub const TAB_COUNT: usize = 2;
 pub const ABOUT_TAB: usize = 0;
 pub const TIMELINE_TAB: usize = 1;
-pub const PROJECTS_TAB: usize = 2;
-pub const WORK_TAB: usize = 3;
-pub const EDUCATION_TAB: usize = 4;
-pub const CONTACT_TAB: usize = 5;
 
 /// Width assumed before the first resize event tells us the real one.
 const ASSUMED_COLS: u16 = 80;
@@ -66,20 +55,6 @@ pub fn card_height(event: &data::TimelineEvent, cols: u16) -> usize {
     };
     let image = image::rows(event.image, cols, image::THUMBNAIL);
     1 + 1 + image + detail + links + 1
-}
-
-/// Usable width inside a project row's text column. The projects pane indents
-/// its body two columns further than the timeline's rail does, so it has that
-/// much less room than [`content_width`] reports.
-fn project_content_width(cols: u16) -> usize {
-    content_width(cols).saturating_sub(2).max(12)
-}
-
-/// Rows of a project row: the name line, the artwork, its wrapped tagline,
-/// then a blank.
-pub fn project_height(project: &data::Project, cols: u16) -> usize {
-    let image = image::rows(project.image, cols, image::THUMBNAIL);
-    1 + image + wrapped_rows(project.tagline, project_content_width(cols)) + 1
 }
 
 /// The button row as it is rendered, for width math.
@@ -138,7 +113,6 @@ pub enum Action {
 #[derive(Clone, PartialEq, Eq)]
 pub enum Modal {
     Timeline { event: usize, scroll: usize },
-    Project { project: usize, scroll: usize },
     Help { scroll: usize },
 }
 
@@ -303,7 +277,7 @@ impl App {
             Key::Esc => {}
             Key::Char('?') => self.modal = Some(Modal::Help { scroll: 0 }),
             Key::Char('q') => self.quit = true,
-            Key::Char(c @ '1'..='6') => self.switch_tab(c as usize - '1' as usize),
+            Key::Char(c @ '1'..='2') => self.switch_tab(c as usize - '1' as usize),
             Key::Up => self.move_selection(-1, 1),
             Key::Char('k') if !mods.ctrl => self.move_selection(-1, 1),
             Key::Down => self.move_selection(1, 1),
@@ -323,7 +297,6 @@ impl App {
             let index = digit as usize - '1' as usize;
             let links: &[data::Link] = match &self.modal {
                 Some(Modal::Timeline { event, .. }) => data::TIMELINE[*event].links,
-                Some(Modal::Project { project, .. }) => data::PROJECTS[*project].links,
                 _ => &[],
             };
             if let Some(link) = links.get(index) {
@@ -359,14 +332,9 @@ impl App {
         self.visited |= 1 << self.tab;
     }
 
-    /// Moves list selection (Timeline/Projects) or scrolls text panes.
+    /// Moves list selection (Timeline) or scrolls text panes.
     fn move_selection(&mut self, direction: i32, amount: usize) {
-        let list_len = match self.tab {
-            TIMELINE_TAB => Some(data::TIMELINE.len()),
-            PROJECTS_TAB => Some(data::PROJECTS.len()),
-            _ => None,
-        };
-        if let Some(len) = list_len {
+        if let Some(len) = self.list_len() {
             let selected = &mut self.selected[self.tab];
             *selected = if direction < 0 {
                 selected.saturating_sub(amount)
@@ -378,13 +346,13 @@ impl App {
         }
     }
 
+    /// Item count of the current tab, for the one tab that is a list.
+    fn list_len(&self) -> Option<usize> {
+        (self.tab == TIMELINE_TAB).then_some(data::TIMELINE.len())
+    }
+
     fn jump_to_edge(&mut self, target: usize) {
-        let list_len = match self.tab {
-            TIMELINE_TAB => Some(data::TIMELINE.len()),
-            PROJECTS_TAB => Some(data::PROJECTS.len()),
-            _ => None,
-        };
-        if let Some(len) = list_len {
+        if let Some(len) = self.list_len() {
             self.selected[self.tab] = target.min(len.saturating_sub(1));
         } else {
             self.scroll[self.tab] = target;
@@ -416,16 +384,9 @@ impl App {
     }
 
     fn open_selected(&mut self) {
-        match self.tab {
-            TIMELINE_TAB => {
-                let event = self.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
-                self.modal = Some(Modal::Timeline { event, scroll: 0 });
-            }
-            PROJECTS_TAB => {
-                let project = self.selected[PROJECTS_TAB].min(data::PROJECTS.len() - 1);
-                self.modal = Some(Modal::Project { project, scroll: 0 });
-            }
-            _ => {}
+        if self.tab == TIMELINE_TAB {
+            let event = self.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
+            self.modal = Some(Modal::Timeline { event, scroll: 0 });
         }
     }
 
@@ -453,7 +414,7 @@ impl App {
             }
             Some(hit::HitTarget::Tab(index)) => self.switch_tab(index),
             Some(hit::HitTarget::Item(index)) => {
-                if self.tab == TIMELINE_TAB || self.tab == PROJECTS_TAB {
+                if self.tab == TIMELINE_TAB {
                     if self.selected[self.tab] == index {
                         self.open_selected();
                     } else {
@@ -475,24 +436,20 @@ impl App {
 
     /// Rendered height of each row of the current list tab.
     fn item_heights(&self) -> Vec<usize> {
-        match self.tab {
-            TIMELINE_TAB => data::TIMELINE
-                .iter()
-                .map(|event| card_height(event, self.cols))
-                .collect(),
-            PROJECTS_TAB => data::PROJECTS
-                .iter()
-                .map(|project| project_height(project, self.cols))
-                .collect(),
-            _ => Vec::new(),
+        if self.tab != TIMELINE_TAB {
+            return Vec::new();
         }
+        data::TIMELINE
+            .iter()
+            .map(|event| card_height(event, self.cols))
+            .collect()
     }
 
     /// Clamps list scroll so the selection stays inside the viewport. The
     /// panes render `.skip(scroll)` over whole items, so `scroll` counts
     /// items, not lines — advance it until the selection's last row fits.
     pub fn clamp_list_scroll(&mut self) {
-        if !matches!(self.tab, TIMELINE_TAB | PROJECTS_TAB) {
+        if self.tab != TIMELINE_TAB {
             return;
         }
         let heights = self.item_heights();
@@ -513,9 +470,7 @@ impl App {
 
 fn modal_scroll(modal: &mut Modal) -> &mut usize {
     match modal {
-        Modal::Timeline { scroll, .. } | Modal::Project { scroll, .. } | Modal::Help { scroll } => {
-            scroll
-        }
+        Modal::Timeline { scroll, .. } | Modal::Help { scroll } => scroll,
     }
 }
 
@@ -562,30 +517,15 @@ mod tests {
         key(&mut app, Key::Right);
         assert_eq!(app.tab, TIMELINE_TAB);
         key(&mut app, Key::Right);
-        key(&mut app, Key::Right);
-        key(&mut app, Key::Right);
-        key(&mut app, Key::Right);
-        assert_eq!(app.tab, CONTACT_TAB);
-        key(&mut app, Key::Right);
         assert_eq!(app.tab, ABOUT_TAB);
         key(&mut app, Key::Left);
-        assert_eq!(app.tab, CONTACT_TAB);
-        key(&mut app, Key::Char('3'));
-        assert_eq!(app.tab, PROJECTS_TAB);
-        key(&mut app, Key::Char('h'));
         assert_eq!(app.tab, TIMELINE_TAB);
+        key(&mut app, Key::Char('1'));
+        assert_eq!(app.tab, ABOUT_TAB);
         key(&mut app, Key::Char('l'));
-        assert_eq!(app.tab, PROJECTS_TAB);
-    }
-
-    #[test]
-    fn visiting_tabs_is_tracked() {
-        let mut app = app();
-        assert_eq!(app.visited_count(), 1);
-        for _ in 0..TAB_COUNT {
-            key(&mut app, Key::Right);
-        }
-        assert_eq!(app.visited_count(), TAB_COUNT);
+        assert_eq!(app.tab, TIMELINE_TAB);
+        key(&mut app, Key::Char('h'));
+        assert_eq!(app.tab, ABOUT_TAB);
     }
 
     #[test]
@@ -659,7 +599,7 @@ mod tests {
         // A held key repeats, and those repeats should still move.
         app.handle_event(&right(KeyEventKind::Repeat));
         app.handle_event(&right(KeyEventKind::Release));
-        assert_eq!(app.tab, PROJECTS_TAB);
+        assert_eq!(app.tab, ABOUT_TAB);
     }
 
     #[test]
@@ -717,23 +657,5 @@ mod tests {
             [Action::OpenUrl(url)] if url == "https://flow.org"
         ));
         assert!(app.modal.is_some());
-    }
-
-    #[test]
-    fn crossterm_events_feed_the_machine() {
-        let mut app = app();
-        app.handle_event(&Event::Key(KeyEvent::new(
-            KeyCode::Char('2'),
-            KeyModifiers::NONE,
-        )));
-        assert_eq!(app.tab, TIMELINE_TAB);
-        app.handle_event(&Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: 0,
-            row: 0,
-            modifiers: KeyModifiers::NONE,
-        }));
-        // Column 0/row 0 is the header title, not a tab; nothing changes.
-        assert_eq!(app.tab, TIMELINE_TAB);
     }
 }
