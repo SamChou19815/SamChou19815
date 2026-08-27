@@ -11,11 +11,16 @@
 //! landed, which the web front-end uses to lay a crisp `<img>` over the art —
 //! see [`regions`].
 
+use crate::theme;
 use crossterm::style::Color;
 use iocraft::prelude::*;
 use std::cell::{Cell, RefCell};
 
 /// One baked asset: `cols * 2 * rows` RGB pixels at `offset` in [`BLOB`].
+/// `len == 0` marks a dimensions-only entry — the blog's images, whose pixels
+/// are never baked. The terminal draws a captioned placeholder frame there and
+/// the web overlay lays the real, full-resolution file over the reported
+/// region, exactly as it does for a baked image.
 struct Baked {
     url: &'static str,
     cols: u16,
@@ -196,17 +201,21 @@ pub struct ImageProps {
     pub bounds: (u16, u16),
     /// [`LAYER_PANE`] by default; [`LAYER_DIALOG`] for artwork inside a dialog.
     pub layer: u8,
+    /// Caption for the placeholder frame drawn when no pixels were baked.
+    pub alt: String,
 }
 
-/// Draws a baked image as half-blocks. Implemented against `Component`
-/// directly rather than through `#[component]`, because painting per-cell
-/// foreground *and* background needs the canvas, which only `draw` sees.
+/// Draws a baked image as half-blocks, or a captioned frame when the asset is
+/// dimensions-only. Implemented against `Component` directly rather than
+/// through `#[component]`, because painting per-cell foreground *and*
+/// background needs the canvas, which only `draw` sees.
 #[derive(Default)]
 pub struct Image {
     url: &'static str,
     cols: u16,
     rows: u16,
     layer: u8,
+    alt: String,
 }
 
 impl Component for Image {
@@ -224,6 +233,7 @@ impl Component for Image {
     ) {
         self.url = props.url;
         self.layer = props.layer;
+        self.alt = props.alt.clone();
         let (cols, rows) = size(props.url, props.bounds).unwrap_or((0, 0));
         self.cols = cols;
         self.rows = rows;
@@ -245,7 +255,6 @@ impl Component for Image {
             return;
         }
         let position = drawer.canvas_position();
-        let pixels = sample(baked, self.cols, self.rows);
         let width = usize::from(self.cols);
         let mut canvas = drawer.canvas();
         // `CanvasTextStyle` is `#[non_exhaustive]`, so it is built by mutation
@@ -253,17 +262,69 @@ impl Component for Image {
         let mut style = CanvasTextStyle::default();
         // The clipped region is a rectangle, so tracking its corners is enough.
         let (mut first, mut last) = (None, (0usize, 0usize));
-        for row in 0..usize::from(self.rows) {
-            for col in 0..width {
-                if canvas.cell(col as isize, row as isize).is_some() {
-                    first.get_or_insert((col, row));
-                    last = (last.0.max(col), row);
+        if baked.len == 0 {
+            // Dimensions only: probe every cell so `first`/`last` measure the
+            // clipped rectangle exactly as the pixel path does, then draw the
+            // placeholder the web overlay's `<img>` replaces.
+            for row in 0..usize::from(self.rows) {
+                for col in 0..width {
+                    if canvas.cell(col as isize, row as isize).is_some() {
+                        first.get_or_insert((col, row));
+                        last = (last.0.max(col), row);
+                    }
                 }
-                let upper = pixels[row * 2 * width + col];
-                let lower = pixels[(row * 2 + 1) * width + col];
-                canvas.set_background_color(col as isize, row as isize, 1, 1, color(lower));
-                style.color = Some(color(upper));
-                canvas.set_text(col as isize, row as isize, "▀", style);
+            }
+            let rows = usize::from(self.rows);
+            let framed = rows >= 3;
+            let margin = usize::from(framed);
+            let label = if self.alt.is_empty() {
+                "[image]".to_string()
+            } else {
+                format!("[image: {}]", self.alt)
+            };
+            let caption =
+                crate::markdown::truncate(&label, width.saturating_sub(2 * margin).max(1));
+            let caption_row = rows / 2;
+            let start =
+                margin + (width.saturating_sub(2 * margin).max(1) - caption.chars().count()) / 2;
+            for row in 0..rows {
+                for col in 0..width {
+                    let glyph = if framed {
+                        frame_glyph(col, row, width, rows)
+                    } else {
+                        ""
+                    };
+                    if glyph.is_empty() {
+                        continue;
+                    }
+                    style.color = Some(theme::BORDER);
+                    canvas.set_text(col as isize, row as isize, glyph, style);
+                }
+            }
+            style.color = Some(theme::MUTED);
+            for (offset, glyph) in caption.char_indices() {
+                let piece = &caption[offset..offset + glyph.len_utf8()];
+                canvas.set_text(
+                    (start + offset) as isize,
+                    caption_row as isize,
+                    piece,
+                    style,
+                );
+            }
+        } else {
+            let pixels = sample(baked, self.cols, self.rows);
+            for row in 0..usize::from(self.rows) {
+                for col in 0..width {
+                    if canvas.cell(col as isize, row as isize).is_some() {
+                        first.get_or_insert((col, row));
+                        last = (last.0.max(col), row);
+                    }
+                    let upper = pixels[row * 2 * width + col];
+                    let lower = pixels[(row * 2 + 1) * width + col];
+                    canvas.set_background_color(col as isize, row as isize, 1, 1, color(lower));
+                    style.color = Some(color(upper));
+                    canvas.set_text(col as isize, row as isize, "▀", style);
+                }
             }
         }
         let (x, y) = (position.x.max(0) as u16, position.y.max(0) as u16);
@@ -288,5 +349,31 @@ impl Component for Image {
             visible_rows,
             layer: self.layer,
         });
+    }
+}
+
+/// The box-drawing glyph for one cell of a placeholder's frame; the empty
+/// string for the interior.
+fn frame_glyph(col: usize, row: usize, cols: usize, rows: usize) -> &'static str {
+    if row == 0 {
+        if col == 0 {
+            "┌"
+        } else if col + 1 == cols {
+            "┐"
+        } else {
+            "─"
+        }
+    } else if row + 1 == rows {
+        if col == 0 {
+            "└"
+        } else if col + 1 == cols {
+            "┘"
+        } else {
+            "─"
+        }
+    } else if col == 0 || col + 1 == cols {
+        "│"
+    } else {
+        ""
     }
 }
