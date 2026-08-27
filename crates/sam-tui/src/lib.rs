@@ -32,11 +32,45 @@ pub const BLOG_TAB: usize = 2;
 /// Width assumed before the first resize event tells us the real one.
 const ASSUMED_COLS: u16 = 80;
 
+/// Rows the wheel moves at a time — the terminal convention, and few enough
+/// that the line the eye was on is still on screen afterwards.
+const WHEEL_ROWS: usize = 3;
+
 /// Usable width inside a card's text column: the pane's border and padding
 /// plus the card's gutter are spoken for before any text is drawn.
 pub fn content_width(cols: u16) -> usize {
     let cols = if cols == 0 { ASSUMED_COLS } else { cols };
     (cols as usize).saturating_sub(7).max(12)
+}
+
+/// The widest the blog's column gets, mirroring `max-w-screen-lg` on the web.
+/// A maximized terminal is several times wider than a comfortable measure, and
+/// prose that runs the whole way across is hard to track from the end of one
+/// row to the start of the next.
+const BLOG_MAX_COLS: usize = 88;
+
+/// Width of the blog's centered column — the index's cards and the reader's
+/// prose — inside the pane's border and its body's padding.
+pub fn blog_column_width(cols: u16) -> usize {
+    let cols = if cols == 0 { ASSUMED_COLS } else { cols };
+    (cols as usize).saturating_sub(4).clamp(12, BLOG_MAX_COLS)
+}
+
+/// Text width inside a blog card: the column, less the card's border and
+/// padding.
+pub fn blog_text_width(cols: u16) -> usize {
+    blog_column_width(cols).saturating_sub(4).max(8)
+}
+
+/// Rows one blog card occupies: the blank separator above it, then its box —
+/// top border, title, date, bottom border. Every card is the same height, as
+/// on the web, where a card in the index carries a title and a date and
+/// nothing else. Uniform heights are what let the index scroll by the row.
+pub const POST_CARD_ROWS: usize = 5;
+
+/// Rows the whole blog index occupies.
+pub fn blog_rows() -> usize {
+    posts::POSTS.len() * POST_CARD_ROWS
 }
 
 /// Rows a string occupies once wrapped into `width` columns.
@@ -65,19 +99,6 @@ fn link_row_label(links: &[data::Link]) -> String {
         .iter()
         .map(|link| format!(" {} ", link.name.to_uppercase()))
         .collect()
-}
-
-/// Rows of a blog card: title, the date as a subheader, the artwork, the
-/// wrapped excerpt, a button row, then a blank separator.
-pub fn post_card_height(post: &posts::Post, cols: u16) -> usize {
-    let inner = content_width(cols);
-    let excerpt = if post.excerpt.is_empty() {
-        0
-    } else {
-        wrapped_rows(post.excerpt, inner)
-    };
-    let image = image::rows(post.thumbnail, cols, image::THUMBNAIL);
-    1 + 1 + image + excerpt + 1 + 1
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -136,6 +157,9 @@ pub enum Modal {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Reader {
     pub post: usize,
+    /// Rows of the post scrolled past the top of the body. Counting rows
+    /// rather than blocks is what keeps a tall image from jumping a screenful
+    /// at a time.
     pub scroll: usize,
 }
 
@@ -152,7 +176,9 @@ pub struct App {
     pub rows: u16,
     pub tab: usize,
     visited: u32,
-    /// Vertical scroll offset for the scrolling tab panes.
+    /// Vertical scroll offset for the scrolling tab panes: rows for About and
+    /// for the Blog index, whose cards are all one height, and the index of
+    /// the topmost card for the Timeline, whose cards are not.
     scroll: [usize; TAB_COUNT],
     /// Selected row for the two list tabs.
     selected: [usize; TAB_COUNT],
@@ -332,8 +358,14 @@ impl App {
             Key::Char('?') => self.modal = Some(Modal::Help { scroll: 0 }),
             Key::Up | Key::Char('k') => self.scroll_reader(-1, 1),
             Key::Down | Key::Char('j') => self.scroll_reader(1, 1),
-            Key::PageUp => self.scroll_reader(-1, 10),
-            Key::PageDown => self.scroll_reader(1, 10),
+            Key::PageUp => {
+                let page = self.reader_page();
+                self.scroll_reader(-1, page);
+            }
+            Key::PageDown => {
+                let page = self.reader_page();
+                self.scroll_reader(1, page);
+            }
             Key::Home | Key::Char('g') => {
                 if let Some(reader) = &mut self.reader {
                     reader.scroll = 0;
@@ -343,12 +375,6 @@ impl App {
                 let limit = self.max_reader_scroll();
                 if let Some(reader) = &mut self.reader {
                     reader.scroll = limit;
-                }
-            }
-            Key::Enter | Key::Char('o') => {
-                if let Some(reader) = &self.reader {
-                    let url = posts::POSTS[reader.post].url();
-                    self.actions.push(Action::OpenUrl(url));
                 }
             }
             _ => {}
@@ -364,6 +390,14 @@ impl App {
                 (reader.scroll + amount).min(limit)
             };
         }
+    }
+
+    /// A page of the reader: a screenful less two rows, so the lines the eye
+    /// was on are still there after the jump.
+    fn reader_page(&self) -> usize {
+        view::reader_viewport(self.viewport())
+            .saturating_sub(2)
+            .max(1)
     }
 
     fn on_modal_key(&mut self, key: Key) {
@@ -407,18 +441,59 @@ impl App {
         self.visited |= 1 << self.tab;
     }
 
-    /// Moves list selection (Timeline) or scrolls text panes.
+    /// Moves list selection (Timeline, Blog) or scrolls text panes.
     fn move_selection(&mut self, direction: i32, amount: usize) {
         if let Some(len) = self.list_len() {
-            let selected = &mut self.selected[self.tab];
-            *selected = if direction < 0 {
+            let selected = self.selected[self.tab];
+            self.select(if direction < 0 {
                 selected.saturating_sub(amount)
             } else {
-                (*selected + amount).min(len.saturating_sub(1))
-            };
+                (selected + amount).min(len.saturating_sub(1))
+            });
         } else {
             self.scroll_text(direction, amount.max(3));
         }
+    }
+
+    /// Selects a card of the current list tab and brings it into view.
+    fn select(&mut self, index: usize) {
+        self.selected[self.tab] = index;
+        if self.tab == BLOG_TAB {
+            self.reveal_blog_selection();
+        }
+    }
+
+    /// Scrolls the blog index just far enough to bring the selected card fully
+    /// into view, and no further. Moving the least it can is what makes
+    /// arrowing down the list slide the page a row at a time instead of
+    /// snapping the selection to the pane's top edge.
+    fn reveal_blog_selection(&mut self) {
+        // A card's rows include the blank separator above it, so a revealed
+        // card comes with the row of air that separates it from the one before.
+        let top = self.selected[BLOG_TAB] * POST_CARD_ROWS;
+        let bottom = top + POST_CARD_ROWS;
+        let viewport = self.viewport().max(1);
+        let scroll = &mut self.scroll[BLOG_TAB];
+        if *scroll > top {
+            *scroll = top;
+        } else if bottom > *scroll + viewport {
+            *scroll = bottom - viewport;
+        }
+    }
+
+    /// Moves the selection to the nearest card the wheel left on screen.
+    /// Without it the selection stays where the scrolling started and the next
+    /// arrow press snaps the page back to it — the jump that makes wheel
+    /// scrolling feel broken.
+    fn follow_blog_scroll(&mut self) {
+        let last = posts::POSTS.len().saturating_sub(1);
+        let viewport = self.viewport().max(1);
+        let scroll = self.scroll[BLOG_TAB];
+        let first = (scroll / POST_CARD_ROWS).min(last);
+        let bottom = ((scroll + viewport) / POST_CARD_ROWS)
+            .saturating_sub(1)
+            .clamp(first, last);
+        self.selected[BLOG_TAB] = self.selected[BLOG_TAB].clamp(first, bottom);
     }
 
     /// Item count of the current tab, for the tabs that are lists.
@@ -432,7 +507,7 @@ impl App {
 
     fn jump_to_edge(&mut self, target: usize) {
         if let Some(len) = self.list_len() {
-            self.selected[self.tab] = target.min(len.saturating_sub(1));
+            self.select(target.min(len.saturating_sub(1)));
         } else {
             self.scroll[self.tab] = target.min(self.max_scroll());
         }
@@ -505,7 +580,13 @@ impl App {
                 if self.modal.is_some() {
                     self.scroll_modal(direction);
                 } else if self.reader.is_some() {
-                    self.scroll_reader(direction, 1);
+                    self.scroll_reader(direction, WHEEL_ROWS);
+                } else if self.tab == BLOG_TAB {
+                    // The blog moves its page under the selection rather than
+                    // dragging the selection along: rolling the wheel asks to
+                    // see further down the index, not to pick another post.
+                    self.scroll_text(direction, WHEEL_ROWS);
+                    self.follow_blog_scroll();
                 } else {
                     self.move_selection(direction, 1);
                 }
@@ -525,7 +606,7 @@ impl App {
                     if self.selected[self.tab] == index {
                         self.open_selected();
                     } else {
-                        self.selected[self.tab] = index;
+                        self.select(index);
                     }
                 }
             }
@@ -541,36 +622,14 @@ impl App {
         }
     }
 
-    /// Rendered height of each row of the current list tab.
-    fn item_heights(&self) -> Vec<usize> {
-        match self.tab {
-            TIMELINE_TAB => data::TIMELINE
-                .iter()
-                .map(|event| card_height(event, self.cols))
-                .collect(),
-            BLOG_TAB => posts::POSTS
-                .iter()
-                .map(|post| post_card_height(post, self.cols))
-                .collect(),
-            _ => Vec::new(),
-        }
-    }
-
-    /// The furthest the reader scrolls: far enough to bring the last block
-    /// fully on screen, and no further. Block heights vary — an image is many
-    /// rows — so this cannot be a count-minus-viewport subtraction.
+    /// The furthest the reader scrolls: far enough to bring the last row of
+    /// the post to the bottom of the body, and no further.
     fn max_reader_scroll(&self) -> usize {
         let Some(reader) = &self.reader else {
             return 0;
         };
-        let heights = view::reader_block_heights(reader.post, self.cols);
         let viewport = view::reader_viewport(self.viewport()).max(1);
-        let (mut start, mut used) = (heights.len(), 0usize);
-        while start > 0 && used + heights[start - 1] <= viewport {
-            start -= 1;
-            used += heights[start];
-        }
-        start
+        view::reader_row_count(reader.post, self.cols).saturating_sub(viewport)
     }
 
     /// Re-anchors the scroll of whatever is on screen. A resize moves the
@@ -588,23 +647,33 @@ impl App {
         if let Some(reader) = &mut self.reader {
             reader.scroll = reader.scroll.min(reader_limit);
         }
-        if !matches!(self.tab, TIMELINE_TAB | BLOG_TAB) {
+        if self.tab != TIMELINE_TAB {
+            // The Blog index and the About pane both scroll by the row, and
+            // the blog's selection moves with its own scroll rather than
+            // dragging it, so there is nothing left to anchor here.
+            if self.tab == BLOG_TAB {
+                let last = posts::POSTS.len().saturating_sub(1);
+                self.selected[BLOG_TAB] = self.selected[BLOG_TAB].min(last);
+            }
             self.scroll[self.tab] = self.scroll[self.tab].min(self.max_scroll());
             return;
         }
-        let heights = self.item_heights();
+        let heights: Vec<usize> = data::TIMELINE
+            .iter()
+            .map(|event| card_height(event, self.cols))
+            .collect();
         let Some(last) = heights.len().checked_sub(1) else {
             return;
         };
-        let selected = self.selected[self.tab].min(last);
-        self.selected[self.tab] = selected;
+        let selected = self.selected[TIMELINE_TAB].min(last);
+        self.selected[TIMELINE_TAB] = selected;
         let viewport = self.viewport().max(1);
         // Scrolling up: never leave the selection above the top item.
-        let mut scroll = self.scroll[self.tab].min(selected);
+        let mut scroll = self.scroll[TIMELINE_TAB].min(selected);
         while scroll < selected && heights[scroll..=selected].iter().sum::<usize>() > viewport {
             scroll += 1;
         }
-        self.scroll[self.tab] = scroll;
+        self.scroll[TIMELINE_TAB] = scroll;
     }
 }
 

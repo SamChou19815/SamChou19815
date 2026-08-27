@@ -142,15 +142,21 @@ fn color([r, g, b]: [u8; 3]) -> Color {
 /// crop to the same rectangle or the picture spills over the status bar. It is
 /// measured, not predicted: [`CanvasSubviewMut::cell`] returns `None` outside
 /// the clip region, so the draw loop learns each cell's fate as it writes it.
+///
+/// `x`/`y` is where the whole picture starts, and goes negative when it is
+/// scrolled part-way off the top of a pane — the reader pulls the block its
+/// viewport begins inside up out of sight. The overlay lays the full-resolution
+/// file over that origin and crops it to `visible_*`, so it needs the origin of
+/// the picture rather than of the part that survived.
 #[derive(Clone, Copy)]
 pub struct Region {
     pub url: &'static str,
-    pub x: u16,
-    pub y: u16,
+    pub x: i16,
+    pub y: i16,
     pub cols: u16,
     pub rows: u16,
-    pub visible_x: u16,
-    pub visible_y: u16,
+    pub visible_x: i16,
+    pub visible_y: i16,
     pub visible_cols: u16,
     pub visible_rows: u16,
     pub layer: u8,
@@ -327,11 +333,11 @@ impl Component for Image {
                 }
             }
         }
-        let (x, y) = (position.x.max(0) as u16, position.y.max(0) as u16);
+        let (x, y) = (position.x, position.y);
         let (visible_x, visible_y, visible_cols, visible_rows) = match first {
             Some((col, row)) => (
-                x + col as u16,
-                y + row as u16,
+                x + col as i16,
+                y + row as i16,
                 (last.0 + 1 - col) as u16,
                 (last.1 + 1 - row) as u16,
             ),
