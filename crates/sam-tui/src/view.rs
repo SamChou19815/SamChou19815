@@ -4,7 +4,10 @@
 
 use crate::hit::{self, HitTarget, Rect};
 use crate::image::{self, Image};
-use crate::{data, markdown, theme, App, Modal, ABOUT_TAB, TAB_COUNT, TAB_NAMES, TIMELINE_TAB};
+use crate::{
+    data, markdown, posts, theme, App, Modal, Reader, ABOUT_TAB, BLOG_TAB, TAB_COUNT, TAB_NAMES,
+    TIMELINE_TAB,
+};
 use crossterm::style::Color;
 use iocraft::components::MixedTextContent;
 use iocraft::prelude::*;
@@ -49,21 +52,13 @@ pub fn tab_line_count(tab: usize, cols: u16) -> usize {
             .iter()
             .map(|event| crate::card_height(event, cols))
             .sum(),
+        BLOG_TAB => posts::POSTS
+            .iter()
+            .map(|post| crate::post_card_height(post, cols))
+            .sum(),
         ABOUT_TAB => about_lines().len(),
         _ => 0,
     }
-}
-
-/// Truncates to `width` columns, marking the cut with an ellipsis.
-fn truncate(text: &str, width: usize) -> String {
-    if text.chars().count() <= width {
-        return text.to_string();
-    }
-    let keep = width.saturating_sub(1);
-    text.chars()
-        .take(keep)
-        .chain(std::iter::once('…'))
-        .collect()
 }
 
 /// Total number of lines a modal's scrollable body can show.
@@ -269,6 +264,12 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     hit::begin_frame(dialog_open);
     let counter = pane_counter(&app);
     let cols = terminal_width as usize;
+    // The reader is a mode of the Blog tab, and names the post it is reading
+    // in the pane's title row.
+    let pane_title = match &app.reader {
+        Some(reader) => posts::POSTS[reader.post].title.to_string(),
+        None => TAB_NAMES[app.tab].to_string(),
+    };
     element! {
         View(
             flex_direction: FlexDirection::Column,
@@ -277,12 +278,13 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             background_color: theme::CARD_BG,
         ) {
             Header(tab: app.tab, cols: cols)
-            Pane(title: TAB_NAMES[app.tab].to_string(), counter: counter) {
+            Pane(title: pane_title, counter: counter) {
                 #(content_element(&app))
             }
             StatusBar(
                 tab: app.tab,
                 modal_open: app.modal.is_some(),
+                reading: app.reader.is_some(),
                 visited: app.visited_count(),
                 cols: cols,
             )
@@ -292,11 +294,20 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 }
 
 /// "position/total" for the pane's title row. The list tabs count items, so
-/// the counter tracks the selection the reader is actually moving.
+/// the counter tracks the selection the reader is actually moving; an open
+/// reader counts the blocks it scrolls through instead.
 fn pane_counter(app: &App) -> String {
-    let (position, total) = match app.tab {
-        TIMELINE_TAB => (app.selected(app.tab) + 1, data::TIMELINE.len()),
-        tab => (app.scroll(tab) + 1, tab_line_count(tab, app.cols)),
+    let (position, total) = if let Some(reader) = &app.reader {
+        (
+            reader.scroll + 1,
+            reader_blocks(reader.post, app.cols).len(),
+        )
+    } else {
+        match app.tab {
+            TIMELINE_TAB => (app.selected(TIMELINE_TAB) + 1, data::TIMELINE.len()),
+            BLOG_TAB => (app.selected(BLOG_TAB) + 1, posts::POSTS.len()),
+            tab => (app.scroll(tab) + 1, tab_line_count(tab, app.cols)),
+        }
     };
     format!(" {}/{} ", position, total.max(1))
 }
@@ -476,6 +487,10 @@ fn content_tree(app: &App) -> AnyElement<'static> {
     match app.tab {
         TIMELINE_TAB => timeline_element(app),
         ABOUT_TAB => about_element(app.scroll(ABOUT_TAB), app.cols),
+        BLOG_TAB => match &app.reader {
+            Some(reader) => reader_element(app, reader),
+            None => blog_element(app),
+        },
         _ => element!(View).into_any(),
     }
 }
@@ -515,11 +530,13 @@ fn card_element(
 /// A card's artwork, indented under the timeline rail like the rest of its
 /// body. `None` whenever [`crate::image::rows`] would report zero, so the row
 /// count the scroll math assumes and the row count drawn stay the same number.
+/// `alt` captions the placeholder frame drawn for dimensions-only images.
 fn image_row(
     url: Option<&'static str>,
     gutter: &'static str,
     selected: bool,
     cols: u16,
+    alt: &str,
 ) -> Option<AnyElement<'static>> {
     let url = url.filter(|_| image::enabled(cols))?;
     let (_, rows) = image::size(url, image::THUMBNAIL)?;
@@ -528,7 +545,7 @@ fn image_row(
         rows,
         selected,
         element_to_any(element! {
-            Image(url: url, bounds: image::THUMBNAIL)
+            Image(url: url, bounds: image::THUMBNAIL, alt: alt.to_string())
         }),
     ))
 }
@@ -599,8 +616,9 @@ fn card_tree(
     // and the title takes whatever is left, as the homepage card header does.
     let tag = format!("[{}]", event.category.label());
     let title_room = inner.saturating_sub(tag.chars().count() + 2);
-    let title_contents =
-        vec![colored(truncate(event.title, title_room), selected_color).weight(Weight::Bold)];
+    let title_contents = vec![
+        colored(markdown::truncate(event.title, title_room), selected_color).weight(Weight::Bold),
+    ];
     let detail_color = if selected {
         theme::SELECT_FG
     } else {
@@ -622,7 +640,7 @@ fn card_tree(
             })))
             // The artwork, between the date and the description, as the
             // homepage card leads with its media.
-            #(image_row(event.image, "│  ", selected, cols))
+            #(image_row(event.image, "│  ", selected, cols, event.title))
             #(event.detail.map(|detail| gutter_row("│  ", selected, element_to_any(element! {
                 Text(content: detail, color: detail_color)
             }))))
@@ -643,6 +661,173 @@ fn line_element(line: &markdown::ContentLine, surface: u8) -> AnyElement<'static
     element_to_any(element! {
         Line(contents: line.contents.clone(), url: line.link.clone(), surface: surface)
     })
+}
+
+// --- Blog ---------------------------------------------------------------------
+
+fn blog_element(app: &App) -> AnyElement<'static> {
+    element_to_any(blog_tree(app))
+}
+
+fn blog_tree(app: &App) -> impl Into<AnyElement<'static>> {
+    let selected = app.selected(BLOG_TAB);
+    let inner = crate::content_width(app.cols);
+    let cards: Vec<AnyElement<'static>> = posts::POSTS
+        .iter()
+        .enumerate()
+        .skip(app.scroll(BLOG_TAB))
+        .map(|(index, post)| post_card_element(post, index, index == selected, inner, app.cols))
+        .collect();
+    element! {
+        View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
+            View(flex_direction: FlexDirection::Column, width: 100pct) {
+                #(cards)
+            }
+        }
+    }
+}
+
+fn post_card_element(
+    post: &posts::Post,
+    index: usize,
+    selected: bool,
+    inner: usize,
+    cols: u16,
+) -> AnyElement<'static> {
+    element_to_any(post_card_tree(post, index, selected, inner, cols))
+}
+
+/// A blog card: the same shape as a timeline card, with the date as its
+/// subheader, the excerpt as its body and an OPEN ON WEB button row.
+fn post_card_tree(
+    post: &posts::Post,
+    index: usize,
+    selected: bool,
+    inner: usize,
+    cols: u16,
+) -> impl Into<AnyElement<'static>> {
+    let selected_color = if selected {
+        theme::SELECT_FG
+    } else {
+        theme::TEXT
+    };
+    let date_color = if selected {
+        theme::SELECT_FG
+    } else {
+        theme::MUTED
+    };
+    let tag_color = if selected {
+        theme::SELECT_FG
+    } else if post.is_external() {
+        theme::STAR
+    } else {
+        theme::ACCENT_TEXT
+    };
+    let marker = if selected { "▸  " } else { "●  " };
+    let tag = if post.is_external() {
+        "[external]"
+    } else {
+        "[post]"
+    };
+    let title_room = inner.saturating_sub(tag.chars().count() + 2);
+    let title_contents = vec![
+        colored(markdown::truncate(post.title, title_room), selected_color).weight(Weight::Bold),
+    ];
+    let excerpt_color = if selected {
+        theme::SELECT_FG
+    } else {
+        theme::SUBTLE
+    };
+    element! {
+        HitBlock(index: index) {
+            // Title and tag, pushed to opposite edges.
+            TimelineTitle(
+                marker: marker,
+                contents: title_contents,
+                tag: tag,
+                tag_color: Some(tag_color),
+                selected: selected,
+            )
+            // The date, as the card's subheader.
+            #(gutter_row("│  ", selected, element_to_any(element! {
+                Text(content: post.formatted_date(), color: date_color, wrap: TextWrap::NoWrap)
+            })))
+            // The artwork, between the date and the excerpt.
+            #(image_row(post.thumbnail, "│  ", selected, cols, post.title))
+            #(if post.excerpt.is_empty() { None } else { Some(gutter_row("│  ", selected, element_to_any(element! {
+                Text(content: post.excerpt, color: excerpt_color)
+            }))) })
+            // Reading is Enter or a second click on the card, so one button
+            // pointing at the web page is all the row needs.
+            #(gutter_row("│  ", selected, element_to_any(element! {
+                View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::Wrap) {
+                    Button(label: "OPEN ON WEB ".to_string(), url: post.url())
+                }
+            })))
+            // Blank separator, so cards read as separate blocks.
+            #(gutter_row("   ", false, element_to_any(element! { Text(content: "") })))
+        }
+    }
+}
+
+// --- The reader ----------------------------------------------------------------
+
+fn reader_element(app: &App, reader: &Reader) -> AnyElement<'static> {
+    element_to_any(reader_tree(app, reader))
+}
+
+/// The reader's blocks, wrapped to the pane's text width. Reparsing the body
+/// on each call is a few hundred lines a handful of times per keystroke — the
+/// same order as the height math over 28 timeline cards — so it is not cached.
+pub fn reader_blocks(post: usize, cols: u16) -> Vec<markdown::Block> {
+    markdown::post_blocks(posts::POSTS[post].body, crate::content_width(cols))
+}
+
+/// Rows each block occupies: one for a line, the artwork's height for an image.
+pub fn reader_block_heights(post: usize, cols: u16) -> Vec<usize> {
+    reader_blocks(post, cols)
+        .iter()
+        .map(|block| match block {
+            markdown::Block::Line(_) => 1,
+            markdown::Block::Image { url, .. } => image::rows(Some(url), cols, image::HERO),
+        })
+        .collect()
+}
+
+/// Rows the reader's scrolling body shows: the pane body, less the fixed
+/// date/permalink row and the blank row under it.
+pub fn reader_viewport(body_rows: usize) -> usize {
+    body_rows.saturating_sub(2).max(1)
+}
+
+fn reader_tree(app: &App, reader: &Reader) -> impl Into<AnyElement<'static>> {
+    let post = &posts::POSTS[reader.post];
+    let blocks = reader_blocks(reader.post, app.cols);
+    // The date and permalink, clickable as one row.
+    let meta = markdown::ContentLine {
+        contents: vec![muted(format!("{} · {}", post.formatted_date(), post.url()))],
+        link: Some(post.url()),
+    };
+    let body: Vec<AnyElement<'static>> = blocks
+        .iter()
+        .skip(reader.scroll)
+        .map(|block| match block {
+            markdown::Block::Line(line) => line_element(line, hit::PANE),
+            markdown::Block::Image { url, alt } => element_to_any(element! {
+                Image(url: *url, bounds: image::HERO, alt: alt.clone())
+            }),
+        })
+        .collect();
+    // `Overflow::Hidden` plus `PaneBody`'s clip crops the last partially
+    // visible image at the pane's border, and `Image::draw` measures the
+    // visible rectangle from the canvas, so the web overlay crops with it.
+    element! {
+        View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
+            Line(contents: meta.contents.clone(), url: meta.link.clone(), surface: hit::PANE)
+            Line(contents: Vec::new(), url: None, surface: hit::PANE)
+            #(body)
+        }
+    }
 }
 
 fn about_lines() -> Vec<markdown::ContentLine> {
@@ -747,12 +932,13 @@ fn modal_lines(modal: &Modal, cols: usize) -> Vec<markdown::ContentLine> {
         let stacked = cols < 56;
         for (keys, description) in [
             ("←/→ or h/l", "switch between tabs"),
-            ("1 … 2", "jump to a tab"),
+            ("1 … 3", "jump to a tab"),
             ("↑/↓ or j/k", "move selection / scroll"),
-            ("Enter", "open details (timeline)"),
+            ("Enter", "read a post / open details"),
+            ("o", "open the post in a browser"),
             ("1 … 9", "open a button of the open dialog"),
             ("g / G", "jump to top / bottom"),
-            ("Esc", "close this dialog"),
+            ("Esc", "close the reader or this dialog"),
             ("?", "toggle this help"),
             ("q / Ctrl+C", "quit"),
             ("mouse", "click tabs, cards and buttons · wheel scrolls"),
@@ -943,22 +1129,39 @@ fn fitted_hints<'a>(hints: &[(&'a str, &'a str)], budget: usize) -> Vec<(&'a str
 struct StatusBarProps {
     tab: usize,
     modal_open: bool,
+    reading: bool,
     visited: usize,
     cols: usize,
 }
 
 #[component]
 fn StatusBar(props: &StatusBarProps) -> impl Into<AnyElement<'static>> {
-    let (tab, modal_open, visited) = (props.tab, props.modal_open, props.visited);
+    let (tab, modal_open, reading, visited) =
+        (props.tab, props.modal_open, props.reading, props.visited);
     // Hints in priority order; the least useful ones drop first when narrow.
     let hints: &[(&str, &str)] = if modal_open {
         &[("Esc", "close"), ("↑/↓", "scroll"), ("1-9", "open button")]
+    } else if reading {
+        &[
+            ("Esc", "back"),
+            ("↑/↓", "scroll"),
+            ("o", "open in browser"),
+            ("?", "help"),
+        ]
     } else if tab == TIMELINE_TAB {
         &[
             ("←/→", "tabs"),
             ("q", "quit"),
             ("↑/↓", "select"),
             ("Enter", "details"),
+            ("?", "help"),
+        ]
+    } else if tab == BLOG_TAB {
+        &[
+            ("←/→", "tabs"),
+            ("q", "quit"),
+            ("↑/↓", "select"),
+            ("Enter", "read"),
             ("?", "help"),
         ]
     } else {
@@ -1008,6 +1211,7 @@ impl App {
             tab: self.tab,
             scroll: self.scroll,
             selected: self.selected,
+            reader: self.reader.clone(),
             modal: self.modal.clone(),
             visited_count: self.visited_count(),
         }
@@ -1018,6 +1222,7 @@ pub struct AppSnapshot {
     pub tab: usize,
     pub scroll: [usize; TAB_COUNT],
     pub selected: [usize; TAB_COUNT],
+    pub reader: Option<Reader>,
     pub modal: Option<Modal>,
     pub visited_count: usize,
 }

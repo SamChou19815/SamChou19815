@@ -14,6 +14,7 @@ mod highlight;
 pub mod hit;
 pub mod image;
 pub mod markdown;
+pub mod posts;
 pub mod shell;
 pub mod theme;
 pub mod view;
@@ -22,10 +23,11 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
 
-pub const TAB_NAMES: [&str; 2] = ["About", "Timeline"];
-pub const TAB_COUNT: usize = 2;
+pub const TAB_NAMES: [&str; 3] = ["About", "Timeline", "Blog"];
+pub const TAB_COUNT: usize = 3;
 pub const ABOUT_TAB: usize = 0;
 pub const TIMELINE_TAB: usize = 1;
+pub const BLOG_TAB: usize = 2;
 
 /// Width assumed before the first resize event tells us the real one.
 const ASSUMED_COLS: u16 = 80;
@@ -63,6 +65,19 @@ fn link_row_label(links: &[data::Link]) -> String {
         .iter()
         .map(|link| format!(" {} ", link.name.to_uppercase()))
         .collect()
+}
+
+/// Rows of a blog card: title, the date as a subheader, the artwork, the
+/// wrapped excerpt, a button row, then a blank separator.
+pub fn post_card_height(post: &posts::Post, cols: u16) -> usize {
+    let inner = content_width(cols);
+    let excerpt = if post.excerpt.is_empty() {
+        0
+    } else {
+        wrapped_rows(post.excerpt, inner)
+    };
+    let image = image::rows(post.thumbnail, cols, image::THUMBNAIL);
+    1 + 1 + image + excerpt + 1 + 1
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -116,6 +131,14 @@ pub enum Modal {
     Help { scroll: usize },
 }
 
+/// An open post, filling the content pane. The header and status bar stay put,
+/// so the reader is a mode of the Blog tab rather than a dialog over it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Reader {
+    pub post: usize,
+    pub scroll: usize,
+}
+
 thread_local! {
     /// Actions produced by the latest input, drained by the wasm host.
     pub(crate) static PENDING_ACTIONS: std::cell::RefCell<Vec<Action>> =
@@ -133,6 +156,8 @@ pub struct App {
     scroll: [usize; TAB_COUNT],
     /// Selected row for the two list tabs.
     selected: [usize; TAB_COUNT],
+    /// The post open in the Blog tab's reader, if any.
+    pub reader: Option<Reader>,
     pub modal: Option<Modal>,
     pub quit: bool,
     actions: Vec<Action>,
@@ -153,6 +178,7 @@ impl App {
             visited: 1 << ABOUT_TAB,
             scroll: [0; TAB_COUNT],
             selected: [0; TAB_COUNT],
+            reader: None,
             modal: None,
             quit: false,
             actions: Vec::new(),
@@ -271,6 +297,10 @@ impl App {
             self.on_modal_key(key);
             return;
         }
+        if self.reader.is_some() {
+            self.on_reader_key(key);
+            return;
+        }
         match key {
             Key::Left | Key::Char('h') => self.switch_tab(self.tab + TAB_COUNT - 1),
             Key::Right | Key::Char('l') | Key::Tab => self.switch_tab(self.tab + 1),
@@ -278,7 +308,7 @@ impl App {
             Key::Esc => {}
             Key::Char('?') => self.modal = Some(Modal::Help { scroll: 0 }),
             Key::Char('q') => self.quit = true,
-            Key::Char(c @ '1'..='2') => self.switch_tab(c as usize - '1' as usize),
+            Key::Char(c @ '1'..='3') => self.switch_tab(c as usize - '1' as usize),
             Key::Up => self.move_selection(-1, 1),
             Key::Char('k') if !mods.ctrl => self.move_selection(-1, 1),
             Key::Down => self.move_selection(1, 1),
@@ -289,6 +319,50 @@ impl App {
             Key::End | Key::Char('G') => self.jump_to_edge(usize::MAX),
             Key::Enter => self.open_selected(),
             _ => {}
+        }
+    }
+
+    fn on_reader_key(&mut self, key: Key) {
+        match key {
+            // `q` closes the reader rather than quitting, matching how it
+            // closes the existing dialog.
+            Key::Esc | Key::Backspace | Key::Char('q') | Key::Left | Key::Char('h') => {
+                self.reader = None;
+            }
+            Key::Char('?') => self.modal = Some(Modal::Help { scroll: 0 }),
+            Key::Up | Key::Char('k') => self.scroll_reader(-1, 1),
+            Key::Down | Key::Char('j') => self.scroll_reader(1, 1),
+            Key::PageUp => self.scroll_reader(-1, 10),
+            Key::PageDown => self.scroll_reader(1, 10),
+            Key::Home | Key::Char('g') => {
+                if let Some(reader) = &mut self.reader {
+                    reader.scroll = 0;
+                }
+            }
+            Key::End | Key::Char('G') => {
+                let limit = self.max_reader_scroll();
+                if let Some(reader) = &mut self.reader {
+                    reader.scroll = limit;
+                }
+            }
+            Key::Enter | Key::Char('o') => {
+                if let Some(reader) = &self.reader {
+                    let url = posts::POSTS[reader.post].url();
+                    self.actions.push(Action::OpenUrl(url));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn scroll_reader(&mut self, direction: i32, amount: usize) {
+        let limit = self.max_reader_scroll();
+        if let Some(reader) = &mut self.reader {
+            reader.scroll = if direction < 0 {
+                reader.scroll.saturating_sub(amount)
+            } else {
+                (reader.scroll + amount).min(limit)
+            };
         }
     }
 
@@ -347,9 +421,13 @@ impl App {
         }
     }
 
-    /// Item count of the current tab, for the one tab that is a list.
+    /// Item count of the current tab, for the tabs that are lists.
     fn list_len(&self) -> Option<usize> {
-        (self.tab == TIMELINE_TAB).then_some(data::TIMELINE.len())
+        match self.tab {
+            TIMELINE_TAB => Some(data::TIMELINE.len()),
+            BLOG_TAB => Some(posts::POSTS.len()),
+            _ => None,
+        }
     }
 
     fn jump_to_edge(&mut self, target: usize) {
@@ -399,9 +477,21 @@ impl App {
     }
 
     fn open_selected(&mut self) {
-        if self.tab == TIMELINE_TAB {
-            let event = self.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
-            self.modal = Some(Modal::Timeline { event, scroll: 0 });
+        match self.tab {
+            TIMELINE_TAB => {
+                let event = self.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
+                self.modal = Some(Modal::Timeline { event, scroll: 0 });
+            }
+            BLOG_TAB => {
+                let post = self.selected[BLOG_TAB].min(posts::POSTS.len() - 1);
+                if posts::POSTS[post].is_external() {
+                    let url = posts::POSTS[post].url();
+                    self.actions.push(Action::OpenUrl(url));
+                } else {
+                    self.reader = Some(Reader { post, scroll: 0 });
+                }
+            }
+            _ => {}
         }
     }
 
@@ -414,6 +504,8 @@ impl App {
                 };
                 if self.modal.is_some() {
                     self.scroll_modal(direction);
+                } else if self.reader.is_some() {
+                    self.scroll_reader(direction, 1);
                 } else {
                     self.move_selection(direction, 1);
                 }
@@ -429,7 +521,7 @@ impl App {
             }
             Some(hit::HitTarget::Tab(index)) => self.switch_tab(index),
             Some(hit::HitTarget::Item(index)) => {
-                if self.tab == TIMELINE_TAB {
+                if matches!(self.tab, TIMELINE_TAB | BLOG_TAB) {
                     if self.selected[self.tab] == index {
                         self.open_selected();
                     } else {
@@ -451,13 +543,34 @@ impl App {
 
     /// Rendered height of each row of the current list tab.
     fn item_heights(&self) -> Vec<usize> {
-        if self.tab != TIMELINE_TAB {
-            return Vec::new();
+        match self.tab {
+            TIMELINE_TAB => data::TIMELINE
+                .iter()
+                .map(|event| card_height(event, self.cols))
+                .collect(),
+            BLOG_TAB => posts::POSTS
+                .iter()
+                .map(|post| post_card_height(post, self.cols))
+                .collect(),
+            _ => Vec::new(),
         }
-        data::TIMELINE
-            .iter()
-            .map(|event| card_height(event, self.cols))
-            .collect()
+    }
+
+    /// The furthest the reader scrolls: far enough to bring the last block
+    /// fully on screen, and no further. Block heights vary — an image is many
+    /// rows — so this cannot be a count-minus-viewport subtraction.
+    fn max_reader_scroll(&self) -> usize {
+        let Some(reader) = &self.reader else {
+            return 0;
+        };
+        let heights = view::reader_block_heights(reader.post, self.cols);
+        let viewport = view::reader_viewport(self.viewport()).max(1);
+        let (mut start, mut used) = (heights.len(), 0usize);
+        while start > 0 && used + heights[start - 1] <= viewport {
+            start -= 1;
+            used += heights[start];
+        }
+        start
     }
 
     /// Re-anchors the scroll of whatever is on screen. A resize moves the
@@ -471,7 +584,11 @@ impl App {
                 *scroll = (*scroll).min(limit);
             }
         }
-        if self.tab != TIMELINE_TAB {
+        let reader_limit = self.max_reader_scroll();
+        if let Some(reader) = &mut self.reader {
+            reader.scroll = reader.scroll.min(reader_limit);
+        }
+        if !matches!(self.tab, TIMELINE_TAB | BLOG_TAB) {
             self.scroll[self.tab] = self.scroll[self.tab].min(self.max_scroll());
             return;
         }

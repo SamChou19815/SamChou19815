@@ -21,11 +21,12 @@ taffy = "0.5"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 
-# Host-side only: build.rs bakes the homepage artwork into small RGB grids, so
-# no decoder ever reaches the wasm binary. Pure Rust, so `unsafe_code = "forbid"`
-# is unaffected.
+# Host-side only: build.rs bakes the homepage artwork into small RGB grids and
+# reads the blog's post bodies and image dimensions, so no decoder ever reaches
+# the wasm binary. Pure Rust, so `unsafe_code = "forbid"` is unaffected.
 [build-dependencies]
-image = { version = "0.25", default-features = false, features = ["png", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "webp", "jpeg", "gif"] }
+serde_json = { workspace = true }
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-O", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
