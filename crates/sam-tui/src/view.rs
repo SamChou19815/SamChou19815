@@ -4,10 +4,7 @@
 
 use crate::hit::{self, HitTarget, Rect};
 use crate::image::{self, Image};
-use crate::{
-    data, markdown, theme, App, Modal, ABOUT_TAB, CONTACT_TAB, EDUCATION_TAB, PROJECTS_TAB,
-    TAB_NAMES, TIMELINE_TAB, WORK_TAB,
-};
+use crate::{data, markdown, theme, App, Modal, ABOUT_TAB, TAB_COUNT, TAB_NAMES, TIMELINE_TAB};
 use crossterm::style::Color;
 use iocraft::components::MixedTextContent;
 use iocraft::prelude::*;
@@ -42,14 +39,7 @@ pub fn tab_line_count(tab: usize, cols: u16) -> usize {
             .iter()
             .map(|event| crate::card_height(event, cols))
             .sum(),
-        PROJECTS_TAB => data::PROJECTS
-            .iter()
-            .map(|project| crate::project_height(project, cols))
-            .sum(),
         ABOUT_TAB => about_lines().len(),
-        WORK_TAB => markdown::parse(data::WORK_MARKDOWN).len(),
-        EDUCATION_TAB => markdown::parse(data::EDUCATION_MARKDOWN).len(),
-        CONTACT_TAB => markdown::parse(data::CONTACT_MARKDOWN).len(),
         _ => 0,
     }
 }
@@ -184,34 +174,6 @@ fn Button(props: &ButtonProps, mut hooks: Hooks) -> impl Into<AnyElement<'static
 }
 
 #[derive(Props, Default)]
-struct ProjectRowProps {
-    index: usize,
-    id: String,
-    selected: bool,
-}
-
-#[component]
-fn ProjectRow(props: &ProjectRowProps) -> impl Into<AnyElement<'static>> {
-    let selected = props.selected;
-    element! {
-        View(
-            flex_direction: FlexDirection::Row,
-            width: 100pct,
-            background_color: if selected { Some(theme::SELECT_BG) } else { None },
-        ) {
-            Text(
-                content: if selected { "▸  " } else { "   " },
-                color: theme::SELECT_FG,
-                weight: Weight::Bold,
-                wrap: TextWrap::NoWrap,
-            )
-            Text(content: format!("{} ", props.index + 1), color: theme::MUTED, wrap: TextWrap::NoWrap)
-            Text(content: props.id.clone(), color: theme::ACCENT_TEXT, weight: Weight::Bold, wrap: TextWrap::NoWrap)
-        }
-    }
-}
-
-#[derive(Props, Default)]
 struct LineProps {
     contents: Vec<MixedTextContent>,
     url: Option<String>,
@@ -308,7 +270,6 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 fn pane_counter(app: &App) -> String {
     let (position, total) = match app.tab {
         TIMELINE_TAB => (app.selected(app.tab) + 1, data::TIMELINE.len()),
-        PROJECTS_TAB => (app.selected(app.tab) + 1, data::PROJECTS.len()),
         tab => (app.scroll(tab) + 1, tab_line_count(tab, app.cols)),
     };
     format!(" {}/{} ", position, total.max(1))
@@ -488,11 +449,7 @@ fn content_element(app: &App) -> AnyElement<'static> {
 fn content_tree(app: &App) -> AnyElement<'static> {
     match app.tab {
         TIMELINE_TAB => timeline_element(app),
-        PROJECTS_TAB => projects_element(app),
         ABOUT_TAB => about_element(app.scroll(ABOUT_TAB), app.cols),
-        WORK_TAB => markdown_element(data::WORK_MARKDOWN, app.scroll(WORK_TAB)),
-        EDUCATION_TAB => markdown_element(data::EDUCATION_MARKDOWN, app.scroll(EDUCATION_TAB)),
-        CONTACT_TAB => markdown_element(data::CONTACT_MARKDOWN, app.scroll(CONTACT_TAB)),
         _ => element!(View).into_any(),
     }
 }
@@ -656,66 +613,6 @@ fn card_tree(
     }
 }
 
-fn projects_element(app: &App) -> AnyElement<'static> {
-    element_to_any(projects_tree(app))
-}
-
-fn projects_tree(app: &App) -> impl Into<AnyElement<'static>> {
-    let selected = app.selected(PROJECTS_TAB);
-    let rows: Vec<AnyElement<'static>> = data::PROJECTS
-        .iter()
-        .enumerate()
-        .skip(app.scroll(PROJECTS_TAB))
-        .map(|(index, project)| {
-            let is_selected = index == selected;
-            let tagline_color = if is_selected {
-                theme::SELECT_FG
-            } else {
-                theme::SUBTLE
-            };
-            // Name line, then the tagline beneath it in its own column, so it
-            // wraps under itself the way the homepage project cards read.
-            element_to_any(element! {
-                HitBlock(index: index) {
-                    ProjectRow(
-                        index: index,
-                        id: project.id.to_string(),
-                        selected: is_selected,
-                    )
-                    #(image_row(project.image, "     ", is_selected, app.cols))
-                    #(gutter_row("     ", is_selected, element_to_any(element! {
-                        Text(content: project.tagline, color: tagline_color)
-                    })))
-                    #(gutter_row("   ", false, element_to_any(element! { Text(content: "") })))
-                }
-            })
-        })
-        .collect();
-    element! {
-        View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
-            #(rows)
-        }
-    }
-}
-
-fn markdown_element(source: &'static str, scroll: usize) -> AnyElement<'static> {
-    element_to_any(markdown_tree(source, scroll))
-}
-
-fn markdown_tree(source: &'static str, scroll: usize) -> impl Into<AnyElement<'static>> {
-    let lines = markdown::parse(source);
-    let rows: Vec<AnyElement<'static>> = lines
-        .iter()
-        .skip(scroll)
-        .map(|line| line_element(line, hit::PANE))
-        .collect();
-    element! {
-        View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
-            #(rows)
-        }
-    }
-}
-
 fn line_element(line: &markdown::ContentLine, surface: u8) -> AnyElement<'static> {
     element_to_any(element! {
         Line(contents: line.contents.clone(), url: line.link.clone(), surface: surface)
@@ -793,10 +690,6 @@ fn modal_lines(modal: &Modal, cols: usize) -> Vec<markdown::ContentLine> {
                 event.links,
             )
         }
-        Modal::Project { project, .. } => {
-            let project = &data::PROJECTS[*project];
-            (vec![project.tagline.to_string()], project.links)
-        }
         Modal::Help { .. } => (Vec::new(), &[]),
     };
     let had_fields = !fields.is_empty();
@@ -828,9 +721,9 @@ fn modal_lines(modal: &Modal, cols: usize) -> Vec<markdown::ContentLine> {
         let stacked = cols < 56;
         for (keys, description) in [
             ("←/→ or h/l", "switch between tabs"),
-            ("1 … 6", "jump to a tab"),
+            ("1 … 2", "jump to a tab"),
             ("↑/↓ or j/k", "move selection / scroll"),
-            ("Enter", "open details (timeline, projects)"),
+            ("Enter", "open details (timeline)"),
             ("1 … 9", "open a button of the open dialog"),
             ("g / G", "jump to top / bottom"),
             ("Esc", "close this dialog"),
@@ -880,7 +773,6 @@ fn hero_bounds(cols: usize, rows: u16) -> Option<(u16, u16)> {
 fn modal_image(modal: &Modal) -> Option<&'static str> {
     match modal {
         Modal::Timeline { event, .. } => data::TIMELINE[*event].image,
-        Modal::Project { project, .. } => data::PROJECTS[*project].image,
         Modal::Help { .. } => None,
     }
 }
@@ -891,13 +783,10 @@ fn modal_element(modal: &Modal, cols: usize, rows: u16) -> AnyElement<'static> {
 
 fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'static>> {
     let scroll = match modal {
-        Modal::Timeline { scroll, .. } | Modal::Project { scroll, .. } | Modal::Help { scroll } => {
-            *scroll
-        }
+        Modal::Timeline { scroll, .. } | Modal::Help { scroll } => *scroll,
     };
     let title = match modal {
         Modal::Timeline { event, .. } => format!(" {} ", data::TIMELINE[*event].title),
-        Modal::Project { project, .. } => format!(" project — {} ", data::PROJECTS[*project].id),
         Modal::Help { .. } => " help ".to_string(),
     };
     // The hero is fixed above the scrolling body rather than part of it, so
@@ -1034,7 +923,7 @@ fn StatusBar(props: &StatusBarProps) -> impl Into<AnyElement<'static>> {
     // Hints in priority order; the least useful ones drop first when narrow.
     let hints: &[(&str, &str)] = if modal_open {
         &[("Esc", "close"), ("↑/↓", "scroll"), ("1-9", "open button")]
-    } else if matches!(tab, TIMELINE_TAB | PROJECTS_TAB) {
+    } else if tab == TIMELINE_TAB {
         &[
             ("←/→", "tabs"),
             ("q", "quit"),
@@ -1050,8 +939,13 @@ fn StatusBar(props: &StatusBarProps) -> impl Into<AnyElement<'static>> {
             ("?", "help"),
         ]
     };
-    let complete = visited == 6;
-    let progress = format!(" {} {}/6 ", if complete { "★" } else { "◆" }, visited);
+    let complete = visited == TAB_COUNT;
+    let progress = format!(
+        " {} {}/{} ",
+        if complete { "★" } else { "◆" },
+        visited,
+        TAB_COUNT
+    );
     let progress_color = if complete { theme::STAR } else { theme::MUTED };
 
     let budget = props.cols.saturating_sub(progress.chars().count());
@@ -1092,8 +986,8 @@ impl App {
 
 pub struct AppSnapshot {
     pub tab: usize,
-    pub scroll: [usize; 6],
-    pub selected: [usize; 6],
+    pub scroll: [usize; TAB_COUNT],
+    pub selected: [usize; TAB_COUNT],
     pub modal: Option<Modal>,
     pub visited_count: usize,
 }
@@ -1229,22 +1123,15 @@ mod tests {
     }
 
     /// A reader's way to the About tab, through everything that registers a
-    /// region: the timeline's cards and buttons, then the link lists of the
-    /// markdown panes, then home.
+    /// region: the timeline's cards and buttons, then home.
     fn tour_back_to_about() -> Vec<TerminalEvent> {
-        vec![
-            TerminalEvent::Resize(100, 40),
-            press('2'),
-            press('4'),
-            press('6'),
-            press('1'),
-        ]
+        vec![TerminalEvent::Resize(100, 40), press('2'), press('1')]
     }
 
     /// A tab's regions belong to that tab. They used to outlive it: the cards
     /// and links of the tabs visited before answered clicks on the pane that
     /// replaced them, which is how a click on the About portrait opened a link
-    /// belonging to the Contact pane.
+    /// belonging to another pane.
     #[test]
     fn a_tab_leaves_no_click_regions_behind() {
         let mut script = tour_back_to_about();
@@ -1297,8 +1184,8 @@ mod tests {
     }
 
     /// The report this all came from: on the About tab, clicking the portrait
-    /// opened one of the Contact pane's links — its rows sat exactly where that
-    /// pane's link lines had been, and the regions had never been retired.
+    /// opened a link belonging to another pane — its rows sat exactly where
+    /// that pane's link lines had been, and the regions had never been retired.
     #[test]
     fn a_click_on_the_about_portrait_opens_nothing() {
         // One run to find the portrait, one to click its every row.
@@ -1419,18 +1306,10 @@ mod tests {
 
     #[test]
     fn header_names_the_current_tab_once_names_are_dropped() {
-        // 64 columns is too narrow for six names but wide enough for one.
-        let plan = header_plan(TIMELINE_TAB, 64);
+        // 32 columns is too narrow for every name but wide enough for one.
+        let plan = header_plan(TIMELINE_TAB, 32);
         assert!(plan.labels[TIMELINE_TAB].contains("Timeline"));
-        assert!(!plan.labels[PROJECTS_TAB].contains("Projects"));
-    }
-
-    #[test]
-    fn header_keeps_everything_when_it_fits() {
-        let plan = header_plan(ABOUT_TAB, 200);
-        assert_eq!(plan.title, Some(TITLE));
-        assert_eq!(plan.tag, Some(TAG));
-        assert!(plan.labels[CONTACT_TAB].contains("Contact"));
+        assert!(!plan.labels[ABOUT_TAB].contains("About"));
     }
 
     #[test]
@@ -1466,41 +1345,6 @@ mod tests {
         assert_eq!(truncate("héllo wörld", 6).chars().count(), 6);
     }
 
-    #[test]
-    fn card_height_matches_the_rows_a_card_renders() {
-        // A card with a detail and links, and no artwork: title, time, detail,
-        // buttons, blank.
-        let plain = data::TIMELINE
-            .iter()
-            .find(|event| {
-                event.detail.is_some() && !event.links.is_empty() && event.image.is_none()
-            })
-            .expect("a card with a detail and links but no artwork");
-        // Wide enough that neither the detail nor the buttons wrap.
-        assert_eq!(crate::card_height(plain, 400), 5);
-
-        // The same card with artwork is exactly its thumbnail taller.
-        let illustrated = data::TIMELINE
-            .iter()
-            .find(|event| {
-                event.detail.is_some() && !event.links.is_empty() && event.image.is_some()
-            })
-            .expect("a card with a detail, links and artwork");
-        let (_, rows) = image::size(illustrated.image.unwrap(), image::THUMBNAIL)
-            .expect("the artwork is baked");
-        assert_eq!(crate::card_height(illustrated, 400), 5 + usize::from(rows));
-    }
-
-    #[test]
-    fn narrow_cards_grow_as_their_detail_wraps() {
-        let event = data::TIMELINE
-            .iter()
-            .max_by_key(|event| event.detail.map_or(0, |detail| detail.chars().count()))
-            .expect("the timeline is not empty");
-        // Both widths keep their artwork, so this isolates the wrapping.
-        assert!(crate::card_height(event, 60) > crate::card_height(event, 400));
-    }
-
     /// The invariant the timeline scroll rests on: `card_height` is what a
     /// card actually draws. It counts items, not lines, so a card that renders
     /// taller than it claims drifts the selection off screen with nothing else
@@ -1522,34 +1366,6 @@ mod tests {
                     event.title,
                     canvas.height(),
                     crate::card_height(event, cols),
-                );
-            }
-        }
-    }
-
-    /// The same for the projects pane.
-    #[test]
-    fn every_project_draws_the_height_it_claims() {
-        for cols in [60u16, 80, 120] {
-            for (index, project) in data::PROJECTS.iter().enumerate() {
-                let canvas = pane_width(
-                    cols,
-                    element_to_any(element! {
-                        HitBlock(index: index) {
-                            ProjectRow(index: index, id: project.id.to_string(), selected: false)
-                            #(image_row(project.image, "     ", false, cols))
-                            #(gutter_row("     ", false, element_to_any(element! {
-                                Text(content: project.tagline, color: theme::SUBTLE)
-                            })))
-                            #(gutter_row("   ", false, element_to_any(element! { Text(content: "") })))
-                        }
-                    }),
-                );
-                assert_eq!(
-                    canvas.height(),
-                    crate::project_height(project, cols),
-                    "{} at {cols} cols",
-                    project.id,
                 );
             }
         }
@@ -1600,28 +1416,6 @@ mod tests {
         assert!(broken.is_empty(), "the rail is missing on rows {broken:?}");
     }
 
-    #[test]
-    fn a_narrow_terminal_drops_the_artwork() {
-        let event = data::TIMELINE
-            .iter()
-            .find(|event| event.image.is_some())
-            .expect("an illustrated card");
-        // Same content width either side of the threshold, so any difference is
-        // the artwork alone.
-        let text_only = crate::card_height(event, 59);
-        assert!(crate::card_height(event, 60) > text_only);
-        assert_eq!(
-            text_only,
-            crate::card_height(
-                &data::TimelineEvent {
-                    image: None,
-                    ..*event
-                },
-                59
-            )
-        );
-    }
-
     /// The row count the scroll math assumes and the row the card actually
     /// draws come from one decision. If these ever disagree, the timeline
     /// scrolls out of step with the selection and nothing else catches it.
@@ -1637,13 +1431,6 @@ mod tests {
                     "{} at {cols} cols: counted {counted} rows, drawn = {drawn}",
                     event.title,
                 );
-            }
-        }
-        for project in data::PROJECTS {
-            for cols in [0, 40, 59, 60, 200] {
-                let counted = image::rows(project.image, cols, image::THUMBNAIL);
-                let drawn = image_row(project.image, "     ", false, cols).is_some();
-                assert_eq!(counted > 0, drawn, "{} at {cols} cols", project.id);
             }
         }
     }

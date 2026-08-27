@@ -192,7 +192,7 @@ pub const PROJECTS: &[Project] = &[
     },
 ];
 
-/// Contact channels, used by the contact pane and the shell.
+/// Contact channels, used by the shell's `contact.txt`.
 pub const SOCIAL_LINKS: &[Link] = &[
     Link {
         name: "GitHub",
@@ -211,66 +211,6 @@ pub const SOCIAL_LINKS: &[Link] = &[
         url: "https://developersam.com/resume.pdf",
     },
 ];
-
-/// The work history pane, authored as markdown (rendered by `markdown.rs`).
-pub const WORK_MARKDOWN: &str = r#"## Software Engineer, Flow — Meta
-*February 2022 — present*
-
-Working on Flow's type system, IDE, and performance.
-
-- [Website](https://flow.org)
-- [GitHub](https://github.com/facebook/flow)
-
-## SWE Intern, Flow — Facebook
-*June 2021 — September 2021*
-
-Working on the Flow team. Implemented the extraction code action for Flow LSP.
-
-- [Website](https://flow.org)
-- [GitHub](https://github.com/facebook/flow)
-- [Tech Talk](https://developersam.com/flow-ide-presentation.pdf)
-
-## SWE Intern, Feed Expressions — Facebook
-*June 2020 — September 2020*
-
-Working on the Feed Expressions team.
-
-## SWE Intern, Pyre — Facebook
-*May 2019 — August 2019*
-
-Working on the Pyre team.
-
-- [Website](https://pyre-check.org)
-- [GitHub](https://github.com/facebook/pyre-check)
-
-## Software Developer / Developer Lead / TPM — Cornell DTI
-*September 2018 — December 2021*
-
-Frontend developer of Samwise, then technical product manager of the Samwise subteam, then developer lead and developer on CoursePlan.
-
-- [Cornell DTI Website](https://www.cornelldti.org)
-"#;
-
-/// The education pane, authored as markdown.
-pub const EDUCATION_MARKDOWN: &str = r#"## Cornell University
-Master of Engineering (M.Eng) — graduated *December 2021*
-
-Bachelor of Science (B.S.) — graduated *May 2021*, entered August 2017
-
-## High School
-Diploma — graduated June 2016
-"#;
-
-/// The contact pane, authored as markdown.
-pub const CONTACT_MARKDOWN: &str = r#"Ways to reach Developer Sam:
-
-- [GitHub](https://github.com/SamChou19815)
-- [Bluesky](https://bsky.app/profile/developersam.com)
-- [LinkedIn](https://www.linkedin.com/in/sam-zhou-30b91610b/)
-- [Résumé](https://developersam.com/resume.pdf)
-
-> click a link to open it in a new tab
-"#;
 
 /// The homepage timeline, newest first, mirroring `DATASET_TIMELINE`.
 pub const TIMELINE: &[TimelineEvent] = &[
