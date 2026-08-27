@@ -32,6 +32,16 @@ fn muted(content: impl ToString) -> MixedTextContent {
     colored(content, theme::MUTED)
 }
 
+/// Rows of text a scrolling tab pane shows at once, given the height of the
+/// pane's body. The About pane insets its program by a row top and bottom
+/// ([`about_tree`]), so it fits two fewer lines than the body is tall.
+pub fn tab_viewport(tab: usize, body_rows: usize) -> usize {
+    match tab {
+        ABOUT_TAB => body_rows.saturating_sub(2).max(1),
+        _ => body_rows.max(1),
+    }
+}
+
 /// Total number of lines a scrolling tab pane can show.
 pub fn tab_line_count(tab: usize, cols: u16) -> usize {
     match tab {
@@ -59,6 +69,22 @@ fn truncate(text: &str, width: usize) -> String {
 /// Total number of lines a modal's scrollable body can show.
 pub fn modal_line_count(modal: &Modal, cols: u16) -> usize {
     modal_lines(modal, cols as usize).len()
+}
+
+/// Rows of text the open dialog shows at once: its body, less the hero
+/// artwork and the blank row under it.
+pub fn modal_viewport(modal: &Modal, cols: u16, rows: u16) -> usize {
+    let hero = hero_bounds(cols as usize, rows)
+        .zip(modal_image(modal))
+        .map_or(0, |(bounds, url)| {
+            match image::rows(Some(url), cols, bounds) {
+                0 => 0,
+                drawn => drawn + 1,
+            }
+        });
+    usize::from(dialog_body_rows(rows))
+        .saturating_sub(hero)
+        .max(1)
 }
 
 // --- Leaf components that register hit regions --------------------------------
@@ -754,16 +780,20 @@ fn modal_lines(modal: &Modal, cols: usize) -> Vec<markdown::ContentLine> {
     lines
 }
 
-/// The hero's cell box, shrunk to whatever the dialog can spare. The dialog is
-/// 80% of the screen, less its border, title row and padding; six rows are held
-/// back for the fields and links so the artwork can never crowd them out.
+/// Rows inside the dialog's scrolling body: the dialog is 80% of the screen,
+/// less its border, title row and padding.
+fn dialog_body_rows(rows: u16) -> u16 {
+    (u32::from(rows) * 4 / 5).saturating_sub(5) as u16
+}
+
+/// The hero's cell box, shrunk to whatever the dialog can spare. Six rows are
+/// held back for the fields and links so the artwork can never crowd them out.
 /// `None` when what is left is too short to read as a picture.
 fn hero_bounds(cols: usize, rows: u16) -> Option<(u16, u16)> {
     if !image::enabled(cols as u16) {
         return None;
     }
-    let body = (u32::from(rows) * 4 / 5).saturating_sub(5) as u16;
-    let max_rows = body.saturating_sub(6).min(image::HERO.1);
+    let max_rows = dialog_body_rows(rows).saturating_sub(6).min(image::HERO.1);
     // Below six rows the artwork reads as a smear rather than a picture, so a
     // short dialog spends its rows on the fields instead.
     (max_rows >= 6).then_some((image::HERO.0, max_rows))
@@ -1310,6 +1340,36 @@ mod tests {
         let plan = header_plan(TIMELINE_TAB, 32);
         assert!(plan.labels[TIMELINE_TAB].contains("Timeline"));
         assert!(!plan.labels[ABOUT_TAB].contains("About"));
+    }
+
+    /// What "do not scroll past the last line" has to mean in cells rather
+    /// than in indices: scrolled to the end, the pane's last line is on
+    /// screen. Reading it off a rendered frame is what keeps
+    /// [`tab_viewport`]'s idea of the About pane's inset honest.
+    #[test]
+    fn the_about_pane_scrolled_to_the_end_shows_its_last_line() {
+        // Short enough that the program does not fit on one screen.
+        let end = TerminalEvent::Key(KeyEvent::new(
+            crossterm::event::KeyEventKind::Press,
+            crossterm::event::KeyCode::End,
+        ));
+        let frames = run(vec![TerminalEvent::Resize(100, 14), end, press('q')]);
+        let frame = frames.last().expect("the run drew a frame");
+        let rows: Vec<String> = (0..frame.height())
+            .map(|y| frame.get_text(0, y, frame.width(), 1))
+            .collect();
+        // The program's closing brace is a row of its own, so the line above it
+        // is what says the end of the text is on screen — and the brace under
+        // that is what says the very last line is, not merely the last but one.
+        let tail = rows
+            .iter()
+            .position(|row| row.contains("function main(): Developer = Developer.sam()"))
+            .expect("the end of the program is on screen");
+        assert!(
+            rows[tail + 1].contains('}'),
+            "the program's last line is not drawn under its last but one:\n{}",
+            rows.join("\n"),
+        );
     }
 
     #[test]

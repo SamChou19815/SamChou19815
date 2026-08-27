@@ -205,8 +205,9 @@ impl App {
             _ => {}
         }
         // Selection and viewport both move under these events; re-anchor the
-        // list scroll so the selected row stays on screen.
-        self.clamp_list_scroll();
+        // scroll so the selected row stays on screen and no pane is scrolled
+        // past its last line.
+        self.clamp_scroll();
     }
 
     fn handle_key_event(&mut self, key: &KeyEvent) {
@@ -317,9 +318,9 @@ impl App {
             }
             Key::End | Key::Char('G') => {
                 if let Some(modal) = self.modal.clone() {
-                    let total = view::modal_line_count(&modal, self.cols);
+                    let limit = self.max_modal_scroll(&modal);
                     if let Some(scroll) = self.modal.as_mut().map(modal_scroll) {
-                        *scroll = total.saturating_sub(1);
+                        *scroll = limit;
                     }
                 }
             }
@@ -355,17 +356,31 @@ impl App {
         if let Some(len) = self.list_len() {
             self.selected[self.tab] = target.min(len.saturating_sub(1));
         } else {
-            self.scroll[self.tab] = target;
+            self.scroll[self.tab] = target.min(self.max_scroll());
         }
     }
 
+    /// The furthest a text pane scrolls: far enough to bring its last line to
+    /// the bottom of the viewport, and no further. Past that there is nothing
+    /// left to read, and scrolling blank space up the screen is not scrolling.
+    fn max_scroll(&self) -> usize {
+        let visible = view::tab_viewport(self.tab, self.viewport());
+        view::tab_line_count(self.tab, self.cols).saturating_sub(visible)
+    }
+
+    /// The same for the open dialog's body.
+    fn max_modal_scroll(&self, modal: &Modal) -> usize {
+        view::modal_line_count(modal, self.cols)
+            .saturating_sub(view::modal_viewport(modal, self.cols, self.rows))
+    }
+
     fn scroll_text(&mut self, direction: i32, amount: usize) {
-        let len = view::tab_line_count(self.tab, self.cols);
+        let limit = self.max_scroll();
         let scroll = &mut self.scroll[self.tab];
         *scroll = if direction < 0 {
             scroll.saturating_sub(amount)
         } else {
-            (*scroll + amount).min(len.saturating_sub(1))
+            (*scroll + amount).min(limit)
         };
     }
 
@@ -373,12 +388,12 @@ impl App {
         let Some(modal) = self.modal.clone() else {
             return;
         };
-        let total = view::modal_line_count(&modal, self.cols);
+        let limit = self.max_modal_scroll(&modal);
         if let Some(scroll) = self.modal.as_mut().map(modal_scroll) {
             *scroll = if direction < 0 {
                 scroll.saturating_sub(1)
             } else {
-                (*scroll + 1).min(total.saturating_sub(1))
+                (*scroll + 1).min(limit)
             };
         }
     }
@@ -445,11 +460,19 @@ impl App {
             .collect()
     }
 
-    /// Clamps list scroll so the selection stays inside the viewport. The
-    /// panes render `.skip(scroll)` over whole items, so `scroll` counts
-    /// items, not lines — advance it until the selection's last row fits.
-    pub fn clamp_list_scroll(&mut self) {
+    /// Re-anchors the scroll of whatever is on screen. A resize moves the
+    /// bottom of every viewport, so a scroll that ended at the last line can
+    /// be left pointing past it — and the list pane's selection can be left
+    /// off screen entirely.
+    pub fn clamp_scroll(&mut self) {
+        if let Some(modal) = self.modal.clone() {
+            let limit = self.max_modal_scroll(&modal);
+            if let Some(scroll) = self.modal.as_mut().map(modal_scroll) {
+                *scroll = (*scroll).min(limit);
+            }
+        }
         if self.tab != TIMELINE_TAB {
+            self.scroll[self.tab] = self.scroll[self.tab].min(self.max_scroll());
             return;
         }
         let heights = self.item_heights();
@@ -542,6 +565,54 @@ mod tests {
         key(&mut app, Key::Down);
         key(&mut app, Key::Esc);
         assert!(app.modal.is_none());
+    }
+
+    /// The last line of a pane stops at the bottom of the viewport. Scrolling
+    /// used to run on until only the last line was left, dragging the text off
+    /// the top and leaving a screen of blank rows under it — and `End` set the
+    /// offset to `usize::MAX`, which skipped every line and drew nothing.
+    #[test]
+    fn a_pane_does_not_scroll_past_its_last_line() {
+        // Short enough that the program does not fit on one screen.
+        let mut app = App::new();
+        app.resize(100, 14);
+        let last = |app: &App| {
+            view::tab_line_count(ABOUT_TAB, app.cols)
+                .saturating_sub(view::tab_viewport(ABOUT_TAB, app.viewport()))
+        };
+        assert!(last(&app) > 0, "the About pane fits — nothing to scroll");
+        for _ in 0..200 {
+            key(&mut app, Key::Down);
+        }
+        assert_eq!(app.scroll(ABOUT_TAB), last(&app));
+        key(&mut app, Key::End);
+        assert_eq!(app.scroll(ABOUT_TAB), last(&app));
+        // A taller terminal shows more lines at once, so the bottom of the text
+        // rises to meet it rather than leaving blank rows below.
+        app.handle_event(&Event::Resize(100, 40));
+        assert_eq!(app.scroll(ABOUT_TAB), last(&app));
+    }
+
+    /// The same for the dialog's body.
+    #[test]
+    fn a_dialog_does_not_scroll_past_its_last_line() {
+        let mut app = App::new();
+        app.resize(100, 14);
+        key(&mut app, Key::Char('?'));
+        let modal = app.modal.clone().expect("the help dialog is open");
+        let last = view::modal_line_count(&modal, app.cols)
+            .saturating_sub(view::modal_viewport(&modal, app.cols, app.rows));
+        assert!(last > 0, "the help dialog fits — nothing to scroll");
+        let scroll = |app: &App| match app.modal {
+            Some(Modal::Help { scroll }) => scroll,
+            _ => panic!("the dialog closed"),
+        };
+        for _ in 0..50 {
+            key(&mut app, Key::Down);
+        }
+        assert_eq!(scroll(&app), last);
+        key(&mut app, Key::End);
+        assert_eq!(scroll(&app), last);
     }
 
     #[test]

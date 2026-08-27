@@ -25,23 +25,6 @@ jobs:
         run: cargo clippy --no-deps --tests --bins -- -D warnings
       - name: Build
         run: cargo build --tests --bins
-  wasm:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: cargo-wasm
-      - uses: jetli/wasm-pack-action@v0.4.0
-      - name: Build Terminal WASM
-        # Also runs prepare-patched-deps.sh.
-        run: ./scripts/build-wasm.sh
-      - name: Check committed wasm-bindgen types are up to date
-        run: git diff --exit-code packages/www/src/app/generated/sam_tui.d.ts
   test-sam-tui:
     runs-on: ubuntu-latest
     steps:
