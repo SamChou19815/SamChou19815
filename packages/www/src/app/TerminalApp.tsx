@@ -5,7 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { loadSamTui, type SamTui } from "./sam-tui";
 
 // The page is a true terminal: xterm.js relays raw bytes to and from the
@@ -37,14 +37,31 @@ function openLink(url: string): void {
   }
 }
 
+/**
+ * Phones and tablets, where focusing the terminal summons an on-screen
+ * keyboard over half the viewport. A laptop with a touchscreen is not one of
+ * these: it has a real keyboard, so focus there costs the visitor nothing.
+ */
+function isTouchOnlyDevice(): boolean {
+  return window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+}
+
 export default function TerminalApp(): React.JSX.Element {
+  const viewportRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  // Whether to draw the keyboard button at all, and what it should say. Both
+  // are decided once the terminal exists, in the effect below.
+  const [touchOnly, setTouchOnly] = useState(false);
+  const [keyboardShown, setKeyboardShown] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
     if (container == null) {
       return;
     }
+    const touchOnlyDevice = isTouchOnlyDevice();
+    setTouchOnly(touchOnlyDevice);
 
     const terminal = new Terminal({
       // The shell writes its URLs as OSC 8 hyperlinks — the `@` tags of
@@ -82,12 +99,49 @@ export default function TerminalApp(): React.JSX.Element {
     terminal.loadAddon(new WebLinksAddon((_event, uri) => openLink(uri)));
     terminal.open(container);
     fitAddon.fit();
-    // xterm.css hardcodes a black viewport; the site body is #f7f7f7.
-    const viewportStyle = document.createElement("style");
-    viewportStyle.textContent = ".xterm .xterm-viewport { background-color: #f7f7f7 !important; }";
-    document.head.appendChild(viewportStyle);
+    // xterm.css hardcodes a black viewport; the site body is #f7f7f7. The
+    // second rule is for iOS: it zooms the page in whenever a focused field
+    // has text under 16px, and the field xterm focuses inherits the default
+    // form-control size. The field is 0×0 and transparent, so the size is
+    // free — it only has to be large enough that Safari leaves the zoom alone.
+    const injectedStyle = document.createElement("style");
+    injectedStyle.textContent = `.xterm .xterm-viewport { background-color: #f7f7f7 !important; }${
+      touchOnlyDevice ? "\n.xterm .xterm-helper-textarea { font-size: 16px !important; }" : ""
+    }`;
+    document.head.appendChild(injectedStyle);
+    terminalRef.current = terminal;
     // oxlint-disable-next-line no-underscore-dangle -- test hook
     window.__samTerminal = terminal;
+
+    // --- The on-screen keyboard ----------------------------------------------
+    // On a phone, focus is what summons the keyboard, and xterm takes focus
+    // itself on every tap — it has to, that is how a terminal works. So the
+    // guard is `readOnly` on the field it focuses: phones leave the keyboard
+    // closed for a read-only field while still letting it hold focus, so taps,
+    // mouse reports and a paired hardware keyboard all keep working. The
+    // button below lifts it when the visitor actually wants to type.
+    if (touchOnlyDevice && terminal.textarea != null) {
+      terminal.textarea.readOnly = true;
+    }
+    // Belt and braces for the same rule: nothing this file does — booting,
+    // starting the app, returning from it — reaches for focus on a phone.
+    const focusTerminal = (): void => {
+      if (!touchOnlyDevice || document.activeElement === terminal.textarea) {
+        terminal.focus();
+      }
+    };
+    // The keyboard can also go away without the button, through the system's
+    // own dismiss key. That blurs the field, and both the guard and the
+    // button's label have to follow it back down.
+    const handleTextareaBlur = (): void => {
+      if (terminal.textarea != null) {
+        terminal.textarea.readOnly = true;
+      }
+      setKeyboardShown(false);
+    };
+    if (touchOnlyDevice) {
+      terminal.textarea?.addEventListener("blur", handleTextareaBlur);
+    }
 
     // Try WebGL: its renderer draws block elements procedurally, so the
     // half-block artwork tiles seamlessly. The DOM renderer leaves hairline
@@ -227,7 +281,7 @@ export default function TerminalApp(): React.JSX.Element {
       appRunning = true;
       backend.start(terminal.cols, terminal.rows);
       pump();
-      terminal.focus();
+      focusTerminal();
     };
 
     const exitToShell = (): void => {
@@ -236,7 +290,7 @@ export default function TerminalApp(): React.JSX.Element {
       clearImages();
       terminal.write("\x1b[90mdev-sam exited — type dev-sam to run it again, or help\x1b[0m\r\n");
       terminal.write(PROMPT);
-      terminal.focus();
+      focusTerminal();
     };
 
     // --- The shell (dev-sam-sh) ---------------------------------------------
@@ -353,6 +407,40 @@ export default function TerminalApp(): React.JSX.Element {
       }
     };
 
+    const encoder = new TextEncoder();
+
+    /**
+     * Text that reached the terminal with no keydown the line editor could
+     * read: an on-screen keyboard committing a word it autocorrected, an IME,
+     * a paste. Keys the visitor actually pressed never come through here —
+     * `handleShellKey` consumes those before xterm turns them into data.
+     */
+    const handleShellData = (data: string): void => {
+      // A pasted line ends "\r\n"; the shell prompt takes one submit for it.
+      const characters = [...data.replace(/\r\n/g, "\r")];
+      for (const [index, character] of characters.entries()) {
+        if (appRunning) {
+          // A `dev-sam` in the middle of the chunk started the app; whatever
+          // follows it in the same paste belongs to the app, not the shell.
+          backend?.input(encoder.encode(characters.slice(index).join("")));
+          pump();
+          return;
+        }
+        if (character === "\r") {
+          submitShellCommand(shellLine);
+          shellLine = "";
+        } else if (character === "\x7f" || character === "\b") {
+          if (shellLine.length > 0) {
+            shellLine = shellLine.slice(0, -1);
+            terminal.write("\b \b");
+          }
+        } else if (character >= " ") {
+          shellLine += character;
+          terminal.write(character);
+        }
+      }
+    };
+
     // --- Input routing --------------------------------------------------------
     // While the app runs, every byte xterm produces is forwarded verbatim
     // (keys AND mouse reports — the backend parses real ANSI). At the shell
@@ -364,17 +452,19 @@ export default function TerminalApp(): React.JSX.Element {
       return !handleShellKey(event);
     });
 
-    const encoder = new TextEncoder();
     terminal.onData((data) => {
-      if (backend == null || !appRunning) {
+      if (backend == null) {
         return;
       }
-      backend.input(encoder.encode(data));
-      pump();
+      if (appRunning) {
+        backend.input(encoder.encode(data));
+        pump();
+        return;
+      }
+      handleShellData(data);
     });
 
-    const refocus = (): void => terminal.focus();
-    container.addEventListener("click", refocus);
+    container.addEventListener("click", focusTerminal);
 
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit();
@@ -384,6 +474,22 @@ export default function TerminalApp(): React.JSX.Element {
       }
     });
     resizeObserver.observe(container);
+
+    // The on-screen keyboard shrinks the visual viewport but leaves the layout
+    // viewport alone, so a `fixed inset-0` terminal keeps drawing its bottom
+    // rows — the prompt among them — underneath the keyboard. Tracking the
+    // visual viewport instead reflows the app into what is still on screen.
+    const visualViewport = touchOnlyDevice ? window.visualViewport : null;
+    const syncVisualViewport = (): void => {
+      const element = viewportRef.current;
+      if (element == null || visualViewport == null) {
+        return;
+      }
+      element.style.height = `${visualViewport.height}px`;
+      element.style.top = `${visualViewport.offsetTop}px`;
+    };
+    visualViewport?.addEventListener("resize", syncVisualViewport);
+    visualViewport?.addEventListener("scroll", syncVisualViewport);
 
     const boot = async (): Promise<void> => {
       try {
@@ -398,37 +504,78 @@ export default function TerminalApp(): React.JSX.Element {
       // Boot into the shell; the app is one `dev-sam` away.
       terminal.write(
         "\x1b[90mdev-sam-sh 1.0 — developer sam's terminal\x1b[0m\r\n" +
-          "\x1b[90mtype help for commands, or run dev-sam\x1b[0m\r\n\r\n",
+          (touchOnlyDevice
+            ? "\x1b[90mtap keyboard to type, then Enter to run dev-sam\x1b[0m\r\n\r\n"
+            : "\x1b[90mtype help for commands, or run dev-sam\x1b[0m\r\n\r\n"),
       );
       // Pre-type the headline command so a visitor only has to press Enter.
       // Seeded into the line editor's buffer, not just painted, so backspace
       // and the rest of the editing keys see it as text they typed.
       shellLine = "dev-sam";
       renderShellLine();
-      terminal.focus();
+      focusTerminal();
     };
     void boot();
 
     return () => {
       disposed = true;
-      container.removeEventListener("click", refocus);
+      container.removeEventListener("click", focusTerminal);
+      terminal.textarea?.removeEventListener("blur", handleTextareaBlur);
+      visualViewport?.removeEventListener("resize", syncVisualViewport);
+      visualViewport?.removeEventListener("scroll", syncVisualViewport);
       resizeObserver.disconnect();
-      viewportStyle.remove();
+      injectedStyle.remove();
       imageLayer.remove();
+      terminalRef.current = null;
       // oxlint-disable-next-line no-underscore-dangle -- test hook
       delete window.__samTerminal;
       terminal.dispose();
     };
   }, []);
 
+  const toggleKeyboard = (): void => {
+    const terminal = terminalRef.current;
+    const textarea = terminal?.textarea;
+    if (terminal == null || textarea == null) {
+      return;
+    }
+    if (keyboardShown) {
+      // The blur handler puts the read-only guard back and clears the label.
+      terminal.blur();
+      return;
+    }
+    // A phone opens the keyboard on a focus *change* that a gesture led to,
+    // which this click is. An earlier tap on the terminal may have left focus
+    // on the field already, and refocusing where focus sits is not a change,
+    // so it is dropped first and taken back writable. (The blur puts the
+    // read-only guard back; setting it after is what lifts it.)
+    textarea.blur();
+    textarea.readOnly = false;
+    terminal.focus();
+    setKeyboardShown(true);
+  };
+
   return (
-    <div className="fixed inset-0 overflow-hidden bg-[#f7f7f7]">
+    <div ref={viewportRef} className="fixed inset-0 overflow-hidden bg-[#f7f7f7]">
       <div
         ref={containerRef}
         className="relative h-full w-full p-1"
         aria-label="Developer Sam's portfolio as a full-screen terminal app"
         role="application"
       />
+      {touchOnly && (
+        <button
+          type="button"
+          // The button toggles where focus is, so it must not take focus
+          // itself on the way down and blur the terminal behind its own back.
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={toggleKeyboard}
+          aria-pressed={keyboardShown}
+          className="absolute right-3 bottom-3 rounded-full border border-gray-300 bg-white/90 px-4 py-2 font-mono text-sm text-[#1c1e21] shadow-md"
+        >
+          {keyboardShown ? "hide keyboard" : "keyboard"}
+        </button>
+      )}
     </div>
   );
 }
