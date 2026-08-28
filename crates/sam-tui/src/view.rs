@@ -68,11 +68,9 @@ pub fn modal_line_count(modal: &Modal, cols: u16) -> usize {
 pub fn modal_viewport(modal: &Modal, cols: u16, rows: u16) -> usize {
     let hero = hero_bounds(cols as usize, rows)
         .zip(modal_image(modal))
-        .map_or(0, |(bounds, url)| {
-            match image::rows(Some(url), cols, bounds) {
-                0 => 0,
-                drawn => drawn + 1,
-            }
+        .map_or(0, |(bounds, url)| match image::rows(Some(url), bounds) {
+            0 => 0,
+            drawn => drawn + 1,
         });
     usize::from(dialog_body_rows(rows))
         .saturating_sub(hero)
@@ -270,7 +268,7 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             background_color: theme::CARD_BG,
         ) {
             Header(tab: app.tab, cols: cols)
-            Pane(title: pane_title, counter: counter) {
+            Pane(title: pane_title, counter: counter, closable: app.reader.is_some()) {
                 #(content_element(&app))
             }
             StatusBar(
@@ -301,7 +299,12 @@ fn pane_title(app: &App, counter: &str, cols: usize) -> PaneTitle {
     };
     if let Some(reader) = &app.reader {
         let title = posts::POSTS[reader.post].title;
-        return PaneTitle::Centered(markdown::truncate(title, room(counter_width)));
+        // The close button sits outside the counter on the right, and the
+        // spacer that balances the pair sits outside it on the left.
+        return PaneTitle::Centered(markdown::truncate(
+            title,
+            room(counter_width + 2 * CLOSE_LABEL.len()),
+        ));
     }
     if app.tab == BLOG_TAB {
         return PaneTitle::None;
@@ -338,16 +341,22 @@ enum PaneTitle {
 /// The narrowest a title is cut to, however little room the counter leaves.
 const MIN_TITLE_COLS: usize = 8;
 
+/// The reader's close button, padded either side so the target is three cells
+/// wide rather than one — it is aimed at with a fingertip.
+const CLOSE_LABEL: &str = " x ";
+
 /// The homepage's white card: a bordered box filling the remaining height,
 /// with a title and scroll counter as its title row.
 #[component]
 fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
     let counter = props.counter.clone();
-    // Centering is done against a spacer as wide as the counter rather than by
-    // centering the whole row: the title is then centered over the pane, not
-    // over the space the counter happens to leave.
+    let closable = props.closable;
+    // Centering is done against a spacer as wide as everything on the right
+    // rather than by centering the whole row: the title is then centered over
+    // the pane, not over the space the counter happens to leave.
+    let right = counter.chars().count() + if closable { CLOSE_LABEL.len() } else { 0 };
     let spacer = matches!(props.title, PaneTitle::Centered(_))
-        .then(|| counter.chars().count() as u16)
+        .then_some(right as u16)
         .unwrap_or(0);
     let justify = match props.title {
         PaneTitle::Centered(_) => JustifyContent::Center,
@@ -380,6 +389,7 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
                     }))
                 }
                 Text(content: counter, color: theme::MUTED, wrap: TextWrap::NoWrap)
+                #(closable.then(|| element! { CloseButton }))
             }
             PaneBody {
                 #(props.children.drain(..))
@@ -392,7 +402,26 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
 struct PaneProps {
     title: PaneTitle,
     counter: String,
+    /// Whether the title row carries the reader's close button.
+    closable: bool,
     children: Vec<AnyElement<'static>>,
+}
+
+/// The reader's way out for a pointer, at the top right inside the pane's
+/// border. It sits on [`hit::CHROME`], which no pane body clips and which an
+/// open dialog covers — a post cannot be closed out from under one.
+#[component]
+fn CloseButton(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let rect = hooks.use_component_rect();
+    register_rect(rect, hit::CHROME, HitTarget::Close);
+    element! {
+        Text(
+            content: CLOSE_LABEL,
+            color: theme::ACCENT_TEXT,
+            weight: Weight::Bold,
+            wrap: TextWrap::NoWrap,
+        )
+    }
 }
 
 /// The pane's scrolling body, a component of its own so that it can report
@@ -589,14 +618,15 @@ fn image_row(
     cols: u16,
     alt: &str,
 ) -> Option<AnyElement<'static>> {
-    let url = url.filter(|_| image::enabled(cols))?;
-    let (_, rows) = image::size(url, image::THUMBNAIL)?;
+    let url = url?;
+    let bounds = image::thumbnail_bounds(cols);
+    let (_, rows) = image::size(url, bounds)?;
     Some(gutter_block(
         gutter,
         rows,
         selected,
         element_to_any(element! {
-            Image(url: url, bounds: image::THUMBNAIL, alt: alt.to_string())
+            Image(url: url, bounds: bounds, alt: alt.to_string())
         }),
     ))
 }
@@ -841,7 +871,9 @@ pub fn reader_block_heights(post: usize, cols: u16) -> Vec<usize> {
         .iter()
         .map(|block| match block {
             markdown::Block::Line(_) => 1,
-            markdown::Block::Image { url, .. } => image::rows(Some(url), cols, image::HERO),
+            markdown::Block::Image { url, .. } => {
+                image::rows(Some(url), image::reader_bounds(cols))
+            }
         })
         .collect()
 }
@@ -888,13 +920,14 @@ fn reader_tree(app: &App, reader: &Reader) -> impl Into<AnyElement<'static>> {
         .skip(start)
         .filter_map(|block| match block {
             markdown::Block::Line(line) => Some(line_element(line, hit::PANE)),
-            // A terminal too narrow for artwork counts an image as no rows at
-            // all; drawing one anyway would put every row below it out of step
-            // with the scroll offset.
+            // An image nothing was baked under counts as no rows at all;
+            // drawing one anyway would put every row below it out of step with
+            // the scroll offset.
             markdown::Block::Image { url, alt } => {
-                (image::rows(Some(url), app.cols, image::HERO) > 0).then(|| {
+                let bounds = image::reader_bounds(app.cols);
+                (image::rows(Some(url), bounds) > 0).then(|| {
                     element_to_any(element! {
-                        Image(url: *url, bounds: image::HERO, alt: alt.clone())
+                        Image(url: *url, bounds: bounds, alt: alt.clone())
                     })
                 })
             }
@@ -1074,18 +1107,27 @@ fn dialog_body_rows(rows: u16) -> u16 {
     (u32::from(rows) * 4 / 5).saturating_sub(5) as u16
 }
 
-/// The hero's cell box, shrunk to whatever the dialog can spare. Six rows are
-/// held back for the fields and links so the artwork can never crowd them out.
-/// `None` when what is left is too short to read as a picture.
+/// The hero's cell box, shrunk to whatever the dialog can spare in both
+/// directions. Six rows are held back for the fields and links so the artwork
+/// can never crowd them out. `None` when what is left is too short to read as
+/// a picture.
 fn hero_bounds(cols: usize, rows: u16) -> Option<(u16, u16)> {
-    if !image::enabled(cols as u16) {
-        return None;
-    }
     let max_rows = dialog_body_rows(rows).saturating_sub(6).min(image::HERO.1);
     // Below six rows the artwork reads as a smear rather than a picture, so a
     // short dialog spends its rows on the fields instead.
-    (max_rows >= 6).then_some((image::HERO.0, max_rows))
+    (max_rows >= 6).then(|| image::fit_width(dialog_content_width(cols), (image::HERO.0, max_rows)))
 }
+
+/// The cells inside the dialog's border and its body's padding — all a hero
+/// has to fill, the dialog being a fraction of a screen that is itself
+/// narrower than [`image::HERO`] on a phone.
+fn dialog_content_width(cols: usize) -> usize {
+    let percent = if cols < NARROW_DIALOG_COLS { 96 } else { 80 };
+    (cols * percent / 100).saturating_sub(4)
+}
+
+/// Narrower than this and the dialog has no room to spare for a margin.
+const NARROW_DIALOG_COLS: usize = 60;
 
 /// The artwork the open dialog leads with, if any.
 fn modal_image(modal: &Modal) -> Option<&'static str> {
@@ -1134,8 +1176,7 @@ fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'st
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
         ) {
-            // A narrow screen has no room to spare for a margin.
-            Dialog(title: title, narrow: cols < 60) {
+            Dialog(title: title, narrow: cols < NARROW_DIALOG_COLS) {
                 #(hero)
                 #(rows)
             }

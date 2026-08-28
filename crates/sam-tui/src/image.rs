@@ -41,8 +41,9 @@ pub const AVATAR: (u16, u16) = (26, 13);
 /// The About pane's portrait, as on the homepage.
 pub const PORTRAIT: &str = "/sam-by-megan-3-square.webp";
 
-/// Narrower than this and the text layout has nothing to spare, so images are
-/// dropped rather than squeezed.
+/// Narrower than this and the About pane's two columns have nothing to spare,
+/// so the portrait beside the program is dropped rather than squeezed. Artwork
+/// that has a column to itself scales down instead — see [`fit_width`].
 const MIN_COLS: u16 = 60;
 
 /// Which stacking layer an image sits on. The canvas paints the open dialog
@@ -53,12 +54,33 @@ const MIN_COLS: u16 = 60;
 pub const LAYER_PANE: u8 = 0;
 pub const LAYER_DIALOG: u8 = 1;
 
-/// Whether images are drawn at a given terminal width. Layout and scroll math
-/// both route through this, so they can never disagree about a card's height.
+/// Whether the About pane has the width for its portrait beside the program.
 pub fn enabled(cols: u16) -> bool {
     // 0 is the pre-resize placeholder, which `crate::content_width` reads as a
-    // comfortable 80 columns; images are on there too.
+    // comfortable 80 columns; the portrait is on there too.
     cols == 0 || cols >= MIN_COLS
+}
+
+/// The box an image may fill inside a column `width` cells wide: the bounds
+/// the design asks for, narrowed to the column whenever the column is the
+/// smaller of the two. A phone is narrower than every box in this module, so
+/// this is what puts pictures on one — scaled down rather than dropped.
+///
+/// Layout and scroll math both route through the bounds this returns, so they
+/// can never disagree about how many rows a picture takes.
+pub fn fit_width(width: usize, (max_cols, max_rows): (u16, u16)) -> (u16, u16) {
+    let width = u16::try_from(width).unwrap_or(u16::MAX);
+    (max_cols.min(width).max(1), max_rows)
+}
+
+/// A card's thumbnail box at a given terminal width.
+pub fn thumbnail_bounds(cols: u16) -> (u16, u16) {
+    fit_width(crate::content_width(cols), THUMBNAIL)
+}
+
+/// The artwork box inside a post: the blog's column, at most [`HERO`].
+pub fn reader_bounds(cols: u16) -> (u16, u16) {
+    fit_width(crate::blog_column_width(cols), HERO)
 }
 
 fn baked(url: &str) -> Option<&'static Baked> {
@@ -80,13 +102,10 @@ pub fn size(url: &str, (max_cols, max_rows): (u16, u16)) -> Option<(u16, u16)> {
     Some((cols.max(1), rows.max(1)))
 }
 
-/// Rows an optional image contributes to a row of a list, at `cols` wide.
-/// Zero when there is no image or the terminal is too narrow — the single
-/// answer both the view and the height functions use.
-pub fn rows(url: Option<&str>, cols: u16, bounds: (u16, u16)) -> usize {
-    if !enabled(cols) {
-        return 0;
-    }
+/// Rows an optional image contributes to a row of a list, within `bounds`.
+/// Zero when there is no image under that name — the single answer both the
+/// view and the height functions use.
+pub fn rows(url: Option<&str>, bounds: (u16, u16)) -> usize {
     url.and_then(|url| size(url, bounds))
         .map_or(0, |(_, rows)| usize::from(rows))
 }

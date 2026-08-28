@@ -89,7 +89,7 @@ pub fn card_height(event: &data::TimelineEvent, cols: u16) -> usize {
     } else {
         wrapped_rows(&link_row_label(event.links), inner)
     };
-    let image = image::rows(event.image, cols, image::THUMBNAIL);
+    let image = image::rows(event.image, image::thumbnail_bounds(cols));
     1 + 1 + image + detail + links + 1
 }
 
@@ -601,6 +601,9 @@ impl App {
                 self.actions.push(Action::OpenUrl(url));
             }
             Some(hit::HitTarget::Tab(index)) => self.switch_tab(index),
+            // The same way out `q` and Esc take, for a pointer that has
+            // neither: a phone reads posts with nothing but taps.
+            Some(hit::HitTarget::Close) => self.reader = None,
             Some(hit::HitTarget::Item(index)) => {
                 if matches!(self.tab, TIMELINE_TAB | BLOG_TAB) {
                     if self.selected[self.tab] == index {
