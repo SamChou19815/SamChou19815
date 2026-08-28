@@ -42,6 +42,9 @@ pub enum HitTarget {
     Tab(usize),
     Item(usize),
     Link(String),
+    /// The reader's close button, in the pane's title row. Keys close the
+    /// reader too, but a pointer had no way out of a post before this.
+    Close,
     /// The open dialog's own frame. It swallows the click instead of acting on
     /// it: a click that lands on the dialog is not a click on the pane behind
     /// it, and so must neither dismiss the dialog nor reach what it covers.
@@ -65,11 +68,12 @@ fn is_dialog(surface: u8) -> bool {
     matches!(surface, DIALOG | DIALOG_BODY)
 }
 
-/// Links beat cards beat tabs, so a button on a card opens instead of selecting
-/// it. The dialog's frame ranks below all of them, because everything it
-/// carries sits on top of it.
+/// The way out ranks above everything, then links beat cards beat tabs, so a
+/// button on a card opens instead of selecting it. The dialog's frame ranks
+/// below all of them, because everything it carries sits on top of it.
 fn priority(target: &HitTarget) -> u8 {
     match target {
+        HitTarget::Close => 4,
         HitTarget::Link(_) => 3,
         HitTarget::Item(_) => 2,
         HitTarget::Tab(_) => 1,
