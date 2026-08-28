@@ -163,7 +163,9 @@ export default function TerminalApp(): React.JSX.Element {
         }
         // Placed at the full rectangle so the picture keeps its shape, then
         // clipped to the part the pane actually painted — otherwise a card
-        // half off the bottom would spill its artwork over the status bar.
+        // half off the bottom would spill its artwork over the status bar. The
+        // full rectangle can start above the viewport, at a negative y, when a
+        // post is scrolled part-way through one of its images.
         const inset = [
           (Number(vy) - Number(y)) * cellHeight,
           (Number(x) + Number(cols) - Number(vx) - Number(vcols)) * cellWidth,

@@ -52,10 +52,7 @@ pub fn tab_line_count(tab: usize, cols: u16) -> usize {
             .iter()
             .map(|event| crate::card_height(event, cols))
             .sum(),
-        BLOG_TAB => posts::POSTS
-            .iter()
-            .map(|post| crate::post_card_height(post, cols))
-            .sum(),
+        BLOG_TAB => crate::blog_rows(),
         ABOUT_TAB => about_lines().len(),
         _ => 0,
     }
@@ -264,12 +261,7 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     hit::begin_frame(dialog_open);
     let counter = pane_counter(&app);
     let cols = terminal_width as usize;
-    // The reader is a mode of the Blog tab, and names the post it is reading
-    // in the pane's title row.
-    let pane_title = match &app.reader {
-        Some(reader) => posts::POSTS[reader.post].title.to_string(),
-        None => TAB_NAMES[app.tab].to_string(),
-    };
+    let pane_title = pane_title(&app, &counter, cols);
     element! {
         View(
             flex_direction: FlexDirection::Column,
@@ -293,15 +285,36 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     }
 }
 
+/// What the pane's title row names, if anything. The reader is a mode of the
+/// Blog tab and centers the post it is reading over the pane; the index behind
+/// it names nothing, since the header's own `Blog` tab already says where the
+/// reader is. Titles are cut to what is left beside the counter, so the row
+/// stays exactly one line however narrow the terminal or long the post.
+fn pane_title(app: &App, counter: &str, cols: usize) -> PaneTitle {
+    let counter_width = counter.chars().count();
+    // What the title has to itself: the row less its padding, the space either
+    // side of the title, the counter, and — when the title is centered — the
+    // spacer that balances the counter on the other side.
+    let room = |mirrored: usize| {
+        cols.saturating_sub(counter_width + mirrored + 4)
+            .max(MIN_TITLE_COLS)
+    };
+    if let Some(reader) = &app.reader {
+        let title = posts::POSTS[reader.post].title;
+        return PaneTitle::Centered(markdown::truncate(title, room(counter_width)));
+    }
+    if app.tab == BLOG_TAB {
+        return PaneTitle::None;
+    }
+    PaneTitle::Left(markdown::truncate(TAB_NAMES[app.tab], room(0)))
+}
+
 /// "position/total" for the pane's title row. The list tabs count items, so
 /// the counter tracks the selection the reader is actually moving; an open
 /// reader counts the blocks it scrolls through instead.
 fn pane_counter(app: &App) -> String {
     let (position, total) = if let Some(reader) = &app.reader {
-        (
-            reader.scroll + 1,
-            reader_blocks(reader.post, app.cols).len(),
-        )
+        (reader.scroll + 1, reader_row_count(reader.post, app.cols))
     } else {
         match app.tab {
             TIMELINE_TAB => (app.selected(TIMELINE_TAB) + 1, data::TIMELINE.len()),
@@ -312,10 +325,38 @@ fn pane_counter(app: &App) -> String {
     format!(" {}/{} ", position, total.max(1))
 }
 
+/// What the pane's title row carries beside its counter: nothing, a name at the
+/// left edge, or a name centered over the pane.
+#[derive(Clone, Default, PartialEq, Eq)]
+enum PaneTitle {
+    #[default]
+    None,
+    Left(String),
+    Centered(String),
+}
+
+/// The narrowest a title is cut to, however little room the counter leaves.
+const MIN_TITLE_COLS: usize = 8;
+
 /// The homepage's white card: a bordered box filling the remaining height,
-/// with the tab name and scroll counter as its title row.
+/// with a title and scroll counter as its title row.
 #[component]
 fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
+    let counter = props.counter.clone();
+    // Centering is done against a spacer as wide as the counter rather than by
+    // centering the whole row: the title is then centered over the pane, not
+    // over the space the counter happens to leave.
+    let spacer = matches!(props.title, PaneTitle::Centered(_))
+        .then(|| counter.chars().count() as u16)
+        .unwrap_or(0);
+    let justify = match props.title {
+        PaneTitle::Centered(_) => JustifyContent::Center,
+        _ => JustifyContent::Start,
+    };
+    let title = match &props.title {
+        PaneTitle::None => None,
+        PaneTitle::Left(title) | PaneTitle::Centered(title) => Some(title.clone()),
+    };
     element! {
         View(
             flex_direction: FlexDirection::Column,
@@ -326,9 +367,19 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
             background_color: theme::CARD_BG,
             overflow: Overflow::Hidden,
         ) {
-            View(flex_direction: FlexDirection::Row, width: 100pct, justify_content: JustifyContent::SpaceBetween, padding_left: 1, padding_right: 1) {
-                Text(content: format!(" {} ", props.title), color: theme::ACCENT_TEXT, weight: Weight::Bold)
-                Text(content: props.counter.clone(), color: theme::MUTED)
+            View(flex_direction: FlexDirection::Row, width: 100pct, height: 1, padding_left: 1, padding_right: 1) {
+                View(width: spacer, flex_shrink: 0.0_f32)
+                View(flex_grow: 1.0_f32, justify_content: justify, overflow: Overflow::Hidden) {
+                    #(title.map(|title| element! {
+                        Text(
+                            content: format!(" {title} "),
+                            color: theme::ACCENT_TEXT,
+                            weight: Weight::Bold,
+                            wrap: TextWrap::NoWrap,
+                        )
+                    }))
+                }
+                Text(content: counter, color: theme::MUTED, wrap: TextWrap::NoWrap)
             }
             PaneBody {
                 #(props.children.drain(..))
@@ -339,7 +390,7 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
 
 #[derive(Props, Default)]
 struct PaneProps {
-    title: String,
+    title: PaneTitle,
     counter: String,
     children: Vec<AnyElement<'static>>,
 }
@@ -669,18 +720,38 @@ fn blog_element(app: &App) -> AnyElement<'static> {
     element_to_any(blog_tree(app))
 }
 
+/// The blog index, as `/blog` reads on the web: a centered column of cards,
+/// each carrying a post's title and its date and nothing else. The column is
+/// capped at a comfortable measure ([`crate::blog_column_width`]) rather than
+/// stretched, and every card is the same height, so the pane scrolls by the
+/// row — `scroll` counts rows, and the card it lands part-way into is pulled
+/// up by the rows already above the top edge.
 fn blog_tree(app: &App) -> impl Into<AnyElement<'static>> {
     let selected = app.selected(BLOG_TAB);
-    let inner = crate::content_width(app.cols);
+    let width = crate::blog_column_width(app.cols) as u16;
+    let text_width = crate::blog_text_width(app.cols);
+    let scroll = app.scroll(BLOG_TAB);
     let cards: Vec<AnyElement<'static>> = posts::POSTS
         .iter()
         .enumerate()
-        .skip(app.scroll(BLOG_TAB))
-        .map(|(index, post)| post_card_element(post, index, index == selected, inner, app.cols))
+        .skip(scroll / crate::POST_CARD_ROWS)
+        .map(|(index, post)| post_card_element(post, index, index == selected, text_width))
         .collect();
+    let offset = (scroll % crate::POST_CARD_ROWS) as i32;
     element! {
-        View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
-            View(flex_direction: FlexDirection::Column, width: 100pct) {
+        View(
+            flex_direction: FlexDirection::Column,
+            width: 100pct,
+            flex_grow: 1.0_f32,
+            align_items: AlignItems::Center,
+            overflow: Overflow::Hidden,
+        ) {
+            View(
+                flex_direction: FlexDirection::Column,
+                width: width,
+                flex_shrink: 0.0_f32,
+                margin_top: -offset,
+            ) {
                 #(cards)
             }
         }
@@ -691,81 +762,62 @@ fn post_card_element(
     post: &posts::Post,
     index: usize,
     selected: bool,
-    inner: usize,
-    cols: u16,
+    text_width: usize,
 ) -> AnyElement<'static> {
-    element_to_any(post_card_tree(post, index, selected, inner, cols))
+    element_to_any(post_card_tree(post, index, selected, text_width))
 }
 
-/// A blog card: the same shape as a timeline card, with the date as its
-/// subheader, the excerpt as its body and an OPEN ON WEB button row.
+/// A blog card, mirroring the web's: a rounded box carrying the title as its
+/// heading and the date under it. A post that lives elsewhere is marked with
+/// the same `↗` the web index appends to its title.
 fn post_card_tree(
     post: &posts::Post,
     index: usize,
     selected: bool,
-    inner: usize,
-    cols: u16,
+    text_width: usize,
 ) -> impl Into<AnyElement<'static>> {
-    let selected_color = if selected {
+    let title_color = if selected {
         theme::SELECT_FG
     } else {
-        theme::TEXT
+        // The title is the card's link on the web, and reads as one here.
+        theme::ACCENT_TEXT
     };
     let date_color = if selected {
         theme::SELECT_FG
     } else {
         theme::MUTED
     };
-    let tag_color = if selected {
-        theme::SELECT_FG
-    } else if post.is_external() {
-        theme::STAR
+    let title = if post.is_external() {
+        format!("{} ↗", post.title)
     } else {
-        theme::ACCENT_TEXT
-    };
-    let marker = if selected { "▸  " } else { "●  " };
-    let tag = if post.is_external() {
-        "[external]"
-    } else {
-        "[post]"
-    };
-    let title_room = inner.saturating_sub(tag.chars().count() + 2);
-    let title_contents = vec![
-        colored(markdown::truncate(post.title, title_room), selected_color).weight(Weight::Bold),
-    ];
-    let excerpt_color = if selected {
-        theme::SELECT_FG
-    } else {
-        theme::SUBTLE
+        post.title.to_string()
     };
     element! {
         HitBlock(index: index) {
-            // Title and tag, pushed to opposite edges.
-            TimelineTitle(
-                marker: marker,
-                contents: title_contents,
-                tag: tag,
-                tag_color: Some(tag_color),
-                selected: selected,
-            )
-            // The date, as the card's subheader.
-            #(gutter_row("│  ", selected, element_to_any(element! {
-                Text(content: post.formatted_date(), color: date_color, wrap: TextWrap::NoWrap)
-            })))
-            // The artwork, between the date and the excerpt.
-            #(image_row(post.thumbnail, "│  ", selected, cols, post.title))
-            #(if post.excerpt.is_empty() { None } else { Some(gutter_row("│  ", selected, element_to_any(element! {
-                Text(content: post.excerpt, color: excerpt_color)
-            }))) })
-            // Reading is Enter or a second click on the card, so one button
-            // pointing at the web page is all the row needs.
-            #(gutter_row("│  ", selected, element_to_any(element! {
-                View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::Wrap) {
-                    Button(label: "OPEN ON WEB ".to_string(), url: post.url())
-                }
-            })))
-            // Blank separator, so cards read as separate blocks.
-            #(gutter_row("   ", false, element_to_any(element! { Text(content: "") })))
+            // The row of air above every card: the gap between the web's
+            // cards, and what keeps the first one off the pane's title row.
+            Text(content: "")
+            View(
+                flex_direction: FlexDirection::Column,
+                width: 100pct,
+                border_style: BorderStyle::Round,
+                border_color: if selected { theme::ACCENT } else { theme::BORDER },
+                background_color: if selected { theme::SELECT_BG } else { theme::CARD_BG },
+                padding_left: 1,
+                padding_right: 1,
+            ) {
+                Text(
+                    content: markdown::truncate(&title, text_width),
+                    color: title_color,
+                    weight: Weight::Bold,
+                    wrap: TextWrap::NoWrap,
+                )
+                Text(
+                    content: post.formatted_date(),
+                    color: date_color,
+                    wrap: TextWrap::NoWrap,
+                )
+            }
         }
     }
 }
@@ -776,11 +828,11 @@ fn reader_element(app: &App, reader: &Reader) -> AnyElement<'static> {
     element_to_any(reader_tree(app, reader))
 }
 
-/// The reader's blocks, wrapped to the pane's text width. Reparsing the body
+/// The reader's blocks, wrapped to the blog's column width. Reparsing the body
 /// on each call is a few hundred lines a handful of times per keystroke — the
 /// same order as the height math over 28 timeline cards — so it is not cached.
 pub fn reader_blocks(post: usize, cols: u16) -> Vec<markdown::Block> {
-    markdown::post_blocks(posts::POSTS[post].body, crate::content_width(cols))
+    markdown::post_blocks(posts::POSTS[post].body, crate::blog_column_width(cols))
 }
 
 /// Rows each block occupies: one for a line, the artwork's height for an image.
@@ -794,38 +846,89 @@ pub fn reader_block_heights(post: usize, cols: u16) -> Vec<usize> {
         .collect()
 }
 
+/// Rows a post occupies in full, which is how far it scrolls.
+pub fn reader_row_count(post: usize, cols: u16) -> usize {
+    reader_block_heights(post, cols).iter().sum()
+}
+
 /// Rows the reader's scrolling body shows: the pane body, less the fixed
 /// date/permalink row and the blank row under it.
 pub fn reader_viewport(body_rows: usize) -> usize {
     body_rows.saturating_sub(2).max(1)
 }
 
+/// The block a scroll offset lands in, and how many of that block's rows are
+/// already above the top edge. Every block but artwork is exactly one row, so
+/// the second number is zero except part-way down an image.
+fn block_at_row(heights: &[usize], scroll: usize) -> (usize, usize) {
+    let mut row = 0;
+    for (index, height) in heights.iter().enumerate() {
+        if row + height > scroll {
+            return (index, scroll - row);
+        }
+        row += height;
+    }
+    (heights.len(), 0)
+}
+
 fn reader_tree(app: &App, reader: &Reader) -> impl Into<AnyElement<'static>> {
     let post = &posts::POSTS[reader.post];
+    let width = crate::blog_column_width(app.cols) as u16;
     let blocks = reader_blocks(reader.post, app.cols);
-    // The date and permalink, clickable as one row.
+    let heights = reader_block_heights(reader.post, app.cols);
+    let (start, offset) = block_at_row(&heights, reader.scroll);
+    // The date under the title, as the web's post header carries it. The post
+    // is read here, so the row is a subheader and not a way out to a browser.
     let meta = markdown::ContentLine {
-        contents: vec![muted(format!("{} · {}", post.formatted_date(), post.url()))],
-        link: Some(post.url()),
+        contents: vec![muted(post.formatted_date())],
+        link: None,
     };
     let body: Vec<AnyElement<'static>> = blocks
         .iter()
-        .skip(reader.scroll)
-        .map(|block| match block {
-            markdown::Block::Line(line) => line_element(line, hit::PANE),
-            markdown::Block::Image { url, alt } => element_to_any(element! {
-                Image(url: *url, bounds: image::HERO, alt: alt.clone())
-            }),
+        .skip(start)
+        .filter_map(|block| match block {
+            markdown::Block::Line(line) => Some(line_element(line, hit::PANE)),
+            // A terminal too narrow for artwork counts an image as no rows at
+            // all; drawing one anyway would put every row below it out of step
+            // with the scroll offset.
+            markdown::Block::Image { url, alt } => {
+                (image::rows(Some(url), app.cols, image::HERO) > 0).then(|| {
+                    element_to_any(element! {
+                        Image(url: *url, bounds: image::HERO, alt: alt.clone())
+                    })
+                })
+            }
         })
         .collect();
-    // `Overflow::Hidden` plus `PaneBody`'s clip crops the last partially
-    // visible image at the pane's border, and `Image::draw` measures the
-    // visible rectangle from the canvas, so the web overlay crops with it.
+    // `Overflow::Hidden` plus `PaneBody`'s clip crops the first and last
+    // partially visible images at the body's edges, and `Image::draw` measures
+    // the visible rectangle from the canvas, so the web overlay crops with it.
     element! {
-        View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
-            Line(contents: meta.contents.clone(), url: meta.link.clone(), surface: hit::PANE)
-            Line(contents: Vec::new(), url: None, surface: hit::PANE)
-            #(body)
+        View(
+            flex_direction: FlexDirection::Column,
+            width: 100pct,
+            flex_grow: 1.0_f32,
+            align_items: AlignItems::Center,
+            overflow: Overflow::Hidden,
+        ) {
+            View(flex_direction: FlexDirection::Column, width: width, flex_shrink: 0.0_f32) {
+                Line(contents: meta.contents.clone(), url: meta.link.clone(), surface: hit::PANE)
+                Line(contents: Vec::new(), url: None, surface: hit::PANE)
+            }
+            View(
+                flex_direction: FlexDirection::Column,
+                width: width,
+                flex_grow: 1.0_f32,
+                flex_shrink: 0.0_f32,
+                overflow: Overflow::Hidden,
+            ) {
+                // Whatever of the top block is above the edge is pulled out of
+                // sight, so the post scrolls a row at a time however tall the
+                // block the viewport starts inside.
+                View(flex_direction: FlexDirection::Column, width: 100pct, margin_top: -(offset as i32)) {
+                    #(body)
+                }
+            }
         }
     }
 }
@@ -935,7 +1038,6 @@ fn modal_lines(modal: &Modal, cols: usize) -> Vec<markdown::ContentLine> {
             ("1 … 3", "jump to a tab"),
             ("↑/↓ or j/k", "move selection / scroll"),
             ("Enter", "read a post / open details"),
-            ("o", "open the post in a browser"),
             ("1 … 9", "open a button of the open dialog"),
             ("g / G", "jump to top / bottom"),
             ("Esc", "close the reader or this dialog"),
@@ -1142,12 +1244,7 @@ fn StatusBar(props: &StatusBarProps) -> impl Into<AnyElement<'static>> {
     let hints: &[(&str, &str)] = if modal_open {
         &[("Esc", "close"), ("↑/↓", "scroll"), ("1-9", "open button")]
     } else if reading {
-        &[
-            ("Esc", "back"),
-            ("↑/↓", "scroll"),
-            ("o", "open in browser"),
-            ("?", "help"),
-        ]
+        &[("Esc", "back"), ("↑/↓", "scroll"), ("?", "help")]
     } else if tab == TIMELINE_TAB {
         &[
             ("←/→", "tabs"),

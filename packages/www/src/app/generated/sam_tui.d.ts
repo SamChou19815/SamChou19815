@@ -15,6 +15,8 @@ export function drain(): string;
  * The second rectangle is the part that survived the pane's clipping: a card
  * scrolled half off the bottom paints only some of its artwork, and the
  * overlay has to crop to match. Images with nothing on screen are omitted.
+ * The first rectangle is the whole picture, so its origin goes negative for
+ * one scrolled part-way off the top of a pane.
  *
  * Space-separated rather than JSON: no asset path contains a space, and a
  * serializer would cost the wasm binary more than the artwork itself does.
