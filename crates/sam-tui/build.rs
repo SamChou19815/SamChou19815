@@ -135,12 +135,14 @@ fn main() {
 }
 
 /// Site URLs of every image under `public/blog`, sorted so the generated index
-/// is byte-stable across machines.
+/// is byte-stable across machines. `.txt` files — `robots.txt` — share the
+/// directory but carry no dimensions, so they are skipped.
 fn blog_image_urls(public: &Path) -> Vec<String> {
     fn walk(dir: &Path, public: &Path, urls: &mut Vec<String>) {
         let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
             .unwrap_or_else(|error| panic!("reading {}: {error}", dir.display()))
             .map(|entry| entry.expect("reading a directory entry").path())
+            .filter(|path| path.extension().is_none_or(|extension| extension != "txt"))
             .collect();
         entries.sort();
         for path in entries {
