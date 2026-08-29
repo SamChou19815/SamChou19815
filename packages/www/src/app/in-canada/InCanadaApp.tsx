@@ -48,11 +48,13 @@ function countDaysInCanada(
   return { totalDays, daysInCanada: totalDays - missingDaysCount, missingDaysCount };
 }
 
+// Deliberately smaller than the hero's headline number: these are the supporting
+// counts, and matching the hero's scale would flatten the page's hierarchy.
 function StatBox({ label, value }: { label: string; value: ReactNode }): React.JSX.Element {
   return (
-    <div className="text-center">
-      <div className="text-4xl font-bold text-blue-500 dark:text-blue-400">{value}</div>
-      <div className="text-gray-500 mt-1 dark:text-gray-400">{label}</div>
+    <div>
+      <div className="text-3xl font-bold text-blue-500 dark:text-blue-400">{value}</div>
+      <div className="text-sm text-gray-500 mt-1 dark:text-gray-400">{label}</div>
     </div>
   );
 }
@@ -191,19 +193,36 @@ function Calendar({
  * A stacked bar toward {@link TARGET_DAYS}: pre-PR credit (half rate) in blue,
  * days as a PR (full rate) in green. Keeping the two rates as separate segments
  * is the point — one flat bar would hide which part of the progress is capped.
+ *
+ * Spans the full screen width as the bottom edge of the hero, so it reads as
+ * the base of the block that states its own numbers rather than as a stray
+ * strip: a caption on the page's narrower measure could never line up with the
+ * ends of a bar this wide.
  */
 function ProgressBar({ progress }: { progress: CitizenshipProgress }): React.JSX.Element {
   const prePrPct = Math.min(100, (progress.prePrCredit / TARGET_DAYS) * 100);
   const prPct = Math.min(100 - prePrPct, (progress.prDays / TARGET_DAYS) * 100);
   return (
-    <div className="flex h-3 w-full overflow-hidden rounded bg-gray-200 dark:bg-gray-700">
+    <div
+      className="flex h-3 w-full overflow-hidden bg-white/10"
+      role="progressbar"
+      aria-label="Progress to citizenship"
+      aria-valuemin={0}
+      aria-valuemax={TARGET_DAYS}
+      aria-valuenow={progress.total}
+    >
       <div className="h-full bg-blue-400" style={{ width: `${prePrPct}%` }} />
-      <div className="h-full bg-green-400" style={{ width: `${prPct}%` }} />
+      <div className="h-full bg-emerald-400" style={{ width: `${prPct}%` }} />
     </div>
   );
 }
 
-function CitizenshipCard({
+/**
+ * The one fact the page exists to answer, stated once and large. The stats that
+ * used to sit in a card below duplicated every number here, so that card is
+ * gone — only the rule it explained survives, as the lede beneath.
+ */
+function Hero({
   progress,
   eligibleOn,
   today,
@@ -216,57 +235,58 @@ function CitizenshipCard({
 }): React.JSX.Element {
   const alreadyEligible = eligibleOn != null && today != null && eligibleOn <= today;
   return (
-    <Card>
-      <h3 className="mb-2">Progress to citizenship</h3>
-      <p className="text-sm text-gray-500 mb-8 dark:text-gray-400">
-        {TARGET_DAYS.toLocaleString()} days of physical presence in the last {WINDOW_YEARS} years.
-        Days before permanent residency count as half a day each, up to {PRE_PR_CREDIT_CAP} days of
-        credit; days from the PR date onward count in full.
-      </p>
+    <section className="bg-slate-900 text-white">
+      <div className="mx-auto max-w-6xl px-6 pt-12 pb-10">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+          In-Canada Days Counter
+        </p>
 
-      <div className="flex flex-row justify-around mb-8">
-        <StatBox label="Days credited" value={progress?.total ?? "—"} />
-        <StatBox label="Days remaining" value={progress?.remaining ?? "—"} />
-        <StatBox
-          label={alreadyEligible ? "Status" : "Eligible on"}
-          value={
-            <span className="text-2xl">
-              {alreadyEligible ? "Eligible" : (eligibleOn?.toLocaleDateString("en-CA") ?? "—")}
-            </span>
-          }
-        />
-      </div>
-
-      {progress != null && (
-        <>
-          <ProgressBar progress={progress} />
-          <div className="mt-2 flex justify-between text-sm text-gray-500 dark:text-gray-400">
-            <span>
-              {progress.total.toLocaleString()} / {TARGET_DAYS.toLocaleString()} days
-            </span>
-            <span>{Math.round(progress.percent)}%</span>
+        <div className="mt-8 flex flex-wrap items-end justify-between gap-x-12 gap-y-6">
+          <div>
+            <div className="flex items-baseline gap-4">
+              <span className="text-7xl font-bold leading-none tracking-tight">
+                {progress != null ? `${Math.round(progress.percent)}%` : "—"}
+              </span>
+              <span className="text-lg text-slate-400">toward citizenship</span>
+            </div>
+            <p className="mt-4 text-slate-300">
+              {progress != null
+                ? `${progress.total.toLocaleString()} of ${TARGET_DAYS.toLocaleString()} days credited · ${progress.remaining.toLocaleString()} to go`
+                : `${TARGET_DAYS.toLocaleString()} days needed`}
+            </p>
           </div>
-          <div className="flex flex-wrap items-center gap-4 mt-3 text-xs">
-            <Legend
-              swatch="bg-blue-400"
-              label={`Pre-PR credit — ${progress.prePrDays.toLocaleString()} days at ½, capped at ${PRE_PR_CREDIT_CAP}`}
-            />
+
+          <div className="sm:text-right">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+              {alreadyEligible ? "Status" : "Projected eligibility"}
+            </p>
+            <p className="mt-2 text-3xl font-semibold">
+              {alreadyEligible ? "Eligible now" : (eligibleOn?.toLocaleDateString("en-CA") ?? "—")}
+            </p>
+            <p className="mt-2 text-sm text-slate-400">
+              Counting since {formatLongDate(START_DATE)}
+            </p>
+          </div>
+        </div>
+
+        {progress != null && (
+          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-400">
+            <span className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded bg-blue-400" />
+              {`Pre-PR credit — ${progress.prePrDays.toLocaleString()} days at ½, capped at ${PRE_PR_CREDIT_CAP}`}
+            </span>
             {hasPrDate && (
-              <Legend
-                swatch="bg-green-400"
-                label={`Days as a PR — ${progress.prDays.toLocaleString()} at full rate`}
-              />
+              <span className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded bg-emerald-400" />
+                {`Days as a PR — ${progress.prDays.toLocaleString()} at full rate`}
+              </span>
             )}
           </div>
-        </>
-      )}
+        )}
+      </div>
 
-      <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
-        {hasPrDate
-          ? "The projected date assumes you stay in Canada every day from now on."
-          : `Without a PR date every tracked day counts as half a day, so the total is capped at ${PRE_PR_CREDIT_CAP} — set the date below to count full days.`}
-      </p>
-    </Card>
+      {progress != null && <ProgressBar progress={progress} />}
+    </section>
   );
 }
 
@@ -377,96 +397,104 @@ export default function InCanadaApp(): React.JSX.Element {
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-12 flex flex-col gap-6">
-      <Card>
-        <h1 className="text-center mb-2">In-Canada Days Counter</h1>
-        <p className="text-center text-gray-500 mb-8 dark:text-gray-400">
-          Counting since {formatLongDate(START_DATE)}
-        </p>
-
-        <div className="flex flex-row justify-around mb-8">
-          <StatBox label="Days in Canada" value={stats?.daysInCanada ?? "—"} />
-          <StatBox label="Days Away" value={stats?.missingDaysCount ?? "—"} />
-          <StatBox label="Total Days" value={stats?.totalDays ?? "—"} />
-        </div>
-
-        {today != null && (
-          <Calendar today={today} missingDaysSet={missingDaysSet} prDateStr={savedPrDate} />
-        )}
-      </Card>
-
-      <CitizenshipCard
+    // No max-width on the root: the hero and its progress bar span the whole
+    // screen, so the page's measure is applied by the container below instead.
+    <div>
+      <Hero
         progress={progress}
         eligibleOn={eligibleOn}
         today={today}
         hasPrDate={savedPrDate !== ""}
       />
 
-      <Card>
-        <h3 className="mb-2">Permanent resident since</h3>
-        <p className="text-sm text-gray-500 mb-4 dark:text-gray-400">
-          The date you became a permanent resident. Days before it count as half a day toward
-          citizenship; days from it onward count in full.
+      <div className="mx-auto w-full max-w-6xl px-6 py-10 flex flex-col gap-6">
+        <p className="max-w-3xl text-sm text-gray-500 dark:text-gray-400">
+          {TARGET_DAYS.toLocaleString()} days of physical presence in the last {WINDOW_YEARS} years.
+          Days before permanent residency count as half a day each, up to {PRE_PR_CREDIT_CAP} days
+          of credit; days from the PR date onward count in full.{" "}
+          {savedPrDate !== ""
+            ? "The projected date assumes you stay in Canada every day from now on."
+            : `Without a PR date every tracked day counts as half a day, so the total is capped at ${PRE_PR_CREDIT_CAP} — set the date below to count full days.`}
         </p>
-        <div className="flex items-center gap-3">
-          <input
-            type="date"
-            value={draftPrDate}
-            onChange={(e) => setDraftPrDate(e.target.value)}
+
+        <Card>
+          <div className="flex flex-wrap gap-x-16 gap-y-6">
+            <StatBox label="Days in Canada" value={stats?.daysInCanada ?? "—"} />
+            <StatBox label="Days away" value={stats?.missingDaysCount ?? "—"} />
+            <StatBox label="Total days" value={stats?.totalDays ?? "—"} />
+          </div>
+
+          {today != null && (
+            <Calendar today={today} missingDaysSet={missingDaysSet} prDateStr={savedPrDate} />
+          )}
+        </Card>
+
+        <Card>
+          <h3 className="mb-2">Permanent resident since</h3>
+          <p className="text-sm text-gray-500 mb-4 dark:text-gray-400">
+            The date you became a permanent resident. Days before it count as half a day toward
+            citizenship; days from it onward count in full.
+          </p>
+          <div className="flex items-center gap-3">
+            <input
+              type="date"
+              value={draftPrDate}
+              onChange={(e) => setDraftPrDate(e.target.value)}
+              disabled={loadState === "loading"}
+              className="rounded border border-gray-300 bg-white px-2 py-1 text-sm disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            />
+            {draftPrDate !== "" && (
+              <button
+                type="button"
+                onClick={() => setDraftPrDate("")}
+                className="text-sm text-gray-500 underline hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          <h3 className="mt-8 mb-2">Days outside Canada</h3>
+          <p className="text-sm text-gray-500 mb-4 dark:text-gray-400">
+            One date per line in <code>YYYY-MM-DD</code> format. These days are subtracted from the
+            counter.
+          </p>
+          <textarea
+            value={draftText}
+            onChange={(e) => setDraftText(e.target.value)}
             disabled={loadState === "loading"}
-            className="rounded border border-gray-300 bg-white px-2 py-1 text-sm disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            rows={10}
+            spellCheck={false}
+            placeholder={"2025-03-14\n2025-03-15\n2025-07-02"}
+            className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           />
-          {draftPrDate !== "" && (
+
+          {message != null && (
+            <div
+              className={`mt-4 rounded border px-3 py-2 text-sm ${
+                message.kind === "ok"
+                  ? "border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300"
+                  : "border-red-400 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300"
+              }`}
+            >
+              {message.text}
+            </div>
+          )}
+          <div className="mt-4 flex items-center justify-end gap-3">
+            {dirty && loadState === "ready" && (
+              <span className="text-sm text-gray-500 dark:text-gray-400">Unsaved changes</span>
+            )}
             <button
               type="button"
-              onClick={() => setDraftPrDate("")}
-              className="text-sm text-gray-500 underline hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              onClick={save}
+              disabled={saving || loadState !== "ready" || !dirty}
+              className="rounded bg-blue-500 px-4 py-2 text-sm font-bold text-white transition-colors duration-200 hover:bg-blue-600 disabled:opacity-50 dark:bg-blue-400 dark:text-gray-900 dark:hover:bg-blue-300"
             >
-              Clear
+              {saving ? "Saving…" : "Save"}
             </button>
-          )}
-        </div>
-
-        <h3 className="mt-8 mb-2">Days outside Canada</h3>
-        <p className="text-sm text-gray-500 mb-4 dark:text-gray-400">
-          One date per line in <code>YYYY-MM-DD</code> format. These days are subtracted from the
-          counter.
-        </p>
-        <textarea
-          value={draftText}
-          onChange={(e) => setDraftText(e.target.value)}
-          disabled={loadState === "loading"}
-          rows={10}
-          spellCheck={false}
-          placeholder={"2025-03-14\n2025-03-15\n2025-07-02"}
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-        />
-
-        {message != null && (
-          <div
-            className={`mt-4 rounded border px-3 py-2 text-sm ${
-              message.kind === "ok"
-                ? "border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300"
-                : "border-red-400 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300"
-            }`}
-          >
-            {message.text}
           </div>
-        )}
-        <div className="mt-4 flex items-center justify-end gap-3">
-          {dirty && loadState === "ready" && (
-            <span className="text-sm text-gray-500 dark:text-gray-400">Unsaved changes</span>
-          )}
-          <button
-            type="button"
-            onClick={save}
-            disabled={saving || loadState !== "ready" || !dirty}
-            className="rounded bg-blue-500 px-4 py-2 text-sm font-bold text-white transition-colors duration-200 hover:bg-blue-600 disabled:opacity-50 dark:bg-blue-400 dark:text-gray-900 dark:hover:bg-blue-300"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </Card>
+        </Card>
+      </div>
     </div>
   );
 }
