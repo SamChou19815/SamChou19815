@@ -6,17 +6,21 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
-import { BLOG_TITLE } from "../lib/blog-constants";
-import { allMetadata, isExternalPost, permalinkFromMetadata } from "../lib/metadata";
 import { loadSamTui, type SamTui } from "./sam-tui";
 
 // The page is a true terminal: xterm.js relays raw bytes to and from the
 // iocraft backend, which speaks full ANSI (alternate screen, mouse capture,
-// synchronized updates). No frame protocol, no key mapping.
+// synchronized updates). No frame protocol, no key mapping, and no second
+// implementation of anything the backend already knows — the shell prompt, the
+// blog's titles and where a link leads are all its.
 //
-// The URL bar is the app's, too: every view the backend can be in is a path the
-// site can be entered at, so a permalink opens its post and moving around the
-// app rewrites the URL through the History API without ever loading a second
+// So this file is the host and nothing more: it owns the xterm instance, the
+// things only a browser can do (the URL bar, opening a tab, touch), and the
+// artwork overlay, which needs cell metrics the backend cannot see.
+//
+// The URL bar is the app's: every view the backend can be in is a path the site
+// can be entered at, so a permalink opens its post and moving around the app
+// rewrites the URL through the History API without ever loading a second
 // document. `App::route` and `App::go_to` in crates/sam-tui/src/lib.rs are the
 // other half of it.
 //
@@ -25,8 +29,6 @@ import { loadSamTui, type SamTui } from "./sam-tui";
 // shows — and reports where each one landed. Here we cover those cells with the
 // real asset, so the web gets full resolution and the half-blocks become the
 // fallback if an image fails to load.
-
-const PROMPT = "\x1b[1;32msam@developersam\x1b[0m\x1b[90m:\x1b[0m\x1b[34m~\x1b[0m\x1b[90m$\x1b[0m ";
 
 declare global {
   interface Window {
@@ -39,40 +41,6 @@ declare global {
 function currentPath(): string {
   const path = window.location.pathname;
   return path.length > 1 ? path.replace(/\/+$/, "") : path;
-}
-
-/**
- * The site path a link points at, if it points at this site. Both forms turn
- * up in post bodies: relative links as the author wrote them, and absolute
- * ones the native binary needs a host for.
- */
-function sitePath(url: string): string | null {
-  if (url.startsWith("/")) {
-    return url;
-  }
-  const match = /^https?:\/\/(?:www\.)?developersam\.com(\/.*)?$/i.exec(url);
-  return match == null ? null : (match[1] ?? "/");
-}
-
-/** The title of `/`, where the terminal is a shell prompt and nothing else. */
-const SHELL_TITLE = "Developer Sam — Terminal";
-
-/** What the document is called while a given view is on screen. */
-function titleForRoute(route: string): string {
-  switch (route) {
-    case "/about":
-      return "About | Developer Sam";
-    case "/timeline":
-      return "Timeline | Developer Sam";
-    case "/blog":
-      return BLOG_TITLE;
-    default: {
-      const post = allMetadata.find(
-        (it) => !isExternalPost(it) && permalinkFromMetadata(it) === route,
-      );
-      return post == null ? SHELL_TITLE : `${post.title} | ${BLOG_TITLE}`;
-    }
-  }
 }
 
 /**
@@ -150,26 +118,43 @@ function run(container: HTMLDivElement): { dispose(): void } {
 
   let disposed = false;
   let backend: SamTui | null = null;
-  let appRunning = false;
-  /** The view the URL bar was last put on, or null before the app booted. */
-  let syncedRoute: string | null = null;
 
   /**
-   * Opens a link the terminal printed. One that points at a view of this app
-   * is followed here — that is what the relative `/blog/…` links in post
-   * bodies mean — and everything else goes to the browser. Only http(s)
-   * leaves: the page renders whatever bytes reach it, and a `javascript:`
-   * URL would run in this document.
+   * Hands a link the terminal printed to the backend, which knows whether it
+   * names one of its own views. One that does is followed in place; anything
+   * else comes back as an `open` event.
    */
   const openLink = (url: string): void => {
-    const path = sitePath(url);
-    if (path != null && backend != null && backend.hasView(path)) {
-      goTo(path);
-      return;
+    backend?.openLink(url);
+    pump();
+  };
+
+  /** The screen's cell grid in px, plus where it sits in the container. */
+  type CellMetrics = {
+    width: number;
+    height: number;
+    offsetLeft: number;
+    offsetTop: number;
+    rect: DOMRect;
+  };
+
+  const cellMetrics = (): CellMetrics | null => {
+    const screen = container.querySelector(".xterm-screen");
+    if (screen == null) {
+      return null;
     }
-    if (/^https?:\/\//i.test(url)) {
-      window.open(url, "_blank", "noopener");
+    const rect = screen.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
     }
+    const containerRect = container.getBoundingClientRect();
+    return {
+      width: rect.width / terminal.cols,
+      height: rect.height / terminal.rows,
+      offsetLeft: rect.left - containerRect.left,
+      offsetTop: rect.top - containerRect.top,
+      rect,
+    };
   };
 
   // --- Card artwork ---------------------------------------------------------
@@ -194,23 +179,16 @@ function run(container: HTMLDivElement): { dispose(): void } {
     if (regions.length === 0 && pool.size === 0) {
       return;
     }
-    const screen = container.querySelector(".xterm-screen");
-    if (screen == null) {
+    const cell = cellMetrics();
+    if (cell == null) {
       return;
     }
-    const screenRect = screen.getBoundingClientRect();
-    const containerRect = container.getBoundingClientRect();
-    const cellWidth = screenRect.width / terminal.cols;
-    const cellHeight = screenRect.height / terminal.rows;
-    const offsetLeft = screenRect.left - containerRect.left;
-    const offsetTop = screenRect.top - containerRect.top;
 
     const used = new Map<string, number>();
     for (const region of regions) {
-      // "x y cols rows visibleX visibleY visibleCols visibleRows url" in
-      // canvas cells; the app owns the alternate screen, so cell (0, 0) is
-      // the top left of the viewport.
-      const [x, y, cols, rows, vx, vy, vcols, vrows, ...rest] = region.split(" ");
+      // "x y cols rows top right bottom left url" in canvas cells; the app owns
+      // the alternate screen, so cell (0, 0) is the top left of the viewport.
+      const [x, y, cols, rows, top, right, bottom, left, ...rest] = region.split(" ");
       const url = rest.join(" ");
       if (url === "") {
         continue;
@@ -232,28 +210,29 @@ function run(container: HTMLDivElement): { dispose(): void } {
         imageLayer.appendChild(element);
       }
       // Placed at the full rectangle so the picture keeps its shape, then
-      // clipped to the part the pane actually painted — otherwise a card
-      // half off the bottom would spill its artwork over the status bar. The
-      // full rectangle can start above the viewport, at a negative y, when a
+      // clipped by what the pane's clipping took off each side — otherwise a
+      // card half off the bottom would spill its artwork over the status bar.
+      // The rectangle can start above the viewport, at a negative y, when a
       // post is scrolled part-way through one of its images.
       const inset = [
-        (Number(vy) - Number(y)) * cellHeight,
-        (Number(x) + Number(cols) - Number(vx) - Number(vcols)) * cellWidth,
-        (Number(y) + Number(rows) - Number(vy) - Number(vrows)) * cellHeight,
-        (Number(vx) - Number(x)) * cellWidth,
+        Number(top) * cell.height,
+        Number(right) * cell.width,
+        Number(bottom) * cell.height,
+        Number(left) * cell.width,
       ];
       Object.assign(element.style, {
-        left: `${offsetLeft + Number(x) * cellWidth}px`,
-        top: `${offsetTop + Number(y) * cellHeight}px`,
-        width: `${Number(cols) * cellWidth}px`,
-        height: `${Number(rows) * cellHeight}px`,
+        left: `${cell.offsetLeft + Number(x) * cell.width}px`,
+        top: `${cell.offsetTop + Number(y) * cell.height}px`,
+        width: `${Number(cols) * cell.width}px`,
+        height: `${Number(rows) * cell.height}px`,
         clipPath: inset.every((side) => side === 0)
           ? "none"
           : `inset(${inset.map((side) => `${side}px`).join(" ")})`,
       });
     }
-    // Retire whatever this frame did not place — a card that scrolled off,
-    // or a duplicate that is no longer doubled up.
+    // Retire whatever this frame did not place — a card that scrolled off, a
+    // duplicate that is no longer doubled up, or the whole set at once when the
+    // app exits and the shell reports no artwork at all.
     for (const [url, elements] of pool) {
       const keep = used.get(url) ?? 0;
       for (const element of elements.splice(keep)) {
@@ -265,9 +244,37 @@ function run(container: HTMLDivElement): { dispose(): void } {
     }
   };
 
-  const clearImages = (): void => {
-    imageLayer.replaceChildren();
-    pool.clear();
+  // --- Host events ----------------------------------------------------------
+  /**
+   * Acts on one line from `pollEvent` — the things the backend cannot do for
+   * itself. `router.replace` is a no-op under `output: "export"` (see the same
+   * note in budget/Tabs.tsx), and the History API is what a terminal wants
+   * anyway: no navigation, no reload, just the address kept honest.
+   */
+  const onHostEvent = (event: string): void => {
+    const [head, title] = event.split("\t");
+    const [kind, ...rest] = (head ?? "").split(" ");
+    if (kind === "open") {
+      // Only http(s) leaves: the page renders whatever bytes reach it, and a
+      // `javascript:` URL would run in this document. The backend refuses those
+      // too — this is the guard at the one place that actually navigates.
+      const url = rest.join(" ");
+      if (/^https?:\/\//i.test(url)) {
+        window.open(url, "_blank", "noopener");
+      }
+      return;
+    }
+    if (kind !== "route") {
+      return;
+    }
+    const [mode, path] = rest;
+    if (path == null) {
+      return;
+    }
+    if (path !== currentPath()) {
+      window.history[mode === "replace" ? "replaceState" : "pushState"](null, "", path);
+    }
+    document.title = title ?? "";
   };
 
   /** Pump everything the backend produced into xterm, plus side effects. */
@@ -279,223 +286,29 @@ function run(container: HTMLDivElement): { dispose(): void } {
     if (output !== "") {
       terminal.write(output);
     }
-    if (appRunning) {
-      syncImages();
-      syncUrl();
+    syncImages();
+    for (let event = backend.pollEvent(); event != null; event = backend.pollEvent()) {
+      onHostEvent(event);
     }
-    for (let url = backend.pollAction(); url != null; url = backend.pollAction()) {
-      openLink(url);
-    }
-    if (appRunning && backend.shouldQuit()) {
-      exitToShell();
-    }
-  };
-
-  const runDevSam = (): void => {
-    if (backend == null) {
-      return;
-    }
-    appRunning = true;
-    backend.start(terminal.cols, terminal.rows);
-    pump();
-    terminal.focus();
-  };
-
-  const exitToShell = (): void => {
-    appRunning = false;
-    syncedRoute = null;
-    pump();
-    clearImages();
-    // `/` is the shell, so leaving the app puts the visitor back at it
-    // without adding a step for the back button to walk through.
-    if (currentPath() !== "/") {
-      window.history.replaceState(null, "", "/");
-    }
-    document.title = SHELL_TITLE;
-    terminal.write("\x1b[90mdev-sam exited — type dev-sam to run it again, or help\x1b[0m\r\n");
-    terminal.write(PROMPT);
-    terminal.focus();
-  };
-
-  /** Shows a view, booting the app first if the visitor is at the shell. */
-  const goTo = (path: string): void => {
-    if (backend == null) {
-      return;
-    }
-    backend.navigate(path);
-    if (appRunning) {
-      pump();
-    } else {
-      runDevSam();
-    }
-  };
-
-  /**
-   * Puts the URL bar on whatever the app is showing. `router.replace` is a
-   * no-op under `output: "export"` (see the same note in budget/Tabs.tsx), and
-   * the History API is what the terminal wants anyway: no navigation, no
-   * reload, just the address kept honest.
-   *
-   * The first sync of a run replaces rather than pushes, so booting from `/`
-   * does not leave the shell behind for the back button to return to. A view
-   * entered directly is already in the bar, and no history call is made.
-   */
-  const syncUrl = (): void => {
-    const route = backend?.route() ?? "";
-    if (route === "" || route === syncedRoute) {
-      return;
-    }
-    const first = syncedRoute == null;
-    syncedRoute = route;
-    if (route !== currentPath()) {
-      window.history[first ? "replaceState" : "pushState"](null, "", route);
-    }
-    document.title = titleForRoute(route);
   };
 
   // Back and forward move the app, rather than the document: the browser has
-  // nowhere else to go, since every route is this same page.
+  // nowhere else to go, since every route is this same page. A path the app has
+  // no view for means the visitor left it, which the backend answers by exiting
+  // to the shell.
   const handlePopState = (): void => {
-    if (backend == null) {
-      return;
-    }
-    const path = currentPath();
-    if (backend.hasView(path)) {
-      goTo(path);
-    } else if (appRunning) {
-      exitToShell();
-    }
+    backend?.navigate(currentPath());
+    pump();
   };
   window.addEventListener("popstate", handlePopState);
 
-  // --- The shell (dev-sam-sh) ---------------------------------------------
-  let shellLine = "";
-  const shellHistory: string[] = [];
-  let shellHistoryIndex = 0;
-
-  const newShellPrompt = (): void => {
-    terminal.write(`\r\n${PROMPT}`);
-  };
-
-  const submitShellCommand = (raw: string): void => {
-    const command = raw.trim();
-    if (command === "") {
-      newShellPrompt();
-      return;
-    }
-    shellHistory.push(command);
-    shellHistoryIndex = shellHistory.length;
-    if (command === "dev-sam") {
-      terminal.write("\r\n");
-      runDevSam();
-      return;
-    }
-    if (command === "clear") {
-      terminal.write(`\x1b[2J\x1b[H${PROMPT}`);
-      return;
-    }
-    const output = backend?.shellExecute(raw) ?? "";
-    const normalized = output.replace(/\r?\n/g, "\r\n").replace(/(?:\r\n)+$/, "");
-    terminal.write(`\r\n${normalized}`);
-    newShellPrompt();
-  };
-
-  const renderShellLine = (): void => {
-    terminal.write(`\r\x1b[K${PROMPT}${shellLine}`);
-  };
-
-  const handleShellKey = (event: KeyboardEvent): boolean => {
-    if (event.metaKey) {
-      return false;
-    }
-    if (event.ctrlKey && event.key === "c") {
-      event.preventDefault();
-      terminal.write("^C");
-      shellLine = "";
-      newShellPrompt();
-      return true;
-    }
-    if (event.ctrlKey && event.key === "l") {
-      event.preventDefault();
-      terminal.write(`\x1b[2J\x1b[H${PROMPT}${shellLine}`);
-      return true;
-    }
-    if (event.ctrlKey || event.altKey) {
-      return false;
-    }
-    switch (event.key) {
-      case "Enter":
-        event.preventDefault();
-        submitShellCommand(shellLine);
-        shellLine = "";
-        return true;
-      case "Backspace":
-        event.preventDefault();
-        if (shellLine.length > 0) {
-          shellLine = shellLine.slice(0, -1);
-          terminal.write("\b \b");
-        }
-        return true;
-      case "Tab": {
-        event.preventDefault();
-        const candidates = backend?.shellComplete(shellLine) ?? [];
-        if (candidates.length === 1) {
-          const candidate = candidates[0] ?? "";
-          const wordStart = shellLine.lastIndexOf(" ") + 1;
-          const suffix = candidate.endsWith("/") ? "" : " ";
-          shellLine = `${shellLine.slice(0, wordStart)}${candidate}${suffix}`;
-          renderShellLine();
-        } else if (candidates.length > 1) {
-          terminal.write(`\r\n${candidates.join("   ")}`);
-          newShellPrompt();
-          renderShellLine();
-        }
-        return true;
-      }
-      case "ArrowUp":
-        event.preventDefault();
-        if (shellHistoryIndex > 0) {
-          shellHistoryIndex--;
-          shellLine = shellHistory[shellHistoryIndex] ?? "";
-          renderShellLine();
-        }
-        return true;
-      case "ArrowDown":
-        event.preventDefault();
-        if (shellHistoryIndex < shellHistory.length) {
-          shellHistoryIndex++;
-          shellLine =
-            shellHistoryIndex === shellHistory.length
-              ? ""
-              : (shellHistory[shellHistoryIndex] ?? "");
-          renderShellLine();
-        }
-        return true;
-      default:
-        if (event.key.length === 1) {
-          event.preventDefault();
-          shellLine += event.key;
-          terminal.write(event.key);
-          return true;
-        }
-        return false;
-    }
-  };
-
-  // --- Input routing --------------------------------------------------------
-  // While the app runs, every byte xterm produces is forwarded verbatim
-  // (keys AND mouse reports — the backend parses real ANSI). At the shell
-  // prompt, the line editor handles keys directly.
-  terminal.attachCustomKeyEventHandler((event) => {
-    if (event.type !== "keydown" || backend == null || appRunning) {
-      return true;
-    }
-    return !handleShellKey(event);
-  });
-
+  // --- Input ----------------------------------------------------------------
+  // Every byte xterm produces is forwarded verbatim — keys AND mouse reports,
+  // at the shell prompt as much as in the app, because the backend is a real
+  // terminal at both. There is no key handling on this side of the bridge.
   const encoder = new TextEncoder();
   terminal.onData((data) => {
-    if (backend == null || !appRunning) {
+    if (backend == null) {
       return;
     }
     backend.input(encoder.encode(data));
@@ -532,16 +345,12 @@ function run(container: HTMLDivElement): { dispose(): void } {
 
   /** The cell under a viewport point, 1-based, as a mouse report writes it. */
   const cellAt = (x: number, y: number): { col: number; row: number } | null => {
-    const screen = container.querySelector(".xterm-screen");
-    if (screen == null) {
+    const cell = cellMetrics();
+    if (cell == null) {
       return null;
     }
-    const rect = screen.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      return null;
-    }
-    const col = Math.floor(((x - rect.left) / rect.width) * terminal.cols);
-    const row = Math.floor(((y - rect.top) / rect.height) * terminal.rows);
+    const col = Math.floor((x - cell.rect.left) / cell.width);
+    const row = Math.floor((y - cell.rect.top) / cell.height);
     if (col < 0 || row < 0 || col >= terminal.cols || row >= terminal.rows) {
       return null;
     }
@@ -551,7 +360,7 @@ function run(container: HTMLDivElement): { dispose(): void } {
   const handleTouchStart = (event: TouchEvent): void => {
     const touch = event.touches.length === 1 ? event.touches[0] : undefined;
     // Two fingers is a pinch; that one is the browser's to handle.
-    if (touch == null || !appRunning) {
+    if (touch == null) {
       gesture = null;
       return;
     }
@@ -573,20 +382,17 @@ function run(container: HTMLDivElement): { dispose(): void } {
   const handleTouchMove = (event: TouchEvent): void => {
     const y = event.touches[0]?.clientY;
     const x = event.touches[0]?.clientX;
-    if (backend == null || !appRunning || gesture == null || x == null || y == null) {
+    if (backend == null || gesture == null || x == null || y == null) {
       return;
     }
     if (Math.abs(x - gesture.x) > TAP_SLOP || Math.abs(y - gesture.y) > TAP_SLOP) {
       gesture.tap = false;
     }
-    const screen = container.querySelector(".xterm-screen");
-    if (screen == null) {
+    const cell = cellMetrics();
+    if (cell == null) {
       return;
     }
-    const notchHeight = (screen.getBoundingClientRect().height / terminal.rows) * WHEEL_ROWS;
-    if (notchHeight <= 0) {
-      return;
-    }
+    const notchHeight = cell.height * WHEEL_ROWS;
     event.preventDefault();
     const notches = Math.trunc((gesture.dragY - y) / notchHeight);
     if (notches === 0) {
@@ -605,7 +411,7 @@ function run(container: HTMLDivElement): { dispose(): void } {
   const handleTouchEnd = (event: TouchEvent): void => {
     const finished = gesture;
     gesture = null;
-    if (backend == null || !appRunning || finished == null || !finished.tap) {
+    if (backend == null || finished == null || !finished.tap) {
       return;
     }
     if (event.timeStamp - finished.at > TAP_TIME) {
@@ -636,7 +442,7 @@ function run(container: HTMLDivElement): { dispose(): void } {
 
   const resizeObserver = new ResizeObserver(() => {
     fitAddon.fit();
-    if (backend != null && appRunning) {
+    if (backend != null) {
       backend.resize(terminal.cols, terminal.rows);
       pump();
     }
@@ -653,31 +459,16 @@ function run(container: HTMLDivElement): { dispose(): void } {
     if (disposed) {
       return;
     }
-    // A visitor who arrived at a view asked for it by name: open it, with no
-    // banner and nothing to press.
-    const entry = currentPath();
-    if (backend.hasView(entry)) {
-      goTo(entry);
-      return;
-    }
-    // Otherwise boot into the shell; the app is one `dev-sam` away.
-    terminal.write(
-      "\x1b[90mdev-sam-sh 1.0 — developer sam's terminal\x1b[0m\r\n" +
-        (touchOnlyDevice ? "" : "\x1b[90mtype help for commands, or run dev-sam\x1b[0m\r\n") +
-        "\r\n",
-    );
-    // Pre-type the headline command so a visitor only has to press Enter.
-    // Seeded into the line editor's buffer, not just painted, so backspace
-    // and the rest of the editing keys see it as text they typed.
-    shellLine = "dev-sam";
-    renderShellLine();
+    // A visitor who arrived at a view asked for it by name, and gets it with no
+    // banner and nothing to press; everyone else lands at the shell, with
+    // `dev-sam` already typed at the prompt.
+    backend.start(terminal.cols, terminal.rows, currentPath(), touchOnlyDevice);
     if (touchOnlyDevice) {
-      // Nothing on a phone can press that Enter — the keyboard is off — so
-      // the prompt types the command and runs it too.
-      submitShellCommand(shellLine);
-      shellLine = "";
-      return;
+      // Nothing on a phone can press that Enter — the keyboard is off — so the
+      // prompt runs the pre-typed command itself.
+      backend.input(encoder.encode("\r"));
     }
+    pump();
     terminal.focus();
   };
   void boot();

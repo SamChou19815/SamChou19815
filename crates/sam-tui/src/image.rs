@@ -181,6 +181,27 @@ pub struct Region {
     pub layer: u8,
 }
 
+impl Region {
+    /// What the pane's clipping took off each side, in cells, as
+    /// `(top, right, bottom, left)`. The overlay crops the full-resolution file
+    /// by exactly this, so a card scrolled half off the bottom does not spill
+    /// its artwork over the status bar.
+    pub fn insets(&self) -> (u16, u16, u16, u16) {
+        let (x, y) = (i32::from(self.x), i32::from(self.y));
+        let (right_edge, bottom_edge) = (x + i32::from(self.cols), y + i32::from(self.rows));
+        let (visible_x, visible_y) = (i32::from(self.visible_x), i32::from(self.visible_y));
+        let visible_right = visible_x + i32::from(self.visible_cols);
+        let visible_bottom = visible_y + i32::from(self.visible_rows);
+        let side = |value: i32| u16::try_from(value.max(0)).unwrap_or(u16::MAX);
+        (
+            side(visible_y - y),
+            side(right_edge - visible_right),
+            side(bottom_edge - visible_bottom),
+            side(visible_x - x),
+        )
+    }
+}
+
 thread_local! {
     static REGIONS: RefCell<Vec<Region>> = const { RefCell::new(Vec::new()) };
     /// The topmost layer this frame draws, set by `Root` before anything paints.
