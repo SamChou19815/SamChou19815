@@ -3,20 +3,38 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-function parseMarkdownTitle(/** @type {string} */ source) {
-  const firstLine = source.split("\n")[0];
-  if (firstLine == null) {
-    throw new Error("No title.");
+/**
+ * The post's frontmatter: a `---` fenced block of `key: "value"` lines at the
+ * very top of the file. Only `title` and the optional hero `image` live there,
+ * so a hand-rolled reader is enough and the site keeps no YAML dependency.
+ * `crates/sam-tui/build.rs` parses the same block for the TUI.
+ */
+function parseFrontmatter(/** @type {string} */ source, /** @type {string} */ fullPath) {
+  const lines = source.split("\n");
+  if (lines[0] !== "---") {
+    throw new Error(`${fullPath}: expected a --- frontmatter fence on the first line.`);
   }
-  const START = 'export const title = "';
-  if (!firstLine.startsWith(START) || !firstLine.endsWith('";')) {
-    throw new Error(`Invalid title line:\n${firstLine}`);
+  /** @type {Record<string, string>} */
+  const fields = {};
+  for (let index = 1; index < lines.length; index++) {
+    const line = lines[index];
+    if (line === "---") {
+      if (fields.title == null) {
+        throw new Error(`${fullPath}: the frontmatter has no title.`);
+      }
+      return fields;
+    }
+    const match = /^([a-z]+): "(.*)"$/.exec(line ?? "");
+    if (match == null) {
+      throw new Error(`${fullPath}: invalid frontmatter line:\n${line}`);
+    }
+    fields[match[1]] = match[2];
   }
-  return firstLine.substring(START.length, firstLine.length - 2).trim();
+  throw new Error(`${fullPath}: the frontmatter fence is never closed.`);
 }
 
 function computeAllMedatada() {
-  const BLOG_POSTS_ROOT = path.join("src", "app", "blog", "(blog-posts)");
+  const BLOG_POSTS_ROOT = path.join("src", "blog-posts");
 
   /** @type {import("./src/lib/metadata").BlogPostMetadata[]} */
   const allMetadata = [];
@@ -33,20 +51,19 @@ function computeAllMedatada() {
   }
 
   for (const year of fs.readdirSync(BLOG_POSTS_ROOT)) {
-    if (year === "layout.tsx") {
-      continue;
-    }
     for (const month of fs.readdirSync(path.join(BLOG_POSTS_ROOT, year))) {
       for (const date of fs.readdirSync(path.join(BLOG_POSTS_ROOT, year, month))) {
-        for (const titleSlug of fs.readdirSync(path.join(BLOG_POSTS_ROOT, year, month, date))) {
-          const fullPath = path.join(BLOG_POSTS_ROOT, year, month, date, titleSlug, "page.mdx");
-          const content = fs.readFileSync(fullPath).toString();
-          try {
-            const title = parseMarkdownTitle(content);
-            allMetadata.push({ title, year, month, date, titleSlug });
-          } catch (error) {
-            throw new Error(`Failed to parse ${fullPath}`, { cause: error });
-          }
+        for (const file of fs.readdirSync(path.join(BLOG_POSTS_ROOT, year, month, date))) {
+          const fullPath = path.join(BLOG_POSTS_ROOT, year, month, date, file);
+          const { title, image } = parseFrontmatter(fs.readFileSync(fullPath).toString(), fullPath);
+          allMetadata.push({
+            title,
+            year,
+            month,
+            date,
+            titleSlug: path.basename(file, ".md"),
+            ...(image == null ? {} : { image }),
+          });
         }
       }
     }
@@ -64,21 +81,12 @@ function computeAllMedatada() {
   return allMetadata;
 }
 
-const withMDX = require("@next/mdx")({
-  extension: /\.mdx?$/,
-  options: {
-    remarkPlugins: [],
-    rehypePlugins: [],
-  },
-});
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  pageExtensions: ["tsx", "mdx"],
-  experimental: { mdxRs: true, useTypeScriptCli: true },
+  experimental: { useTypeScriptCli: true },
   output: "export",
   env: { ALL_BLOG_POST_METADATA: JSON.stringify(computeAllMedatada()) },
   typescript: { ignoreBuildErrors: true },
 };
 
-module.exports = withMDX(nextConfig);
+module.exports = nextConfig;

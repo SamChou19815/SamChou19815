@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import BlogDocumentWrapper from "../../lib/BlogDocumentWrapper";
-import BlogPostItem from "../../lib/BlogPostItem";
+import TerminalPage from "../../lib/TerminalPage";
 import { BLOG_TITLE } from "../../lib/blog-constants";
-import { allMetadata, isExternalPost, permalinkFromMetadata } from "../../lib/metadata";
 
 export const metadata: Metadata = {
   title: BLOG_TITLE,
@@ -17,31 +14,6 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function BlogListPage(): Promise<React.JSX.Element> {
-  return (
-    <BlogDocumentWrapper>
-      <div className="flex flex-row flex-wrap justify-center">
-        <main className="w-full">
-          {allMetadata.map((post) => {
-            const permalink = permalinkFromMetadata(post);
-            return (
-              <BlogPostItem
-                key={permalink}
-                title={
-                  isExternalPost(post) ? (
-                    <a href={permalink} target="_blank" rel="noopener noreferrer">
-                      {post.title} ↗
-                    </a>
-                  ) : (
-                    <Link href={permalink}>{post.title}</Link>
-                  )
-                }
-                formattedDate={`${post.year}-${post.month}-${post.date}`}
-              />
-            );
-          })}
-        </main>
-      </div>
-    </BlogDocumentWrapper>
-  );
+export default function BlogListPage(): React.JSX.Element {
+  return <TerminalPage />;
 }

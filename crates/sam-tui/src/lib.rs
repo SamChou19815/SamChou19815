@@ -29,6 +29,14 @@ pub const ABOUT_TAB: usize = 0;
 pub const TIMELINE_TAB: usize = 1;
 pub const BLOG_TAB: usize = 2;
 
+/// The site path each tab is served at. The web front-end keeps the URL bar on
+/// whatever the app is showing, so every view the app can be in has to be a
+/// place the site can be entered at — see [`App::route`] and [`App::go_to`].
+pub const TAB_ROUTES: [&str; TAB_COUNT] = ["/about", "/timeline", "/blog"];
+
+/// Where the blog index lives, and the prefix every post's permalink shares.
+pub const BLOG_ROUTE: &str = "/blog";
+
 /// Width assumed before the first resize event tells us the real one.
 const ASSUMED_COLS: u16 = 80;
 
@@ -167,6 +175,34 @@ thread_local! {
     /// Actions produced by the latest input, drained by the wasm host.
     pub(crate) static PENDING_ACTIONS: std::cell::RefCell<Vec<Action>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// A view the host has asked for — a URL entered, a link followed, or the
+    /// back button. Applied by the next [`App`] to look, which is either the
+    /// one being built ([`App::new`]) or the one handling the next event.
+    static PENDING_ROUTE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+    /// The view the app is on, republished every frame for the host to read.
+    static CURRENT_ROUTE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Asks the app to show the view at `path`. Takes effect on the next frame.
+pub fn request_route(path: &str) {
+    PENDING_ROUTE.with(|pending| *pending.borrow_mut() = Some(path.to_string()));
+}
+
+/// The view the last frame was showing, as a site path.
+pub fn current_route() -> String {
+    CURRENT_ROUTE.with(|route| route.borrow().clone())
+}
+
+/// Records the view a frame is about to draw, for [`current_route`].
+pub fn publish_route(route: String) {
+    CURRENT_ROUTE.with(|current| *current.borrow_mut() = route);
+}
+
+/// Takes whatever view the host last asked for, leaving nothing behind: a
+/// request is applied once, by the first frame to look.
+pub(crate) fn take_pending_route() -> Option<String> {
+    PENDING_ROUTE.with(|pending| pending.borrow_mut().take())
 }
 
 /// Clone is used to snapshot state for pure rendering.
@@ -197,7 +233,7 @@ impl Default for App {
 
 impl App {
     pub fn new() -> Self {
-        App {
+        let mut app = App {
             cols: 0,
             rows: 0,
             tab: ABOUT_TAB,
@@ -208,6 +244,42 @@ impl App {
             modal: None,
             quit: false,
             actions: Vec::new(),
+        };
+        // A URL entered before the app booted names the view it opens on, so
+        // the first frame a deep link draws is already the right one.
+        if let Some(route) = take_pending_route() {
+            app.go_to(&route);
+        }
+        app
+    }
+
+    /// The view the app is on, as a site path — what the URL bar should read.
+    /// An open post is its own permalink; everything else is its tab.
+    pub fn route(&self) -> String {
+        match &self.reader {
+            Some(reader) => posts::POSTS[reader.post].path(),
+            None => TAB_ROUTES[self.tab].to_string(),
+        }
+    }
+
+    /// Shows the view a site path names, and reports whether it named one. A
+    /// permalink opens its post in the reader; the blog index and the other
+    /// tabs close it.
+    pub fn go_to(&mut self, path: &str) -> bool {
+        match view_at(path) {
+            Some(View::Post(post)) => {
+                self.switch_tab(BLOG_TAB);
+                self.selected[BLOG_TAB] = post;
+                self.reveal_blog_selection();
+                self.reader = Some(Reader { post, scroll: 0 });
+                true
+            }
+            Some(View::Tab(tab)) => {
+                self.switch_tab(tab);
+                self.reader = None;
+                true
+            }
+            None => false,
         }
     }
 
@@ -681,8 +753,166 @@ impl App {
     }
 }
 
+/// What a site path opens.
+enum View {
+    Tab(usize),
+    Post(usize),
+}
+
+/// The view a site path names, if the app has one. An unknown post still asks
+/// for the blog, so it lands on the index; a path that is no view at all —
+/// `/`, `/budget` — belongs to the browser, not the app.
+fn view_at(path: &str) -> Option<View> {
+    let path = path.strip_suffix('/').unwrap_or(path);
+    if let Some(post) = posts::find(path) {
+        return Some(View::Post(post));
+    }
+    TAB_ROUTES
+        .iter()
+        .position(|route| *route == path)
+        // Anything else under the blog — a post that has since been unpublished,
+        // say — still asked for the blog, so the index is where it lands.
+        .or_else(|| {
+            path.strip_prefix(BLOG_ROUTE)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+                .then_some(BLOG_TAB)
+        })
+        .map(View::Tab)
+}
+
+/// Whether the app has a view at `path`. The host asks before following a link
+/// or a back button itself rather than handing it to the browser, so the two
+/// never disagree about what this app is responsible for.
+pub fn has_view(path: &str) -> bool {
+    view_at(path).is_some()
+}
+
 fn modal_scroll(modal: &mut Modal) -> &mut usize {
     match modal {
         Modal::Timeline { scroll, .. } | Modal::Help { scroll } => scroll,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh app, unaffected by any route another test left pending.
+    fn app() -> App {
+        take_pending_route();
+        App::new()
+    }
+
+    /// The first post with a page on this site. The list opens with the
+    /// external ones when they are the most recent, so it is not always index
+    /// zero.
+    fn local_post() -> (usize, String) {
+        posts::POSTS
+            .iter()
+            .enumerate()
+            .find_map(|(index, post)| (!post.is_external()).then(|| (index, post.path())))
+            .expect("the blog has a local post")
+    }
+
+    #[test]
+    fn tabs_have_routes() {
+        let mut app = app();
+        assert_eq!(app.route(), "/about");
+        app.switch_tab(TIMELINE_TAB);
+        assert_eq!(app.route(), "/timeline");
+        app.switch_tab(BLOG_TAB);
+        assert_eq!(app.route(), "/blog");
+    }
+
+    #[test]
+    fn a_permalink_opens_its_post() {
+        let mut app = app();
+        let (index, path) = local_post();
+        assert!(app.go_to(&path));
+        assert_eq!(app.tab, BLOG_TAB);
+        assert_eq!(app.reader.as_ref().map(|reader| reader.post), Some(index));
+        assert_eq!(app.route(), path);
+    }
+
+    #[test]
+    fn every_post_round_trips() {
+        let mut app = app();
+        for (index, post) in posts::POSTS.iter().enumerate() {
+            if post.is_external() {
+                continue;
+            }
+            let path = post.path();
+            assert!(app.go_to(&path), "{path} is not a view");
+            assert_eq!(app.selected(BLOG_TAB), index);
+            assert_eq!(app.route(), path);
+        }
+    }
+
+    #[test]
+    fn the_index_closes_an_open_post() {
+        let mut app = app();
+        assert!(app.go_to(&local_post().1));
+        assert!(app.go_to("/blog"));
+        assert!(app.reader.is_none());
+        assert_eq!(app.route(), "/blog");
+    }
+
+    #[test]
+    fn a_trailing_slash_is_the_same_view() {
+        let mut app = app();
+        assert!(app.go_to("/blog/"));
+        assert_eq!(app.route(), "/blog");
+    }
+
+    #[test]
+    fn an_unknown_post_falls_back_to_the_index() {
+        let mut app = app();
+        assert!(app.go_to("/blog/1999/01/01/never-written"));
+        assert_eq!(app.tab, BLOG_TAB);
+        assert!(app.reader.is_none());
+    }
+
+    #[test]
+    fn has_view_agrees_with_go_to() {
+        for path in [
+            "/about",
+            "/timeline",
+            "/blog",
+            "/blog/",
+            "/blog/1999/01/01/never-written",
+            &local_post().1,
+        ] {
+            assert!(has_view(path), "{path} should be a view");
+            assert!(app().go_to(path));
+        }
+        for path in [
+            "/",
+            "/budget",
+            "/in-canada",
+            "/blogging",
+            "https://example.com/blog",
+        ] {
+            assert!(!has_view(path), "{path} should not be a view");
+            assert!(!app().go_to(path));
+        }
+    }
+
+    #[test]
+    fn a_path_that_is_no_view_changes_nothing() {
+        let mut app = app();
+        app.switch_tab(TIMELINE_TAB);
+        assert!(!app.go_to("/"));
+        assert!(!app.go_to("/budget"));
+        assert_eq!(app.route(), "/timeline");
+    }
+
+    #[test]
+    fn a_requested_route_opens_the_app_on_it() {
+        take_pending_route();
+        let path = local_post().1;
+        request_route(&path);
+        let app = App::new();
+        assert_eq!(app.route(), path);
+        assert!(take_pending_route().is_none());
     }
 }

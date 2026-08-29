@@ -6,11 +6,19 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
+import { BLOG_TITLE } from "../lib/blog-constants";
+import { allMetadata, isExternalPost, permalinkFromMetadata } from "../lib/metadata";
 import { loadSamTui, type SamTui } from "./sam-tui";
 
 // The page is a true terminal: xterm.js relays raw bytes to and from the
 // iocraft backend, which speaks full ANSI (alternate screen, mouse capture,
 // synchronized updates). No frame protocol, no key mapping.
+//
+// The URL bar is the app's, too: every view the backend can be in is a path the
+// site can be entered at, so a permalink opens its post and moving around the
+// app rewrites the URL through the History API without ever loading a second
+// document. `App::route` and `App::go_to` in crates/sam-tui/src/lib.rs are the
+// other half of it.
 //
 // Card artwork is the one thing layered on top. The backend already draws it
 // in-band as truecolor half-blocks — that is what the native `dev-sam` binary
@@ -27,13 +35,43 @@ declare global {
   }
 }
 
+/** The path in the URL bar, with any trailing slash trimmed off. */
+function currentPath(): string {
+  const path = window.location.pathname;
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+}
+
 /**
- * Opens a link the terminal printed. Only http(s): the page renders whatever
- * bytes reach it, and a `javascript:` URL would run in this document.
+ * The site path a link points at, if it points at this site. Both forms turn
+ * up in post bodies: relative links as the author wrote them, and absolute
+ * ones the native binary needs a host for.
  */
-function openLink(url: string): void {
-  if (/^https?:\/\//i.test(url)) {
-    window.open(url, "_blank", "noopener");
+function sitePath(url: string): string | null {
+  if (url.startsWith("/")) {
+    return url;
+  }
+  const match = /^https?:\/\/(?:www\.)?developersam\.com(\/.*)?$/i.exec(url);
+  return match == null ? null : (match[1] ?? "/");
+}
+
+/** The title of `/`, where the terminal is a shell prompt and nothing else. */
+const SHELL_TITLE = "Developer Sam — Terminal";
+
+/** What the document is called while a given view is on screen. */
+function titleForRoute(route: string): string {
+  switch (route) {
+    case "/about":
+      return "About | Developer Sam";
+    case "/timeline":
+      return "Timeline | Developer Sam";
+    case "/blog":
+      return BLOG_TITLE;
+    default: {
+      const post = allMetadata.find(
+        (it) => !isExternalPost(it) && permalinkFromMetadata(it) === route,
+      );
+      return post == null ? SHELL_TITLE : `${post.title} | ${BLOG_TITLE}`;
+    }
   }
 }
 
@@ -120,6 +158,26 @@ export default function TerminalApp(): React.JSX.Element {
     let disposed = false;
     let backend: SamTui | null = null;
     let appRunning = false;
+    /** The view the URL bar was last put on, or null before the app booted. */
+    let syncedRoute: string | null = null;
+
+    /**
+     * Opens a link the terminal printed. One that points at a view of this app
+     * is followed here — that is what the relative `/blog/…` links in post
+     * bodies mean — and everything else goes to the browser. Only http(s)
+     * leaves: the page renders whatever bytes reach it, and a `javascript:`
+     * URL would run in this document.
+     */
+    const openLink = (url: string): void => {
+      const path = sitePath(url);
+      if (path != null && backend != null && backend.hasView(path)) {
+        goTo(path);
+        return;
+      }
+      if (/^https?:\/\//i.test(url)) {
+        window.open(url, "_blank", "noopener");
+      }
+    };
 
     // --- Card artwork ---------------------------------------------------------
     const imageLayer = document.createElement("div");
@@ -230,6 +288,7 @@ export default function TerminalApp(): React.JSX.Element {
       }
       if (appRunning) {
         syncImages();
+        syncUrl();
       }
       for (let url = backend.pollAction(); url != null; url = backend.pollAction()) {
         openLink(url);
@@ -251,12 +310,70 @@ export default function TerminalApp(): React.JSX.Element {
 
     const exitToShell = (): void => {
       appRunning = false;
+      syncedRoute = null;
       pump();
       clearImages();
+      // `/` is the shell, so leaving the app puts the visitor back at it
+      // without adding a step for the back button to walk through.
+      if (currentPath() !== "/") {
+        window.history.replaceState(null, "", "/");
+      }
+      document.title = SHELL_TITLE;
       terminal.write("\x1b[90mdev-sam exited — type dev-sam to run it again, or help\x1b[0m\r\n");
       terminal.write(PROMPT);
       terminal.focus();
     };
+
+    /** Shows a view, booting the app first if the visitor is at the shell. */
+    const goTo = (path: string): void => {
+      if (backend == null) {
+        return;
+      }
+      backend.navigate(path);
+      if (appRunning) {
+        pump();
+      } else {
+        runDevSam();
+      }
+    };
+
+    /**
+     * Puts the URL bar on whatever the app is showing. `router.replace` is a
+     * no-op under `output: "export"` (see the same note in budget/Tabs.tsx), and
+     * the History API is what the terminal wants anyway: no navigation, no
+     * reload, just the address kept honest.
+     *
+     * The first sync of a run replaces rather than pushes, so booting from `/`
+     * does not leave the shell behind for the back button to return to. A view
+     * entered directly is already in the bar, and no history call is made.
+     */
+    const syncUrl = (): void => {
+      const route = backend?.route() ?? "";
+      if (route === "" || route === syncedRoute) {
+        return;
+      }
+      const first = syncedRoute == null;
+      syncedRoute = route;
+      if (route !== currentPath()) {
+        window.history[first ? "replaceState" : "pushState"](null, "", route);
+      }
+      document.title = titleForRoute(route);
+    };
+
+    // Back and forward move the app, rather than the document: the browser has
+    // nowhere else to go, since every route is this same page.
+    const handlePopState = (): void => {
+      if (backend == null) {
+        return;
+      }
+      const path = currentPath();
+      if (backend.hasView(path)) {
+        goTo(path);
+      } else if (appRunning) {
+        exitToShell();
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
 
     // --- The shell (dev-sam-sh) ---------------------------------------------
     let shellLine = "";
@@ -543,7 +660,14 @@ export default function TerminalApp(): React.JSX.Element {
       if (disposed) {
         return;
       }
-      // Boot into the shell; the app is one `dev-sam` away.
+      // A visitor who arrived at a view asked for it by name: open it, with no
+      // banner and nothing to press.
+      const entry = currentPath();
+      if (backend.hasView(entry)) {
+        goTo(entry);
+        return;
+      }
+      // Otherwise boot into the shell; the app is one `dev-sam` away.
       terminal.write(
         "\x1b[90mdev-sam-sh 1.0 — developer sam's terminal\x1b[0m\r\n" +
           (touchOnlyDevice ? "" : "\x1b[90mtype help for commands, or run dev-sam\x1b[0m\r\n") +
@@ -572,6 +696,7 @@ export default function TerminalApp(): React.JSX.Element {
       container.removeEventListener("touchmove", handleTouchMove);
       container.removeEventListener("touchend", handleTouchEnd);
       container.removeEventListener("touchcancel", handleTouchCancel);
+      window.removeEventListener("popstate", handlePopState);
       resizeObserver.disconnect();
       viewportStyle.remove();
       imageLayer.remove();

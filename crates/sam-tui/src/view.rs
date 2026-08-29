@@ -230,6 +230,12 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             // scroll math both depend on it, and the native front-end only
             // learns the size from resize events it may never receive.
             next.resize(terminal_width, terminal_height);
+            // A view the host asked for — a URL entered, a link followed, the
+            // back button. It cannot reach into the running app, so it leaves
+            // the path here and wakes the loop with an event of its own.
+            if let Some(route) = crate::take_pending_route() {
+                next.go_to(&route);
+            }
             if let Some(event) = terminal_event_to_crossterm(&event) {
                 next.handle_event(&event);
                 // Surface OpenUrl actions to the host.
@@ -257,6 +263,9 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
         image::LAYER_PANE
     });
     hit::begin_frame(dialog_open);
+    // The URL bar is one more thing the host mirrors from the frame it is
+    // about to see, so it is published here with the rest of them.
+    crate::publish_route(app.route());
     let counter = pane_counter(&app);
     let cols = terminal_width as usize;
     let pane_title = pane_title(&app, &counter, cols);
