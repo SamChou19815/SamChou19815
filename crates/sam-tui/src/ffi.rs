@@ -19,6 +19,7 @@
 //! - `navigate(path)` — show the view a site path names, for the back button;
 //! - `openLink(url)` — activate a link the terminal printed;
 //! - `pollEvent()` — the next thing only the browser can do;
+//! - `wheelRows()` — how far one wheel notch scrolls;
 //! - `imageRegions()` — where this frame drew its artwork.
 
 use crate::shell::{LineEditor, Shell};
@@ -311,6 +312,14 @@ pub fn sam_open_link(url: &str) {
 #[wasm_bindgen(js_name = pollEvent)]
 pub fn sam_poll_event() -> Option<String> {
     crate::poll_host_event().map(|event| event.encode())
+}
+
+/// Rows one wheel notch scrolls. A host with no wheel — a phone metering a
+/// drag — has to know the distance the app moves for one to keep the content
+/// under the finger.
+#[wasm_bindgen(js_name = wheelRows)]
+pub fn sam_wheel_rows() -> u16 {
+    crate::WHEEL_ROWS as u16
 }
 
 /// Where the current frame drew its artwork, one row per image, as

@@ -41,8 +41,10 @@ pub const BLOG_ROUTE: &str = "/blog";
 const ASSUMED_COLS: u16 = 80;
 
 /// Rows the wheel moves at a time — the terminal convention, and few enough
-/// that the line the eye was on is still on screen afterwards.
-const WHEEL_ROWS: usize = 3;
+/// that the line the eye was on is still on screen afterwards. A touch host
+/// meters a drag into notches of this many rows, so the content keeps up with
+/// the finger; see `wheelRows` in [`ffi`].
+pub const WHEEL_ROWS: usize = 3;
 
 /// Usable width inside a card's text column: the pane's border and padding
 /// plus the card's gutter are spoken for before any text is drawn.

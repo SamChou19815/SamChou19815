@@ -44,6 +44,13 @@ export function resize(cols: number, rows: number): void;
 
 export function start(cols: number, rows: number, path: string, touch: boolean): void;
 
+/**
+ * Rows one wheel notch scrolls. A host with no wheel — a phone metering a
+ * drag — has to know the distance the app moves for one to keep the content
+ * under the finger.
+ */
+export function wheelRows(): number;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -56,6 +63,7 @@ export interface InitOutput {
     readonly pollEvent: (a: number) => void;
     readonly resize: (a: number, b: number) => void;
     readonly start: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wheelRows: () => number;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_export: (a: number, b: number, c: number) => void;
     readonly __wbindgen_export2: (a: number, b: number) => number;
