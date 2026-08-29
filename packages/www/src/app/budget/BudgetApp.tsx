@@ -56,72 +56,81 @@ export default function BudgetApp(): React.JSX.Element {
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h1 className="m-0">Budget</h1>
-        <div className="flex items-center gap-3 text-sm">
-          {email && (
-            <span className="rounded bg-blue-50 px-2 py-1 font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
-              {email}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={onSignOut}
-            className="rounded border border-gray-300 px-3 py-1 font-medium text-gray-700 transition-colors duration-200 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
-          >
-            Sign out
-          </button>
+    // No max-width on the root: the tab bar spans the whole screen, so the
+    // page's measure is applied by the containers on either side of it.
+    <div>
+      {/* Title and tabs form one full-width chrome band, so the title lines up
+          with the edge of the bar under it instead of floating on the content
+          measure. A slim strip, not a hero: the data below is what matters. */}
+      <div className="bg-white dark:bg-[#242424]">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-2.5">
+          <h1 className="m-0 text-xl font-semibold">Budget</h1>
+          <div className="flex items-center gap-3 text-sm">
+            {email && (
+              <span className="rounded bg-blue-50 px-2 py-1 font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
+                {email}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="rounded border border-gray-300 px-3 py-1 font-medium text-gray-700 transition-colors duration-200 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div className="mb-6">
         <Tabs />
       </div>
 
-      {active === "dashboard" && (
-        <Dashboard
-          expenses={expenses.rows}
-          incomes={incomes.rows}
-          investments={investments.rows}
-          snapshots={snapshots.rows}
-          loading={expenses.loading || incomes.loading || investments.loading || snapshots.loading}
-        />
-      )}
-      {active === "expenses" && (
-        <ExpensesPanel
-          userId={userId}
-          rows={expenses.rows}
-          loading={expenses.loading}
-          error={expenses.error}
-        />
-      )}
-      {active === "income" && (
-        <IncomesPanel
-          userId={userId}
-          rows={incomes.rows}
-          loading={incomes.loading}
-          error={incomes.error}
-        />
-      )}
-      {active === "investments" && (
-        <InvestmentsPanel
-          userId={userId}
-          investments={investments.rows}
-          investmentsLoading={investments.loading}
-          investmentsError={investments.error}
-          snapshots={snapshots.rows}
-          snapshotsLoading={snapshots.loading}
-        />
-      )}
-      {active === "fire" && (
-        <FirePanel
-          expenses={expenses.rows}
-          incomes={incomes.rows}
-          investments={investments.rows}
-          loading={expenses.loading || incomes.loading || investments.loading}
-        />
-      )}
+      <div className="mx-auto max-w-6xl px-4 pt-5 pb-8">
+        {active === "dashboard" && (
+          <Dashboard
+            expenses={expenses.rows}
+            incomes={incomes.rows}
+            investments={investments.rows}
+            snapshots={snapshots.rows}
+            loading={
+              expenses.loading || incomes.loading || investments.loading || snapshots.loading
+            }
+          />
+        )}
+        {active === "expenses" && (
+          <ExpensesPanel
+            userId={userId}
+            rows={expenses.rows}
+            loading={expenses.loading}
+            error={expenses.error}
+          />
+        )}
+        {active === "income" && (
+          <IncomesPanel
+            userId={userId}
+            rows={incomes.rows}
+            loading={incomes.loading}
+            error={incomes.error}
+          />
+        )}
+        {active === "investments" && (
+          <InvestmentsPanel
+            userId={userId}
+            investments={investments.rows}
+            investmentsLoading={investments.loading}
+            investmentsError={investments.error}
+            snapshots={snapshots.rows}
+            snapshotsLoading={snapshots.loading}
+          />
+        )}
+        {active === "fire" && (
+          <FirePanel
+            expenses={expenses.rows}
+            incomes={incomes.rows}
+            investments={investments.rows}
+            loading={expenses.loading || incomes.loading || investments.loading}
+          />
+        )}
+      </div>
     </div>
   );
 }

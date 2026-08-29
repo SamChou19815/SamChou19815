@@ -38,11 +38,14 @@ export default function Tabs(): React.JSX.Element {
 
   return (
     <div className="overflow-x-auto">
-      <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex w-full border-b border-gray-200 dark:border-gray-700">
         {TAB_IDS.map((id) => {
           const isActive = id === active;
+          // The bar is rendered full-bleed, so w-full above is the whole screen
+          // and flex-1 spreads the tabs across it. The buttons never shrink
+          // below their label, so a narrow viewport scrolls instead.
           const base =
-            "whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors duration-200 border-b-2 -mb-px";
+            "flex-1 whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors duration-200 border-b-2 -mb-px";
           const cls = isActive
             ? `${base} border-blue-500 text-blue-500 dark:border-blue-400 dark:text-blue-400`
             : `${base} border-transparent text-gray-600 hover:text-blue-500 dark:text-gray-300 dark:hover:text-blue-400`;
