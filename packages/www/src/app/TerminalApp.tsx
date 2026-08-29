@@ -101,7 +101,7 @@ export default function TerminalApp(): React.JSX.Element {
       linkHandler: { activate: (_event, uri) => openLink(uri) },
       scrollback: 1000,
       cursorBlink: true,
-      fontSize: 15,
+      fontSize: 16,
       convertEol: false,
       drawBoldTextInBrightColors: false,
       fontFamily:
