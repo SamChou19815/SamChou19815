@@ -604,13 +604,14 @@ impl App {
             // The same way out `q` and Esc take, for a pointer that has
             // neither: a phone reads posts with nothing but taps.
             Some(hit::HitTarget::Close) => self.reader = None,
+            // A pointer names the card it means by landing on it, so there is
+            // nothing left for a second click to say. Selecting on the first
+            // click and opening only on the second is what left every card on
+            // a phone needing two taps.
             Some(hit::HitTarget::Item(index)) => {
                 if matches!(self.tab, TIMELINE_TAB | BLOG_TAB) {
-                    if self.selected[self.tab] == index {
-                        self.open_selected();
-                    } else {
-                        self.select(index);
-                    }
+                    self.select(index);
+                    self.open_selected();
                 }
             }
             // A click that lands on the open dialog itself, on anything but one
