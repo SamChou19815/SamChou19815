@@ -395,25 +395,79 @@ export default function TerminalApp(): React.JSX.Element {
     const refocus = (): void => terminal.focus();
     container.addEventListener("click", refocus);
 
-    // --- Touch scrolling ------------------------------------------------------
-    // A phone has no wheel, and while the app is up there is nothing for the
-    // browser's own scrolling to move either: the app owns the alternate
-    // screen, so every row on it comes from the backend, which scrolls only
-    // when a wheel tells it to. So a drag is metered out as wheel notches —
-    // one per WHEEL_ROWS rows, the same distance the backend moves for one —
-    // which keeps the content under the finger.
+    // --- Touch ----------------------------------------------------------------
+    // While the app is up, a touch gesture is read here rather than left to the
+    // browser, because neither half of it survives the trip otherwise.
+    //
+    // Scrolling: a phone has no wheel, and there is nothing for the browser's
+    // own scrolling to move either — the app owns the alternate screen, so
+    // every row on it comes from the backend, which scrolls only when a wheel
+    // tells it to. A drag is metered out as wheel notches, one per WHEEL_ROWS
+    // rows, the same distance the backend moves for one, which keeps the
+    // content under the finger.
+    //
+    // Tapping: xterm only reports a click when the browser synthesizes the
+    // mouse events for one, and a phone does that late, grudgingly, and not at
+    // all if the finger drifted — which is what made taps need a second go. So
+    // the tap is reported straight from the gesture instead, and the whole
+    // gesture is claimed at touchstart so no synthesized click doubles it.
     const WHEEL_ROWS = 3;
-    let dragY: number | null = null;
+    /** How far a finger may drift, in px, and still have meant a tap. */
+    const TAP_SLOP = 12;
+    /** And for how long, in ms — past this it was a press, not a tap. */
+    const TAP_TIME = 700;
+
+    type Gesture = { x: number; y: number; dragY: number; at: number; tap: boolean };
+    let gesture: Gesture | null = null;
+
+    /** The cell under a viewport point, 1-based, as a mouse report writes it. */
+    const cellAt = (x: number, y: number): { col: number; row: number } | null => {
+      const screen = container.querySelector(".xterm-screen");
+      if (screen == null) {
+        return null;
+      }
+      const rect = screen.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const col = Math.floor(((x - rect.left) / rect.width) * terminal.cols);
+      const row = Math.floor(((y - rect.top) / rect.height) * terminal.rows);
+      if (col < 0 || row < 0 || col >= terminal.cols || row >= terminal.rows) {
+        return null;
+      }
+      return { col: col + 1, row: row + 1 };
+    };
 
     const handleTouchStart = (event: TouchEvent): void => {
+      const touch = event.touches.length === 1 ? event.touches[0] : undefined;
       // Two fingers is a pinch; that one is the browser's to handle.
-      dragY = event.touches.length === 1 ? (event.touches[0]?.clientY ?? null) : null;
+      if (touch == null || !appRunning) {
+        gesture = null;
+        return;
+      }
+      gesture = {
+        x: touch.clientX,
+        y: touch.clientY,
+        dragY: touch.clientY,
+        at: event.timeStamp,
+        tap: true,
+      };
+      // The gesture is the app's from here: no synthesized mouse events for
+      // it, no rubber-banding the page behind it, and no pull-to-refresh from
+      // a drag that starts at the top. Focus comes with it, since the click
+      // that used to carry it is one of the events just suppressed.
+      event.preventDefault();
+      terminal.focus();
     };
 
     const handleTouchMove = (event: TouchEvent): void => {
       const y = event.touches[0]?.clientY;
-      if (backend == null || !appRunning || dragY == null || y == null) {
+      const x = event.touches[0]?.clientX;
+      if (backend == null || !appRunning || gesture == null || x == null || y == null) {
         return;
+      }
+      if (Math.abs(x - gesture.x) > TAP_SLOP || Math.abs(y - gesture.y) > TAP_SLOP) {
+        gesture.tap = false;
       }
       const screen = container.querySelector(".xterm-screen");
       if (screen == null) {
@@ -423,15 +477,13 @@ export default function TerminalApp(): React.JSX.Element {
       if (notchHeight <= 0) {
         return;
       }
-      // The gesture is the app's from here: no rubber-banding the page behind
-      // it, and no pull-to-refresh from a drag that starts at the top.
       event.preventDefault();
-      const notches = Math.trunc((dragY - y) / notchHeight);
+      const notches = Math.trunc((gesture.dragY - y) / notchHeight);
       if (notches === 0) {
         return;
       }
       // Keep the remainder, so a slow drag still accumulates into a notch.
-      dragY -= notches * notchHeight;
+      gesture.dragY -= notches * notchHeight;
       // SGR wheel reports, the same ones xterm sends for a real wheel: button
       // 64 is a notch up, 65 down. A wheel carries a position too, which the
       // app ignores, so the top left cell stands in for the finger.
@@ -440,8 +492,37 @@ export default function TerminalApp(): React.JSX.Element {
       pump();
     };
 
-    container.addEventListener("touchstart", handleTouchStart, { passive: true });
+    const handleTouchEnd = (event: TouchEvent): void => {
+      const finished = gesture;
+      gesture = null;
+      if (backend == null || !appRunning || finished == null || !finished.tap) {
+        return;
+      }
+      if (event.timeStamp - finished.at > TAP_TIME) {
+        return;
+      }
+      // Where the finger landed, not where it left: within the slop they are
+      // the same cell, and the landing is what the visitor aimed at.
+      const cell = cellAt(finished.x, finished.y);
+      if (cell == null) {
+        return;
+      }
+      // An SGR press and release of the left button, the pair xterm sends for
+      // a real click. The app acts on the press; the release keeps the
+      // backend's button state honest.
+      const { col, row } = cell;
+      backend.input(encoder.encode(`\x1b[<0;${col};${row}M\x1b[<0;${col};${row}m`));
+      pump();
+    };
+
+    const handleTouchCancel = (): void => {
+      gesture = null;
+    };
+
+    container.addEventListener("touchstart", handleTouchStart, { passive: false });
     container.addEventListener("touchmove", handleTouchMove, { passive: false });
+    container.addEventListener("touchend", handleTouchEnd);
+    container.addEventListener("touchcancel", handleTouchCancel);
 
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit();
@@ -489,6 +570,8 @@ export default function TerminalApp(): React.JSX.Element {
       container.removeEventListener("click", refocus);
       container.removeEventListener("touchstart", handleTouchStart);
       container.removeEventListener("touchmove", handleTouchMove);
+      container.removeEventListener("touchend", handleTouchEnd);
+      container.removeEventListener("touchcancel", handleTouchCancel);
       resizeObserver.disconnect();
       viewportStyle.remove();
       imageLayer.remove();
