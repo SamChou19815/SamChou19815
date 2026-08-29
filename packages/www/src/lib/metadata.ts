@@ -4,9 +4,11 @@ export type BlogPostMetadata = {
   readonly month: string;
   readonly date: string;
   readonly titleSlug: string;
+  /** The post's hero image, from its frontmatter. Used as the OpenGraph card. */
+  readonly image?: string;
   /**
    * When set, the post is hosted elsewhere. It is listed in the blog index but links out to this
-   * URL instead of an internally rendered MDX page.
+   * URL instead of opening in the terminal's reader.
    */
   readonly externalUrl?: string;
 };

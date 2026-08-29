@@ -11,6 +11,9 @@
 //! - `resize(cols, rows)` — report a resize;
 //! - `drain()` — take the pending ANSI output;
 //! - `pollAction()` — the next URL to open, if any;
+//! - `hasView(path)` — whether a site path names a view of this app;
+//! - `navigate(path)` — show the view a site path names;
+//! - `route()` — the view the last frame drew, as a site path;
 //! - `imageRegions()` — where this frame drew its artwork;
 //! - `shouldQuit()` — true when the app exited.
 
@@ -34,6 +37,9 @@ struct Engine {
 
 thread_local! {
     static ENGINE: RefCell<Option<Engine>> = const { RefCell::new(None) };
+    /// The size the app was last told about, so [`sam_navigate`] can wake the
+    /// render loop without resizing anything.
+    static SIZE: RefCell<(u16, u16)> = const { RefCell::new((0, 0)) };
 }
 
 /// Wake flag for the render future. The host drives polling synchronously, so
@@ -90,6 +96,7 @@ fn pump() {
 
 #[wasm_bindgen(js_name = start)]
 pub fn sam_start(cols: u16, rows: u16) {
+    SIZE.with(|size| *size.borrow_mut() = (cols, rows));
     crossterm::set_size(cols, rows);
     // Seed the app with the real size before the first frame, so layout and
     // scroll math never run against the placeholder width.
@@ -128,6 +135,7 @@ pub fn sam_input(bytes: &[u8]) {
 
 #[wasm_bindgen(js_name = resize)]
 pub fn sam_resize(cols: u16, rows: u16) {
+    SIZE.with(|size| *size.borrow_mut() = (cols, rows));
     crossterm::set_size(cols, rows);
     crossterm::push_event(crossterm::event::Event::Resize(cols, rows));
     pump();
@@ -149,6 +157,38 @@ pub fn sam_drain() -> String {
 #[wasm_bindgen(js_name = shouldQuit)]
 pub fn sam_should_quit() -> bool {
     ENGINE.with(|cell| cell.borrow().as_ref().is_some_and(|engine| engine.done))
+}
+
+/// Whether this app has a view at `path`. The host asks before following a
+/// link or a back button itself rather than leaving it to the browser.
+#[wasm_bindgen(js_name = hasView)]
+pub fn sam_has_view(path: &str) -> bool {
+    crate::has_view(path)
+}
+
+/// Shows the view `path` names: the URL the page was entered at, a link
+/// followed inside a post, or wherever the back button just went.
+///
+/// Before the app boots this only records the view, which `start` then opens
+/// on. Afterwards the running render loop has to be woken to pick it up, and
+/// iocraft forwards only key, mouse and resize events — so the wake is a
+/// resize to the size the app already has, the same no-op `start` pushes.
+#[wasm_bindgen(js_name = navigate)]
+pub fn sam_navigate(path: &str) {
+    crate::request_route(path);
+    let running = ENGINE.with(|cell| cell.borrow().is_some());
+    if running {
+        let (cols, rows) = SIZE.with(|size| *size.borrow());
+        crossterm::push_event(crossterm::event::Event::Resize(cols, rows));
+        pump();
+    }
+}
+
+/// The view the last frame drew, as a site path, for the host to put in the
+/// URL bar.
+#[wasm_bindgen(js_name = route)]
+pub fn sam_route() -> String {
+    crate::current_route()
 }
 
 /// Drains the next pending URL action, if any.

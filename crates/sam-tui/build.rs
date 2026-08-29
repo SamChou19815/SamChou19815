@@ -238,17 +238,26 @@ fn sorted_dirs(dir: &Path) -> Vec<PathBuf> {
     entries
 }
 
-/// Walks `(blog-posts)/<year>/<month>/<date>/<slug>/page.mdx`, as
-/// `computeAllMedatada()` does. `layout.tsx` at the year level is skipped by
-/// taking directories only.
+fn sorted_files(dir: &Path) -> Vec<PathBuf> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("reading {}: {error}", dir.display()))
+        .map(|entry| entry.expect("reading a directory entry").path())
+        .filter(|path| path.is_file())
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// Walks `blog-posts/<year>/<month>/<date>/<slug>.md`, as
+/// `computeAllMedatada()` does. The slug is the file stem, so the permalink a
+/// post is served at is spelled out by its path and nothing else.
 fn local_posts(public: &Path, www_src: &Path) -> Vec<PostSource> {
-    let root = www_src.join("app/blog/(blog-posts)");
+    let root = www_src.join("blog-posts");
     let mut posts = Vec::new();
     for year in sorted_dirs(&root) {
         for month in sorted_dirs(&year) {
             for date in sorted_dirs(&month) {
-                for slug in sorted_dirs(&date) {
-                    let page = slug.join("page.mdx");
+                for page in sorted_files(&date) {
                     println!("cargo:rerun-if-changed={}", page.display());
                     let source = std::fs::read_to_string(&page)
                         .unwrap_or_else(|error| panic!("reading {}: {error}", page.display()));
@@ -268,9 +277,9 @@ fn local_posts(public: &Path, www_src: &Path) -> Vec<PostSource> {
                             .file_name()
                             .expect("a date dir is named")
                             .to_string_lossy(),
-                        &slug
-                            .file_name()
-                            .expect("a slug dir is named")
+                        &page
+                            .file_stem()
+                            .expect("a post file is named")
                             .to_string_lossy(),
                     ));
                 }
@@ -289,42 +298,21 @@ fn parse_post(
     date: &str,
     slug: &str,
 ) -> PostSource {
-    // Line 1 is always `export const title = "…";` — the same rule
-    // next.config.js panics on.
-    let first = source
-        .lines()
-        .next()
-        .unwrap_or_else(|| panic!("{}: the page is empty", page.display()));
-    let title = first
-        .strip_prefix(r#"export const title = ""#)
-        .and_then(|rest| rest.strip_suffix(r#"";"#))
-        .unwrap_or_else(|| panic!("{}: invalid title line: {first}", page.display()))
-        .trim()
-        .to_string();
+    // A `---` fenced block of `key: "value"` lines opens every post, and the
+    // body is everything after it — the same rule next.config.js panics on.
+    let (front, body) = frontmatter(source, page);
+    let title = front
+        .iter()
+        .find(|(key, _)| *key == "title")
+        .unwrap_or_else(|| panic!("{}: the frontmatter has no title", page.display()))
+        .1
+        .clone();
 
-    // The MDX header is every line before the first blank one; the body is
-    // everything after it.
-    let mut header = String::new();
-    let mut body = String::new();
-    let mut in_header = true;
-    for line in source.lines().skip(1) {
-        if in_header {
-            if line.trim().is_empty() {
-                in_header = false;
-            } else {
-                header.push_str(line);
-                header.push('\n');
-            }
-        } else {
-            body.push_str(line);
-            body.push('\n');
-        }
-    }
-
-    // The hero image is the header's first quoted path, from
-    // `blogPostPageMetadata(title, "…")`. The title never starts with `/` and
-    // the import path starts with `../`, so this is unambiguous.
-    let hero = first_slash_quoted(&header).and_then(|url| resolve_url(url, public));
+    // The hero image is the optional `image` field, which is a site path.
+    let hero = front
+        .iter()
+        .find(|(key, _)| *key == "image")
+        .and_then(|(_, url)| resolve_url(url, public));
     let thumbnail = hero.or_else(|| {
         body_images(&body)
             .iter()
@@ -370,19 +358,34 @@ fn normalize_body_image_urls(body: &str) -> String {
     out
 }
 
-/// The first quoted string in `text` whose contents start with `/`, if any.
-fn first_slash_quoted(text: &str) -> Option<&str> {
-    let mut rest = text;
-    while let Some(open) = rest.find('"') {
-        let after = &rest[open + 1..];
-        let close = after.find('"')?;
-        let inner = &after[..close];
-        if inner.starts_with('/') {
-            return Some(inner);
-        }
-        rest = &after[close + 1..];
+/// Splits a post into its frontmatter fields and its body. The fence must open
+/// the file, every field is `key: "value"`, and the body starts on the line
+/// after the closing fence.
+fn frontmatter(source: &str, page: &Path) -> (Vec<(String, String)>, String) {
+    let mut lines = source.lines();
+    if lines.next() != Some("---") {
+        panic!(
+            "{}: expected a --- frontmatter fence on the first line",
+            page.display()
+        );
     }
-    None
+    let mut fields = Vec::new();
+    for line in lines.by_ref() {
+        if line == "---" {
+            let mut body = String::new();
+            for line in lines.skip_while(|line| line.trim().is_empty()) {
+                body.push_str(line);
+                body.push('\n');
+            }
+            return (fields, body);
+        }
+        let (key, value) = line
+            .split_once(": ")
+            .and_then(|(key, value)| Some((key, value.strip_prefix('"')?.strip_suffix('"')?)))
+            .unwrap_or_else(|| panic!("{}: invalid frontmatter line: {line}", page.display()));
+        fields.push((key.to_string(), value.to_string()));
+    }
+    panic!("{}: the frontmatter fence is never closed", page.display());
 }
 
 /// A `![alt](url)` reference on a line, if the line carries one.

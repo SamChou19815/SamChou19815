@@ -1,0 +1,39 @@
+---
+title: "Life of a High School CS Club President, from a SWE's Perspective"
+---
+
+Imagine yourself being the president of the [CS club at my high school](https://computerization.io).
+You are now in grade 11 and have just taken over the presidency from the seniors. You have grand
+plans for the year ahead. However, will the future be as rosy as you have imagined?
+
+Let's start from yourself. You might have 3 or 5 years, or even [56](https://quotes.cs.cornell.edu/quote/1369/) years of programming experience already. The exact number doesn't quite matter. The point is that you are way ahead of almost everyone you can recruit. In every school year, there might be only 1-2 master hacker, and you are one of them. To achieve your grand plan, you need a lot of engineers. "I know what to do: I will teach all of the new recruits how to program, just like how I taught myself x years ago". With this thought, you walked into the first club meeting after recruitment.
+
+In the real world, onboarding takes quite a while. Companies usually expect that you can start contributing to the codebase after a few weeks, but at that point you might be only able to make minor changes. Some people will have imposter syndroms even after a year. One and a half year seems to be the mark when you are really onboarded, since it's the [required tenure](https://fortune.com/2023/08/21/mark-zuckerberg-meta-return-to-office-three-days-week-fired-performance-review-termination/) for you to apply for remote work at FB. All of above has the assumption that you got a 4-year CS degree from college. The numbers might be arbitrary, but they are all measured in the unit of years.
+
+You do not have the luxury, so you have to take the shortcut. In a 3-year high school system, you only have 2 years to make a difference. The senior year is usually all about college application. You also know that it's not really 2 years. In my international high school, quite a lot of people didn't seriously consider studying abroad until this point. As a result, they need to do significant catchup work on English skills. Hours and hours of weekend time are dumped into standardized test preparation. School work might be easy for you, but this is not true for everyone, so school work also eats up a lot of time.
+
+Therefore, you know that you have to take shortcut. Maybe unlike big companies, you can be more tolerant of crappy code. Maybe unlike big companies, you can just test in prod. Maybe unlike big companies, you can skip a lot of bureaucracies. While all of this can be true, the world does not have an obligation to ensure your success, as you soon learned from the first club meeting.
+
+The first club meeting was supposed to be a tutorial session. You hoped that everyone would be at least able to write an `echo` program afterwards. However, it turns out that you forget how painful it is for you to set up your dev environment for the first time. Only half of the newly recruited member managed to install IDEs. Maybe only 3 wrote the hello world, and only one did above and beyond. At this point, you already know who will be the next club president. After a few weeks, quite a few of them never showed up again.
+
+Despite the initial setback, you recovered after a few weeks. After all, you didn't become president for nothing. You managed to ship a few features envisioned by you. However, several issues still persist. Only you and maybe another person are actually contributing in a meaningful way. At this rate, the time taken for all your vision to be fulfilled will be 10 years.
+
+This is certainly too long to make an impact for your college application, so you have to do something. You might have tried to threaten some club members that, if they continue to do no work, they will be kicked out. You soon learned that this is not helpful. Unlike real companies, you don't really have that much leverages over your reports. In addition, they don't produce meaningful work not because they are lazy, but because they can't. After all, they are humans too, rather than numbers on an accounting book. They have school work and standardized tests. They have their own priorities. Maybe the teaching shortcut you took at the start of the semester didn't quite work. Maybe it does take one year to fully onboard people. Maybe there is no shortcut after all.
+
+With frustration, you decide to take up the slack yourself. Under your unparallel engineering skill, you become the 10x programmer and shipped everything on time, but no one is using them. Engineering is only part of the problem, you also need marketing. ["Focus on the user and all else will follow."](https://about.google/philosophy/) Maybe this only works for the early Google. You might even regret taking on the position of club president. Given the same choice again, you might just want someone else be president to manage the business side, while you take care of the engineering side, where you hold de-facto veto power because only you can code.
+
+You are unwilling to admit failure. Once for a while, new inspirations have come, and you believe that [this time it will be different](https://xkcd.com/927/). After a year, things are indeed in a better position now, compared to that a year ago. Unfortunately, this is not what you wanted. You wanted it to be 10x better. However, your time is running out and you have to pass the torch, for a new iteration of the loop to begin.
+
+## Parting Notes
+
+I [wrote about this in the past](/blog/2018/12/31/cs-in-high-schools/), right after I got my first internship offer. A lot of stuff still
+holds. However, now that I had become a full time software engineer for about 1.5 years, I have
+developed new perspectives. The fiction was based on some of my own experience, some of my observed interations, and some speculations based on public data and GitHub activities.
+
+Based on the story, you may conclude that this position is set up for failure. This would be a reasonable conclusion. There are just not that a lot of possibilities, when the high school rigidly plans everything and compactifies everything into 3 years. However, I do want to end this on a positive note, ahead of another round of recruitment.
+
+This is your choice, a choice that you will be proud of years afterward. You know there are easy choices, but you choose the difficult paths anyways. The baseline expection is failure, but you actually managed to **create** something, while most people might just choose to talk.
+
+By all means, I consider my presidency in 2015-2016 of the club to be a failure. I failed at teaching people programming at least 3 times. The usage of the platform I developed stagnated, and the codebase was even completely abandoned 2 years later, because it's such a crap. Nevertheless, I think this is the most _successful failure_ I have ever had. It completely destoryed my dream of creating a popular platform and being a more "well-rounded" person, so that I could realize that I was depressed by things I don't really care about. It eventually leads to my interest in programming language theory. Now I happily work on my own language [samlang](https://samlang.io) that doesn't have any practical use case, and actually get paid big bucks to work on a [real programming language](https://flow.org) in the industry.
+
+The journey ahead is likely to be lonely and un-rewarding in the short term. However, it's a result of you living in a heavily curved local spacetime that's not representitive of the entire universe. The world of computer science is much bigger than some random high school awards and college admission.

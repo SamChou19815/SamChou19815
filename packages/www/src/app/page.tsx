@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import TerminalShell from "./TerminalShell";
+import TerminalPage from "../lib/TerminalPage";
 
 export const metadata: Metadata = {
   title: "Developer Sam — Terminal",
@@ -12,9 +12,5 @@ export const metadata: Metadata = {
 };
 
 export default function IndexPage(): React.JSX.Element {
-  return (
-    <main className="fixed inset-0 bg-[#f7f7f7]">
-      <TerminalShell />
-    </main>
-  );
+  return <TerminalPage />;
 }

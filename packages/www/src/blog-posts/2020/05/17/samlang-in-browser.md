@@ -1,0 +1,319 @@
+---
+title: "Making samlang Run in Browsers"
+---
+
+## Background
+
+[samlang](https://samlang.developersam.com) is my favorite and most sophisticated side project. It
+is a functional programming language with an optimizing compiler that targets the X86 instruction
+set and a language server that can provide type query and autocompletion.
+
+The compiler and the language server was written in Kotlin and compiled to JVM bytecode. It's worth
+noting that Kotlin has multiplatform support and can compile any Kotlin code into JVM bytecode and
+JavaScript with a single codebase. Therefore, it's theoretically possible to create a samlang build
+that can run in browsers.
+
+The reality is always harsher than the theory. It takes a significant effort of refactoring to make
+this happen. In this blog post, I will explain these efforts and some of the tricky design decisions
+I made along the way.
+
+The screenshot below shows you the result of the hard work:
+
+![new samlang demo website](/blog/2020-05-17-samlang-in-browser/samlang-demo.png)
+
+## The project rationale
+
+Almost 1.5 years ago, I cut the first open-source release of samlang. At that time, only the type
+checker and the interpreter have been implemented. There was no CLI support. However, I want to
+showcase this project, and the most natural way is to create a demo and expose it in the form of a
+demo server.
+
+In March 2019, the demo server and website was finally live. The backend was running in a Docker
+container with JVM 11 hosted on [Google Cloud Run](https://cloud.google.com/run). I was able to run
+this setup free of charge and it worked pretty well, except for the cold start problem. The
+architecture can be easily explained by the following figure:
+
+![demo server architecture](/blog/2020-05-17-samlang-in-browser/demo-server.png)
+
+Unfortunately, the fancy JIT compiler and JVM bytecode portability result in a significantly slower
+startup time compared to other languages like Go. To run the backend instance free of charge, I have
+to accept the fact that Google Cloud will shut down the server when no one is using it. Therefore,
+it will cause a cold startup time around 5 seconds for the first request. To be fair, this is much
+better than the App Engine Java runtime's cold startup time around 10s. However, this is still far
+from ideal.
+
+This setup also has a security problem. The demo functionality includes an interpreter. Since
+samlang is a Turing complete language, it means that it is possible to send a non-terminating
+program to the demo server to eat up all my cloud resources and my money.
+
+There is only one way to prevent all these problems: make samlang run in browsers. There will be no
+more cold start, and the people who submit non-terminating programs will eat up their own resources
+instead.
+
+## A rough introduction to Kotlin multiplatform
+
+Kotlin multiplatform allows you to compile a single codebase into JVM bytecode, JavaScript and
+native code backed by LLVM toolchain. In case when platform-specific code is necessary, it gives you
+the escape hatch of `expect`/`actual` declaration. For JVM platform, you can import JVM classes. For
+JavaScript, you can require npm packages and create external declaration bindings.
+
+The above description sounds like the same heaven envisioned by [Flutter](https://flutter.dev/).
+However, it shares the same problem with Flutter: when it's impossible to write platform-independent
+code, everything becomes extremely painful.
+
+Here begins the Herculean effort of refactoring.
+
+## Stage 1: Reduce the amount of platform-dependent code
+
+To be clear, it is impossible to eliminate all platform-dependent code. On the desktop, the compiler
+needs to read source files and write compiled code into hard drive. On the web, we all know that you
+can't read and write files.
+
+Fortunately, the demo functionality does not need to depend on file operations: all it does is to
+take some string (source code), and gives back a bunch of strings (interpreter result, compiled
+code, etc). The functionality needed for demo can be implemented portably as a set of pure
+functions. Therefore, all we need is to refactor the parts _necessary for demo_ into a set of
+platform-independent pure functions.
+
+A quick scan of the codebase shows that the raw number of platform-dependent code is very small.
+Most of them falls into three categories: use of JVM's `TreeMap`/`TreeSet`, use of JVM's
+`ArrayDeque`, and the generated Java parser. `TreeMap` and `TreeSet` are easy to eliminate. They
+were there to help debugging since they guarantee a human-understandable order for numbers and
+strings. I replaced them with `HashMap` and `HashSet` and all the tests still pass.
+
+Fortunately, Kotlin recently introduced its platform-independent implementation of `ArrayDeque`
+[into its standard library](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin.collections/-array-deque/).
+It's still experimental, so I have to annotate a lot of classes that use it with
+`@ExperimentalStdlibApi`. It's slightly ugly to introduce a lot of these annotations, but the end
+results make the ugliness more justifiable.
+
+The real problem lies in the parser code. It's very difficult to write correct parsers by hand, but
+it's very easy to write correct _parser specifications_ by hand and let them program generates a
+good parser. Therefore, samlang uses antlr4 to generate parser code. The official battle-tested
+ANTLR4 cannot generate Kotlin code directly. Nevertheless, it can generate Java code and we can take
+advantage of Kotlin's perfect interop with Java to avoid compilation problems. Now we want
+platform-independent code, so this is no longer an option. (There does exist
+[a project](https://github.com/Strumenta/antlr-kotlin) that accepts ANTL4 grammar specification and
+claims to support Kotlin multiplatform. However, I did a quick test and found its very broken.)
+
+Tackling the parser problem in one shot is almost impossible. Therefore, I decided to use the escape
+hatch.
+
+In the common code, we write the `expect` declaration
+
+```typescript
+expect fun buildModuleFromText(
+  moduleReference: ModuleReference,
+  text: String
+): Pair<Module, List<CompileTimeError>>
+```
+
+For JVM, we can write an `actual` implementation that calls the old JVM specific parser code. For
+JavaScript, we temporarily give up:
+
+```typescript
+actual fun buildModuleFromText(
+  moduleReference: ModuleReference,
+  text: String
+): Pair<Module, List<CompileTimeError>> {
+  throw Error("GIVE UP")
+}
+```
+
+This allows the conversion of the multiplatform effort to proceed without the JS parser. Converting
+it to multiplatform setup takes a while. In the process, I found that documentation to be sometimes
+disappointingly unclear and it takes a lot of trial-and-error to make things compile again. I also
+fixed a bunch of leftover platform-dependent code alone the way. The tests have to be disabled for
+the JavaScript target since an actual parser is missing.
+
+The effort above brings us to
+[this snapshot](https://github.com/SamChou19815/samlang/tree/d395548527f6efe2710b7d03cff850dd2a824fbd)
+of the project, where a compiling multiplatform setup is finally done. All demo required code is
+already written in multiplatform style except the parser. Now the project has this crazy dependency
+graph:
+
+![samlang dependency graph](/blog/2020-05-17-samlang-in-browser/dependency-graph.png)
+
+Now I need to fight the parser.
+
+## Stage 2: Fight the parser
+
+### Stage 2 Act 1: Choose a parser solution
+
+At this point, there are several potential solutions to the parser problem:
+
+1. Fork the broken Kotlin ANTLR4 parser generator and make it work;
+2. Write the parser by hand in platform-independent Kotlin code;
+3. Hand convert the generated Java parser code into platform-independent Kotlin code;
+4. Generate JS parser code with ANTLR4, and hook it into Kotlin multiplatform JS build;
+5. Generate TS parser code with community-made ANTLR4 generator.
+
+In terms of engineering effort, option 1 is close to impossible. Even if I managed to do it this
+time, making sure it is in sync with the latest ANTLR4 release is a future burden that I don't want
+to take. Similarly, option 2 is also not considered seriously, since hand-written parser is very
+difficult to reason and maintain.
+
+You might think option 3 is a good solution, since parser code doesn't change a lot and there is a
+relatively good Java to Kotlin compiler from JetBrains. In fact, option 3 is a non-solution. The
+generated Java parser code depends on a runtime, which is written in Java. Therefore, I have to
+rewrite the runtime into Kotlin as well, which introduces the same old long-term maintenance
+problem.
+
+Now we are left with two options that require some Kotlin/JS interop. Option 4 has the advantage
+that it is officially maintained by the ANTLR4 team, so it's very unlikely that it will generate bad
+parser code. On the flip side, it doesn't have TypeScript support at all, so I had to work with
+completely untyped code. Option 5 provides a strong typing support, but it has the same danger of
+the broken Kotlin parser generator.
+
+I eventually picked option 5 since I believe in the quality of the community-powered project:
+[antlr4ts](https://github.com/tunnelvisionlabs/antlr4ts). The belief doesn't come from nowhere. Two
+months ago, I used it to create [dti-lang](https://github.com/cornell-dti/dti-lang) for DevSesh, and
+it is both battle-tested by myself and students in the DevSesh.
+
+### Stage 2 Act 2: Choose an interop solution
+
+Unfortunately, we are not quite there to jump to the implementation yet. The Kotlin/JS interop is
+not as seamless as Kotlin's interop with JVM. After all, Kotlin/JS was introduced 4 years after
+Kotlin's initial inception, and interop with JavaScript was clearly an afterthought. Therefore, you
+can't really expect to write some JS/TS code, push a button, and let Kotlin figure out the rest for
+you. Instead, you need to engineer the interop path for yourself.
+
+The majority of the difficulty is a result of the fundamental difference of type system and module
+system between these languages.
+
+Kotlin was initially designed to be a JVM language. Therefore, its type system is very similar to
+Java's type system, where you have nominal typing and strict static typing. TypeScript, on the other
+hand, was built to statically understand various patterns of JavaScript. Therefore, it has fancy
+union types, conditional types, and a lot of other stuff that Kotlin simply cannot support. As a
+result, although there is a [tool](https://github.com/kotlin/dukat) that can convert TypeScript
+`d.ts` declaration into Kotlin external declaration for Kotlin/JS to consume, it cannot guarantee a
+100% faithful translation of type constraints. For example, a string literal union type like
+
+```typescript
+type UnaryOperator = "!" | "-";
+```
+
+will be transformed to `String` in Kotlin, since Kotlin doesn't support union type. Another common
+TypeScript pattern is discriminated union:
+
+```typescript
+type List<T> =
+  { readonly type: "nil" } | { readonly type: "cons"; readonly element: T; readonly next: List<T> };
+```
+
+Kotlin cannot support this so the generated Kotlin type will simply be `Any`.
+
+These limitations imply that we cannot write the TypeScript code like we normally did. Instead, we
+should write TypeScript in a "Kotlin way", so that the types can be properly picked up by the type
+declaration transformer.
+
+The above problem is only half of the story. The second half is the fight with the build system. You
+might expect that you can mix Kotlin and JavaScript code, just like you can mix JS with TS code.
+That's a bad assumption. For some unknown reason, Kotlin's Gradle plugin doesn't let you depend on
+arbitrary JavaScript code. The only way you can depend on JavaScript code is by declaring them as
+NPM dependency in `build.gradle`. (Yes, in Gradle, not even in `package.json`.)
+
+Fine, at least now we know what to do:
+
+1. Generate parser by `antlr4ts`;
+2. Carefully write TypeScript code in Kotlin fashion;
+3. Publish the TS code to NPM;
+4. Declare the NPM package as a dependency, test it.
+5. If things go wrong, go back to 1 and start over.
+
+### Stage 2 Act 3: Hooking the parser code together
+
+There is one final twist. The parser doesn't just parse. We want the parser to produce something
+useful, namely the [AST](https://en.wikipedia.org/wiki/Abstract_syntax_tree). Therefore, we have to
+make a hard choice again:
+
+1. Make the TypeScript parser depends on the AST module written in Kotlin;
+2. Create a different AST in the TypeScript code, and transfor that into Kotlin AST in adapter.
+
+You might think choice 1 might be easier. However, it means that we have to publish or copy the
+generated JS code for AST package, which introduces another dependency publishing hell. Therefore, I
+chose option 2. It needs slightly more code, but those additional code is easy to reason: you just
+need to write a bunch of boring visitor code that transform the AST in an uninteresting way.
+
+The flow can be explained by the following figure:
+
+![parser flow](/blog/2020-05-17-samlang-in-browser/parser-flow.png)
+
+Now the parser code is finally working, and it's time to remove the `GIVE UP` error and replace that
+with code that connects to the TS code:
+
+```typescript
+// The TS code imported here
+import buildTsModuleFromText
+
+actual fun buildModuleFromText(
+  moduleReference: ModuleReference,
+  text: String
+): Pair<Module, List<CompileTimeError>> =
+  try {
+    val tsModule = buildTsModuleFromText(text)
+    transformModule(tsModule = tsModule) to emptyList()
+  } catch (error: Throwable) {
+    // reconstruct error ...
+  }
+```
+
+## Stage 3: Create an NPM package build
+
+At this stage, we already have a fully-functional multiplatform build of samlang that can run on JVM
+and JS platform. However, the JS one still needs some work. The compiled JS code is in a form of 10
+different packages that depend on each other. If we do it in a naive way, we have to publish all 10
+of them and create another dependency hell for us.
+
+Kotlin/JS provides webpack integration that can assemble everything, including dependencies, into a
+single file. This is exactly the solution I need. However, it takes me many hours to figure out why
+the build doesn't contain the function I exported.
+
+The reason is that Kotlin compiler for JS performs some automatic DCE (dead code elimination). This
+is a very simple optimization in principle. Imagine you have some code like this:
+
+```typescript
+const a = () => console.log("haha");
+const b = () => console.log("ahah");
+const c = () => b();
+export const main = () => a();
+```
+
+A compiler can first safely delete the function `c` since it is not used by any other function.
+After that, it can throw away function `b`, since nobody calls `b` after `c` is gone. However, a
+naive implementation might end up throw away everything. Notice that there is also nothing calling
+`main`. Therefore, `main` will be thrown away and then everything will be gone eventually!
+
+Kotlin compiler isn't that dumb. It has a special case that says don't throw away the `main`
+function. However, its wisdom stops there. Instead of keeping all public functions in Kotlin, it
+throws them away completely, unless you configure it in Gradle. This configuration mystery takes me
+hours to debug!
+
+Then a 1.1MB `samlang-demo.js` is generated, which exports `runDemo` function inside the
+`samlang.demo` namespace. This implies a final push that provides a nicer experience to end-users:
+
+```typescript
+// Re-export the function in a nicer way.
+module.exports = require("./samlang-demo").samlang.demo.runDemo;
+```
+
+```typescript
+type DemoResult = {
+  readonly interpreterResult: string | null;
+  readonly interpreterPrinted: string | null;
+  readonly prettyPrintedProgram: string | null;
+  readonly assemblyString: string | null;
+  readonly errors: readonly string[];
+};
+
+/**
+ * @param programString source code of a samlang program.
+ * @returns result of running demo operation on it. See the type definition of `DemoResult`.
+ */
+declare const runDemo: (programString: string) => DemoResult;
+export = runDemo;
+```
+
+## Final Result
+
+![new samlang demo website](/blog/2020-05-17-samlang-in-browser/samlang-demo.png)

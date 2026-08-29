@@ -1,0 +1,331 @@
+---
+title: "CoursePlan: A Unique Design & Tech Initiative"
+image: "/blog/2022-01-02-courseplan-review/two-graphs-theory.png"
+---
+
+## Introduction
+
+CoursePlan is one of the projects of [Cornell DTI](https://www.cornelldti.org), the project team I
+was in for most of my college life. CoursePlan allows you to put in your courses at Cornell, and it
+will automatically compute your requirement fulfillment progress.
+
+A natural question you might want to ask is: how? As you would expect, requirement checking is not
+an easy problem. There is no centralized platform to check requirements at the university level, so
+we have the project. Some departments have their own checklist, but most of them cannot be automated
+and must be manually filled by academic advisors.
+
+As the main architect that comes up with the algorithm and the user flow, I would say it's a
+difficult but rewarding journey.
+
+## Taming the Complexity
+
+### The Initial Design
+
+The following promotion image from the DTI website shows the first iteration of the product:
+
+![First Iteration](/blog/2022-01-02-courseplan-review/courseplan-promotion.png)
+
+It mostly has everything you would expect: you can put in your courses, and we tell you the
+requirements you satisfy. Simple and intuitive, right? In spring 2020, it was the consensus of the
+team members that we finally have a prototype ready for launch. Therefore, they reached out to
+developer leads to help resolve some of their launch-blocking problems. The developer lead they
+reached out was me, and I did find out a lot of issues with their requirement checking algorithm.
+
+To start simple, let's imagine how you would design such a system. You might remember that you have
+to take certain courses for certain requirements. For example, CS 1110 for the intro to computing
+requirement. Some requirements allow wildcards, like any 2000 level classes. Combining all of this,
+you might come up with such json structure to encode the requirement:
+
+```json
+{
+  "name": "English",
+  "courses": ["ENG 19**", "ENG 1234", "ENG 2***"]
+}
+```
+
+This is nice, until at some point you encounter a requirement that you are unwilling to list all
+eligible courses. Such requirements do exist and are very common. The most prominent example is the
+liberal studies requirement.
+
+![Liberal Studies Example](/blog/2022-01-02-courseplan-review/liberal-studies-example.png)
+
+It has a lot of different categories, each containing a lot of eligible courses from a lot of
+majors. Finding and listing all of them would be very error-prone and exhausting. Fortunately,
+Cornell has an online course roster and it provides a JSON API. From the API, we can get a lot of
+useful metadata. In the following example, we can get the exact the liberal studies categories we
+want.
+
+![Liberal Studies JSON](/blog/2022-01-02-courseplan-review/liberal-studies-json.png)
+
+This is good news, since it means that a lot of requirement encoding can be automated.
+Unfortunately, it was automated in the wrong way.
+
+### Pre-generation of Eligible Courses
+
+CoursePlan is its own product separate from the Cornell course roster. Therefore, we need an async
+fetch to the Cornell roster API somewhere in the app. Unfortunately, the initial prototype does the
+check on the frontend, and on every course-requirement pair. This makes the app very laggy, and, if
+the product were to be launched, liable for DDoS attack on the Cornell roster API.
+
+This is clearly an antipattern. But how do we solve it? It's easy to say let's throw this entire
+code away and rewrite it with a better alternative. However, this is not possible for a product
+that's planning to launch soon. Therefore, a more incremental approach is needed.
+
+It's important to look back at the abstract picture and see what's happening and what we really
+need. For each course `c`, we need to check whether it helps fulfill requirement `r`. What's
+happening is that we make a fetch requirement to the API for that course-requirement pair. However,
+let's be reminded of the fact that the roster JSON data is the same for every class, so we only need
+to fetch the data once for every class, regardless of how many requirements it's matched to. Thus,
+we just derived a first optimization that reduces the number of IO significantly.
+
+![Motivation of pre-generation](/blog/2022-01-02-courseplan-review/pre-generation-motivation.png)
+
+Can we do better? It turns out that we can. What if we pre-fetch all the course roster data, and
+bundle it into a single file at compile time? Then we only need to make one request, and the request
+does not need to hit the Cornell API, and can be properly CDN-cached. Sadly, if we go with this
+approach, the bundled file is way too big: more than 100MB. Even with fast Internet nowadays, the
+JSON will still take a lot of time to load and parse.
+
+At this point, you might give up on doing requirement checking entirely on the frontend, and move
+the computation to the backend, where loading a 100MB static JSON is a trivial workload. However,
+this will make the requirement checking flow inherently laggy on the frontend due to the unavoidable
+async-ness.
+
+Let's not get trapped by the problem we are facing with the specifics of certain approaches, but
+instead, ask ourselves what we really want. We need to know whether a course satisfies a
+requirement, but we don't really care when the check happens.
+
+In the previously mentioned approach, the validation happens at runtime, which forces it to be
+dependent on the Cornell roster API. _What if it happens at the build time?_ This is the question
+that leads to the right answer: we can pre-generate a list of satisfying courses at build time by
+matching all courses versus all requirements. The following diagram illustrates the idea:
+
+![Pre-generation end result](/blog/2022-01-02-courseplan-review/pre-generation-end-result.png)
+
+Indeed, this is an expensive `O(mn)` operation, but the end-users won't feel it. In reality, this is
+reasonably fast. It takes at most 5 seconds on my laptop, which includes the compilation time of the
+generator source code from TypeScript to runnable JavaScript. The resulting requirement to courses
+mapping is also surprisingly small: only around 800KB, which is even smaller than some of the image
+assets.
+
+With the new setup, we finally removed the biggest concern of the launch. However, as we are
+encoding more major requirement data, we found some limitations of the current algorithm.
+
+## Double Counting
+
+If all we have to do is to match courses to requirements, the problem would be a simple matching
+problem where you just throw things into appropriate buckets based on the bucket description.
+However, almost for all colleges, there was an almost universal rule applied to most requirements
+that a course cannot be double-counted for two requirements.
+
+### The Requirement Graph
+
+Before we tackle the double-counting issue, we need to first detect them. Intuitively, if a course
+is matched to both requirement A and requirement B, then the course is being double-counted.
+
+However, this is not straightforward under the previously mentioned architecture, where we simply
+match courses to requirements. In other words, the old architecture sees the problem from the
+perspective of each requirement. To detect double counting, we need to see the problem from the
+perspective of each course. Therefore, we need some sort of bidirectional mapping between
+requirements and courses.
+
+```json
+{
+  "req1": ["course1", "course2"],
+  "req2": ["course2"],
+  "course1": ["req1"],
+  "course2": ["req1", "req2"]
+}
+```
+
+You might think of this as some sort of data structure optimization for faster lookup, which is
+usual for typical LeetCode problems. However, if your knowledge of CS fundamentals has not
+completely vanished yet, you might recall there is a more general concept behind this. The arbitrary
+mapping might remind you of the graph data structure. More specifically, it should be a
+bidirectional graph, with requirements on one side and courses on the other side.
+
+![Requirement Graph Visualization](/blog/2022-01-02-courseplan-review/requirement-graph.png)
+
+Once the idea of graphs surfaced, it becomes clear that this is the only elegant and powerful
+representation of the problem space: there can be arbitrary connections between any requirement node
+and course node, and it is our job to compute a set of correct edges.
+
+The issue of double-counting also becomes trivial to detect in the graph: for each course node,
+check the number of connections. At a recap, here is the entire progress from pre-computation to the
+requirement graph:
+
+![Requirement Graph Flow](/blog/2022-01-02-courseplan-review/requirement-graph-flow.png)
+
+### Representing User Choices
+
+The double-counting problem also fundamentally changes the way we think about the purpose of our
+product. Before we tackle the double-counting problem, the core user flow is very simple: we provide
+users with some ways to put in their courses, and then we compute requirement fulfillment for them.
+
+```typescript
+function computeRequirementProgress(
+  requirements: readonly Requirement[],
+  courses: readonly Course[],
+): Progress;
+```
+
+With double counting, we are suddenly facing a lot of potential choices:
+
+1. Do nothing;
+2. Warn users about double-counting;
+3. Allow users to make only legal choices to prevent double counting;
+4. Use the network-flow algorithm to make legal choices for users that result in the best
+   requirement fulfillment progress;
+
+It is not immediately clear what is the best choice. The 1st choice is certainly not a good idea,
+since then it would an overkill to even use a requirement graph. The 4th choice looks very fancy,
+but it can also be very confusing. The network-flow algorithm is a discrete one. It doesn't
+guarantee any continuity that users might expect. For example, it is entirely possible that adding a
+new course could remove a course to requirement connection, because it can help to fulfill two more
+requirements. This "irratic" behavior can be very confusing for users.
+
+![A confusing example using network-flow](/blog/2022-01-02-courseplan-review/network-flow-confusing.png)
+
+> _(This is possible and legal since some requirements explicitly allow double counting.)_
+
+In the end, we decided to be conservative, so that we don't over-approximate our users' real
+progress. This left us with only option 2 and 3. We chose to be safe initially and went with
+option 3. The enforcement is actually very straightforward: for each course added by the user, we
+map it to zero or one requirement. This choice is recorded during the course adding time in a modal.
+
+![Add Course Modal](/blog/2022-01-02-courseplan-review/add-course-modal.png)
+
+### User Confusion
+
+The mechanism described above indeed gives us the full power to let the users add courses and inform
+us about their choices accurately. It seems that we completely solved the problem with a beautiful
+abstraction. However, beauty exists only in theory.
+
+In practice, a lot of users don't even know they are making choices: when they are mass adding
+courses during onboarding time, they ignore everything in the modal, go with the default choice, and
+later complain in the bug report that the requirements are not fulfilled in the way they think
+should be fulfilled.
+
+While it's partially the user's fault for not reading the instructions carefully, the flow of our
+app also needs to share the blame. Why must users make a choice whenever they add a course? Why
+can't we let them add courses and fix those double-counting issues later? In this way, maybe they
+have more context on why there needs to be a choice in the first place, and what's the best way to
+choose to maximize their requirement progress.
+
+On the engineering side (aka requirement graph), this means what do we want to reason about in order
+to ensure that there is no double-counting: which edge to add or which edge to remove.
+
+![Difference between the old and new flow](/blog/2022-01-02-courseplan-review/new-flow-diff.png)
+
+In the above example, this might look straightforward. By definition, we can have at most one edge
+from each course to prevent double counting. However, what if a requirement allows double counting,
+and what if a requirement, in general, allows double-counting, but prohibits double counting only
+between another specific requirement? As we face more and more of these additional constraints,
+preventing double-counting upfront no longer scales. Instead, it is much easier to first let the
+problem appear and detect them.
+
+You might ask: what if we do that under the hood in the program, and then inform the users of the
+end result. This sounds good in theory as you try to do the heavy computation on our side and leave
+the user only with a simplified view, it still inevitability leaks the implementation detail in the
+form of user confusion: why there is an error telling me I cannot add the course in this way? In
+order for the users to answer this kind of question, they still have to do the exact same reasoning.
+
+Therefore, we had to give up full enforcement of the no double-counting policy. Instead, we had to
+allow them, detect them, and let the user fix them under our guidance. This is what I came up with
+during the initial sketch:
+
+![Constraint violations](/blog/2022-01-02-courseplan-review/constraint-violation-sketch.png)
+
+### If One Graph Is Not Enough, Let's Have Two of Them
+
+We now knew what's the "correct" user flow, and what we should do to best approach the problem
+technically, we still face heavy designer pushback on the loss of no double-counting guarantee.
+
+The designers and the PM worry that careless users would ignore all the warnings, so they propose
+that all the edges that might cause double-counting will not be added until the double-counting
+issues are fixed. It seems to be a good enough compromise, but I still don't really like it on the
+technical ground: it seems to introduce a discrepancy between the technical level and the user
+interface level:
+
+- At the technical level, we have a graph that has all double-counting issues;
+- At the UI level, we present a slightly modified progress that has no double counting issues.
+
+Therefore, we have two closely connected datasets that are still visibly different. The complexity
+might still leak into the UX without us realizing it.
+
+Eventually, I came up with another compromise that tried to salvage my original plan of fully
+allowing double counting: we compute two requirement graphs: one with all the double-counting issues
+intact, and one that removes all edges that have double-counting issues.
+
+![Two requirement graphs algo](/blog/2022-01-02-courseplan-review/two-graphs-theory.png)
+
+It looks like a clever hack at first to make things easier to reason, but it turns out to be a
+critical enhancement to the abstraction that unlocks a feature we never thought about before: two
+progress bars. The first graph with double-counting issues represents the dangerous or optimistic
+progress bar, while the second represents a safe and conservative one.
+
+Both progress bars are meaningful for the users: the optimistic one tells the users what their
+courses can help them fulfill at the best so they can better plan, while the second one gives them a
+reality check. The diff between the two graphs exactly represents the problem the user needs to fix.
+
+The annotated screenshot below shows my
+[experimental implementation](https://github.com/cornell-dti/course-plan/pull/599).
+
+![Two requirement prototype](/blog/2022-01-02-courseplan-review/two-graphs-prototype.png)
+
+After the great experiment, I graduated.
+
+<center>
+  <img
+    src="https://developersam.com/fan-arts/graduation-sam.webp"
+    style={{ maxWidth: "300px" }}
+    alt="graduated sam"
+  />
+</center>
+
+## Disclaimers
+
+This blog post makes no attempt to describe the full technical complexities. There are a lot of
+difficult problems not covered in this post, including but not limited to:
+
+- AP/IB credits
+- Cross-listed courses
+- Requirements we cannot accurately model yet
+
+To develop a better understanding of the topic, you can also read some RFCs I made:
+
+- [Introduce proof-of-concept requirement pre-computation code](https://github.com/cornell-dti/course-plan/pull/73)
+- [New Architecture for Requirement Computation](https://github.com/cornell-dti/course-plan/issues/139)
+- [Rethinking Requirement Computation and UX](https://github.com/cornell-dti/course-plan/issues/522)
+- [Sam's two graph & opt-out-based implementation](https://github.com/cornell-dti/course-plan/pull/599)
+
+_After you read some of these RFCs, you might finally understand why figures in this blog post have
+so many inconsistent styles. Because I am too lazy to remake them so I copied them from everywhere._
+
+## Final Remarks
+
+CoursePlan is definitely the most unique development experience I had so far. It is even hard to
+categorize it. In most of the industry work, it is the designs and business needs that guide the
+development. There are also a lot of open source projects that are developer-focused and solely
+guided by development needs.
+
+It is hard to fit my CoursePlan experience into either of two buckets. Surprisingly, as our
+algorithm and abstraction evolve, the development seems to guide designs: the algorithm informs the
+designers what information needed to be collected from the user in order to produce an accurate
+requirement graph.
+
+Nevertheless, the developers are also constrained by external forces we cannot control. One of these
+forces is of course the end-user: when they ignore our instructions, we have to change the design
+and the user flow to make them more aware. The other force is Cornell, which uses imprecise natural
+language to describe the graduation requirements that are often vague, inconsistent across majors
+and colleges, and fundamentally not designed for automated checking. It's almost like fighting
+against the halting problem with static analysis. Yet, we succeeded in accurately modeling or at
+least approximating most of the popular majors.
+
+Over the first half-year unofficially on the team and one and a half year officially on the team, I
+came to realize that the great user experience enhancements do not come from a bunch of carefully
+crafted if-else, but instead through very few more powerful general-purpose abstractions that let us
+see through the problem on a higher level.
+
+Now that I have graduated and further contribution is unlikely, but I think this blog post would
+serve as a helpful final goodbye.
