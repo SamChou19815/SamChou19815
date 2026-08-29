@@ -154,6 +154,56 @@ pub enum Action {
     OpenUrl(String),
 }
 
+/// Something only the browser can do. The wasm bridge hands these to the host
+/// one line at a time; [`HostEvent::encode`] is the wire form.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum HostEvent {
+    /// Open a URL that is not a view of this app.
+    Open(String),
+    /// Put the URL bar and the document title on a view.
+    Route {
+        replace: bool,
+        path: String,
+        title: String,
+    },
+}
+
+impl HostEvent {
+    /// `open <url>` or `route push|replace <path>\t<title>`. Space-separated
+    /// with a tab before the title, since a title may contain spaces and a
+    /// path never contains a tab.
+    pub fn encode(&self) -> String {
+        match self {
+            HostEvent::Open(url) => format!("open {url}"),
+            HostEvent::Route {
+                replace,
+                path,
+                title,
+            } => {
+                let verb = if *replace { "replace" } else { "push" };
+                format!("route {verb} {path}\t{title}")
+            }
+        }
+    }
+}
+
+/// Queues work for the host.
+pub fn push_host_event(event: HostEvent) {
+    HOST_EVENTS.with(|queue| queue.borrow_mut().push_back(event));
+}
+
+/// Takes the next thing the host has to do, if any.
+pub fn poll_host_event() -> Option<HostEvent> {
+    HOST_EVENTS.with(|queue| queue.borrow_mut().pop_front())
+}
+
+/// Forgets that this run ever synced a route, so the next one replaces rather
+/// than pushes. Called when a session boots.
+pub fn reset_route_sync() {
+    ROUTE_SYNCED.with(|synced| synced.set(false));
+    CURRENT_ROUTE.with(|route| route.borrow_mut().clear());
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub enum Modal {
     Timeline { event: usize, scroll: usize },
@@ -172,14 +222,22 @@ pub struct Reader {
 }
 
 thread_local! {
-    /// Actions produced by the latest input, drained by the wasm host.
-    pub(crate) static PENDING_ACTIONS: std::cell::RefCell<Vec<Action>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+    /// Work for the host, drained one line at a time by the wasm bridge.
+    static HOST_EVENTS: std::cell::RefCell<std::collections::VecDeque<HostEvent>> =
+        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+    /// Whether this run has put the URL bar on a view yet. The first one
+    /// replaces, so booting from `/` leaves no shell entry behind for the back
+    /// button; every later one pushes.
+    static ROUTE_SYNCED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// A view the host has asked for — a URL entered, a link followed, or the
     /// back button. Applied by the next [`App`] to look, which is either the
     /// one being built ([`App::new`]) or the one handling the next event.
     static PENDING_ROUTE: std::cell::RefCell<Option<String>> =
         const { std::cell::RefCell::new(None) };
+    /// Set when the host has decided the visitor has left the app — the back
+    /// button landing somewhere the app has no view for. Applied by the next
+    /// frame, so the app exits through its own path and restores the screen.
+    static PENDING_QUIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The view the app is on, republished every frame for the host to read.
     static CURRENT_ROUTE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
@@ -189,20 +247,43 @@ pub fn request_route(path: &str) {
     PENDING_ROUTE.with(|pending| *pending.borrow_mut() = Some(path.to_string()));
 }
 
-/// The view the last frame was showing, as a site path.
-pub fn current_route() -> String {
-    CURRENT_ROUTE.with(|route| route.borrow().clone())
-}
-
-/// Records the view a frame is about to draw, for [`current_route`].
+/// Records the view a frame is about to draw, queueing a [`HostEvent::Route`]
+/// whenever it changes so the URL bar and the document title follow the app.
 pub fn publish_route(route: String) {
-    CURRENT_ROUTE.with(|current| *current.borrow_mut() = route);
+    let changed = CURRENT_ROUTE.with(|current| {
+        let mut current = current.borrow_mut();
+        if *current == route {
+            return false;
+        }
+        current.clone_from(&route);
+        true
+    });
+    if !changed {
+        return;
+    }
+    let replace = !ROUTE_SYNCED.with(|synced| synced.replace(true));
+    let title = title_for(&route);
+    push_host_event(HostEvent::Route {
+        replace,
+        path: route,
+        title,
+    });
 }
 
 /// Takes whatever view the host last asked for, leaving nothing behind: a
 /// request is applied once, by the first frame to look.
 pub(crate) fn take_pending_route() -> Option<String> {
     PENDING_ROUTE.with(|pending| pending.borrow_mut().take())
+}
+
+/// Asks the app to exit. Takes effect on the next frame.
+pub fn request_quit() {
+    PENDING_QUIT.with(|pending| pending.set(true));
+}
+
+/// Takes the host's exit request, leaving nothing behind.
+pub(crate) fn take_pending_quit() -> bool {
+    PENDING_QUIT.with(|pending| pending.replace(false))
 }
 
 /// Clone is used to snapshot state for pure rendering.
@@ -307,14 +388,19 @@ impl App {
         self.visited.count_ones() as usize
     }
 
-    pub fn take_actions(&mut self) -> Vec<Action> {
-        let actions = std::mem::take(&mut self.actions);
-        if !actions.is_empty() {
-            PENDING_ACTIONS.with(|pending| {
-                pending.borrow_mut().extend(actions.iter().cloned());
-            });
+    /// Drains the side effects the latest input produced. A link naming a view
+    /// of this app is followed here rather than handed to the browser, so the
+    /// two never disagree about what this app is responsible for.
+    pub fn take_actions(&mut self) {
+        for Action::OpenUrl(url) in std::mem::take(&mut self.actions) {
+            match link_target(&url) {
+                LinkTarget::View(path) => {
+                    self.go_to(&path);
+                }
+                LinkTarget::External(url) => push_host_event(HostEvent::Open(url)),
+                LinkTarget::Ignore => {}
+            }
         }
-        actions
     }
 
     /// Feeds one crossterm event into the state machine.
@@ -785,6 +871,80 @@ fn view_at(path: &str) -> Option<View> {
 /// never disagree about what this app is responsible for.
 pub fn has_view(path: &str) -> bool {
     view_at(path).is_some()
+}
+
+/// What the document is called while the shell, rather than a view, is up.
+pub const SHELL_TITLE: &str = "Developer Sam — Terminal";
+
+/// What the document is called while the view at `path` is on screen. The post
+/// titles come from `posts.rs`, which build.rs compiles out of the same
+/// sources the site renders, so the tab and the page cannot disagree.
+pub fn title_for(path: &str) -> String {
+    let path = path.strip_suffix('/').unwrap_or(path);
+    if let Some(post) = posts::find(path) {
+        return format!("{} | {}", posts::POSTS[post].title, posts::BLOG_TITLE);
+    }
+    match view_at(path) {
+        Some(View::Tab(ABOUT_TAB)) => "About | Developer Sam".to_string(),
+        Some(View::Tab(TIMELINE_TAB)) => "Timeline | Developer Sam".to_string(),
+        // The blog index, and anything else under it that is no longer a post.
+        Some(_) => posts::BLOG_TITLE.to_string(),
+        None => SHELL_TITLE.to_string(),
+    }
+}
+
+/// Where activating a link should lead.
+pub enum LinkTarget {
+    /// A view of this app: follow it here, without touching the browser.
+    View(String),
+    /// Somewhere else on the web: the host opens it in a new tab.
+    External(String),
+    /// Neither, so nothing happens. The page renders whatever bytes reach it,
+    /// and a `javascript:` URL would run in that document — so anything but
+    /// http(s) is refused at the source rather than at the host's `window.open`.
+    Ignore,
+}
+
+/// Where the URL a link carries should lead.
+pub fn link_target(url: &str) -> LinkTarget {
+    if let Some(path) = site_path(url) {
+        if has_view(&path) {
+            return LinkTarget::View(path);
+        }
+    }
+    if starts_with_ignore_case(url, "https://") || starts_with_ignore_case(url, "http://") {
+        LinkTarget::External(url.to_string())
+    } else {
+        LinkTarget::Ignore
+    }
+}
+
+/// The site path a URL points at, if it points at this site. Both forms turn up
+/// in post bodies: relative links as the author wrote them, and absolute ones
+/// the native binary needs a host for.
+fn site_path(url: &str) -> Option<String> {
+    if url.starts_with('/') {
+        return Some(url.to_string());
+    }
+    let rest = strip_prefix_ignore_case(url, "https://")
+        .or_else(|| strip_prefix_ignore_case(url, "http://"))?;
+    let rest = strip_prefix_ignore_case(rest, "www.").unwrap_or(rest);
+    let rest = strip_prefix_ignore_case(rest, "developersam.com")?;
+    match rest {
+        "" => Some("/".to_string()),
+        _ if rest.starts_with('/') => Some(rest.to_string()),
+        // A different host that merely starts the same way, e.g.
+        // `developersam.com.example.org`.
+        _ => None,
+    }
+}
+
+fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
+    text.len() >= prefix.len() && text[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
+fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    starts_with_ignore_case(text, prefix).then(|| &text[prefix.len()..])
 }
 
 fn modal_scroll(modal: &mut Modal) -> &mut usize {

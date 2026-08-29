@@ -236,6 +236,11 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             if let Some(route) = crate::take_pending_route() {
                 next.go_to(&route);
             }
+            // The back button left the app's views behind, so the app leaves
+            // too — through its own exit, which restores the screen.
+            if crate::take_pending_quit() {
+                next.quit = true;
+            }
             if let Some(event) = terminal_event_to_crossterm(&event) {
                 next.handle_event(&event);
                 // Surface OpenUrl actions to the host.

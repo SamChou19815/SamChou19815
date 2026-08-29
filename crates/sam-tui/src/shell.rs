@@ -10,6 +10,7 @@
 use crate::data;
 use crate::highlight;
 use crate::theme;
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::style::Color;
 use iocraft::components::MixedTextContent;
 use iocraft::prelude::*;
@@ -22,6 +23,18 @@ pub struct Shell {
     /// Working directory as segments (`[]` = `/home/sam`).
     path: Vec<String>,
     history: Vec<String>,
+}
+
+/// What running a command asks the terminal to do. `clear` and `dev-sam` are
+/// the shell's two commands whose effect is the terminal's rather than a
+/// string it prints.
+pub enum Outcome {
+    /// Styled text to print.
+    Text(String),
+    /// Wipe the screen and redraw the prompt at the top.
+    Clear,
+    /// Boot the full-screen app.
+    LaunchApp,
 }
 
 impl Default for Shell {
@@ -38,28 +51,35 @@ impl Shell {
         }
     }
 
-    /// Runs one command line and returns styled output (no prompt; the
-    /// terminal prints the prompt itself).
-    pub fn execute(&mut self, line: &str) -> String {
+    /// Every command run so far, oldest first — what `history` prints and what
+    /// the line editor walks with the arrow keys.
+    pub fn history(&self) -> &[String] {
+        &self.history
+    }
+
+    /// Runs one command line. Styled output carries no prompt; the line editor
+    /// prints that itself.
+    pub fn execute(&mut self, line: &str) -> Outcome {
         let line = line.trim();
         if line.is_empty() {
-            return String::new();
+            return Outcome::Text(String::new());
         }
         self.history.push(line.to_string());
         let mut words = line.split_whitespace();
         let command = words.next().unwrap_or_default();
         let args: Vec<&str> = words.collect();
         match command {
-            "help" => self.help(),
-            "ls" => self.ls(&args),
-            "cat" => self.cat(&args),
-            "cd" => self.cd(&args),
-            "pwd" => self.pwd(),
-            "echo" => format!("{}\n", args.join(" ")),
-            "whoami" => "sam\n".to_string(),
-            "history" => self.print_history(),
-            "clear" | "dev-sam" => String::new(), // handled by the terminal itself
-            _ => self.unknown(command),
+            "clear" => Outcome::Clear,
+            "dev-sam" => Outcome::LaunchApp,
+            "help" => Outcome::Text(self.help()),
+            "ls" => Outcome::Text(self.ls(&args)),
+            "cat" => Outcome::Text(self.cat(&args)),
+            "cd" => Outcome::Text(self.cd(&args)),
+            "pwd" => Outcome::Text(self.pwd()),
+            "echo" => Outcome::Text(format!("{}\n", args.join(" "))),
+            "whoami" => Outcome::Text("sam\n".to_string()),
+            "history" => Outcome::Text(self.print_history()),
+            _ => Outcome::Text(self.unknown(command)),
         }
     }
 
@@ -277,6 +297,225 @@ impl Shell {
             }
         }
         Ok(path)
+    }
+}
+
+// --- The line editor ---------------------------------------------------------
+
+/// Cells the prompt occupies: `sam@developersam:~$ `. Fixed, so the cursor can
+/// be placed by column without measuring escape sequences.
+const PROMPT_WIDTH: usize = 20;
+
+/// The shell prompt, in the site's colours — the same ones the xterm theme maps
+/// its green, blue and bright black to.
+fn prompt() -> String {
+    format!(
+        "{}{}{}{}",
+        paint(Style::new().fg(theme::STRING).bold(), "sam@developersam"),
+        paint(Style::new().fg(theme::BORDER), ":"),
+        paint(Style::new().fg(theme::KEYWORD), "~"),
+        paint(Style::new().fg(theme::BORDER), "$ "),
+    )
+}
+
+/// The editable line at the prompt. Keeps the buffer and the cursor; history
+/// lives on the [`Shell`], which is the thing that records it, so the `history`
+/// command and the arrow keys can never drift apart.
+pub struct LineEditor {
+    line: String,
+    /// Byte offset of the cursor within `line`.
+    cursor: usize,
+    /// Where the arrow keys are in the shell's history. Equal to its length
+    /// while a fresh line is being typed.
+    history_index: usize,
+}
+
+impl Default for LineEditor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LineEditor {
+    pub fn new() -> Self {
+        LineEditor {
+            line: String::new(),
+            cursor: 0,
+            history_index: 0,
+        }
+    }
+
+    /// The greeting a fresh session opens with, `dev-sam` pre-typed so a
+    /// visitor only has to press Enter. `touch` drops the keyboard hint, which
+    /// a phone cannot act on.
+    pub fn banner(&mut self, touch: bool) -> String {
+        let mut out = paint(
+            Style::new().fg(theme::MUTED),
+            "dev-sam-sh 1.0 — developer sam's terminal",
+        );
+        out.push_str("\r\n");
+        if !touch {
+            out.push_str(&paint(
+                Style::new().fg(theme::MUTED),
+                "type help for commands, or run dev-sam",
+            ));
+            out.push_str("\r\n");
+        }
+        out.push_str("\r\n");
+        self.set_line("dev-sam".to_string());
+        out.push_str(&self.render());
+        out
+    }
+
+    /// The prompt the visitor lands back on after the app exits.
+    pub fn resume(&mut self) -> String {
+        self.set_line(String::new());
+        format!(
+            "{}\r\n{}",
+            paint(
+                Style::new().fg(theme::MUTED),
+                "dev-sam exited — type dev-sam to run it again, or help",
+            ),
+            prompt(),
+        )
+    }
+
+    /// Feeds one key. Returns the ANSI to write and whether the app should boot.
+    pub fn key(&mut self, key: KeyEvent, shell: &mut Shell) -> (String, bool) {
+        // A key reports twice where the keyboard enhancement flags are
+        // supported; act on the press, as the app does.
+        if key.kind == KeyEventKind::Release {
+            return (String::new(), false);
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return (self.control(key.code), false);
+        }
+        match key.code {
+            KeyCode::Enter => return self.submit(shell),
+            KeyCode::Tab => return (self.complete(shell), false),
+            KeyCode::Up => self.recall(shell, -1),
+            KeyCode::Down => self.recall(shell, 1),
+            KeyCode::Left => {
+                if let Some((offset, _)) = self.line[..self.cursor].char_indices().next_back() {
+                    self.cursor = offset;
+                }
+            }
+            KeyCode::Right => {
+                if let Some(character) = self.line[self.cursor..].chars().next() {
+                    self.cursor += character.len_utf8();
+                }
+            }
+            KeyCode::Home => self.cursor = 0,
+            KeyCode::End => self.cursor = self.line.len(),
+            KeyCode::Backspace => {
+                if let Some((offset, _)) = self.line[..self.cursor].char_indices().next_back() {
+                    self.line.remove(offset);
+                    self.cursor = offset;
+                }
+            }
+            KeyCode::Delete => {
+                if self.cursor < self.line.len() {
+                    self.line.remove(self.cursor);
+                }
+            }
+            KeyCode::Char(character) => {
+                self.line.insert(self.cursor, character);
+                self.cursor += character.len_utf8();
+            }
+            _ => return (String::new(), false),
+        }
+        (self.render(), false)
+    }
+
+    fn control(&mut self, code: KeyCode) -> String {
+        match code {
+            KeyCode::Char('c') => {
+                self.set_line(String::new());
+                format!("^C\r\n{}", prompt())
+            }
+            // Wipe the screen but keep whatever was being typed, as a shell does.
+            KeyCode::Char('l') => format!("\x1b[2J\x1b[H{}", self.render_from_start()),
+            KeyCode::Char('a') => {
+                self.cursor = 0;
+                self.render()
+            }
+            KeyCode::Char('e') => {
+                self.cursor = self.line.len();
+                self.render()
+            }
+            KeyCode::Char('u') => {
+                self.line.drain(..self.cursor);
+                self.cursor = 0;
+                self.render()
+            }
+            _ => String::new(),
+        }
+    }
+
+    fn submit(&mut self, shell: &mut Shell) -> (String, bool) {
+        let line = std::mem::take(&mut self.line);
+        self.cursor = 0;
+        let outcome = shell.execute(&line);
+        self.history_index = shell.history().len();
+        match outcome {
+            Outcome::LaunchApp => ("\r\n".to_string(), true),
+            Outcome::Clear => (format!("\x1b[2J\x1b[H{}", prompt()), false),
+            Outcome::Text(text) => {
+                // The shell writes bare newlines; a terminal in raw mode needs
+                // the carriage return too.
+                let body = text.trim_end_matches('\n').replace('\n', "\r\n");
+                (format!("\r\n{body}\r\n{}", prompt()), false)
+            }
+        }
+    }
+
+    fn complete(&mut self, shell: &Shell) -> String {
+        let candidates = shell.complete(&self.line);
+        let candidates: Vec<&str> = if candidates.is_empty() {
+            Vec::new()
+        } else {
+            candidates.lines().collect()
+        };
+        match candidates.as_slice() {
+            [] => String::new(),
+            // Completion works on the last word of the whole line, so it also
+            // lands the cursor at the end.
+            [only] => {
+                let start = self.line.rfind(' ').map_or(0, |position| position + 1);
+                let suffix = if only.ends_with('/') { "" } else { " " };
+                self.set_line(format!("{}{only}{suffix}", &self.line[..start]));
+                self.render()
+            }
+            many => format!("\r\n{}\r\n{}", many.join("   "), self.render()),
+        }
+    }
+
+    /// Walks the shell's history. Past the newest entry is the fresh line the
+    /// visitor was typing, which is why the index runs one past the end.
+    fn recall(&mut self, shell: &Shell, direction: isize) {
+        let history = shell.history();
+        let at_oldest = direction < 0 && self.history_index == 0;
+        let next = self.history_index.saturating_add_signed(direction);
+        if at_oldest || next > history.len() {
+            return;
+        }
+        self.history_index = next;
+        self.set_line(history.get(next).cloned().unwrap_or_default());
+    }
+
+    fn set_line(&mut self, line: String) {
+        self.cursor = line.len();
+        self.line = line;
+    }
+
+    /// Repaints the prompt row and parks the cursor where it belongs.
+    fn render(&self) -> String {
+        format!("\r\x1b[K{}", self.render_from_start())
+    }
+
+    fn render_from_start(&self) -> String {
+        let column = PROMPT_WIDTH + self.line[..self.cursor].chars().count() + 1;
+        format!("{}{}\x1b[{column}G", prompt(), self.line)
     }
 }
 
