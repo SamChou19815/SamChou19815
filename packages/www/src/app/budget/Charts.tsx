@@ -103,36 +103,48 @@ export function MonthlyTotalsChart({
   );
 }
 
-export function MonthlyBar({
+// A category counts as "big" when its average spending per month in range exceeds this.
+export const BIG_CATEGORY_MONTHLY_AVG = 1000;
+
+export function MonthlyExpenseBar({
   range,
-  incomes,
   expenses,
+  tier,
 }: {
   range: Range;
-  incomes: ReadonlyArray<Income>;
   expenses: ReadonlyArray<Expense>;
+  tier: "big" | "small";
 }): React.JSX.Element {
   const months = monthsBetween(range.start, range.end);
   const monthSet = new Set(months);
+  const inRange = expenses.filter((e) => monthSet.has(monthBucket(e.date)));
 
-  const incomeCategories = Array.from(
-    new Set(
-      incomes.filter((i) => monthSet.has(monthBucket(i.date))).map((i) => i.source ?? NO_SOURCE),
-    ),
-  ).sort();
-  const expenseCategories = Array.from(
-    new Set(expenses.filter((e) => monthSet.has(monthBucket(e.date))).map((e) => e.category)),
-  ).sort();
+  const totalByCategory = new Map<string, number>();
+  for (const e of inRange) {
+    totalByCategory.set(e.category, (totalByCategory.get(e.category) ?? 0) + Number(e.amount));
+  }
+  const monthCount = Math.max(months.length, 1);
+  const categories = Array.from(totalByCategory)
+    .filter(([, total]) => {
+      const isBig = total / monthCount > BIG_CATEGORY_MONTHLY_AVG;
+      return isBig === (tier === "big");
+    })
+    .map(([cat]) => cat)
+    .sort();
 
+  if (categories.length === 0) {
+    return (
+      <div className="flex h-[300px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+        No {tier === "big" ? "big" : "other"} spending categories in range.
+      </div>
+    );
+  }
+
+  const palette = tier === "big" ? EXPENSE_PALETTE : PALETTE;
   const data = months.map((m) => {
     const row: Record<string, number | string> = { month: m };
-    for (const cat of incomeCategories) {
-      row[`income:${cat}`] = incomes
-        .filter((i) => monthBucket(i.date) === m && (i.source ?? NO_SOURCE) === cat)
-        .reduce((s, i) => s + Number(i.amount), 0);
-    }
-    for (const cat of expenseCategories) {
-      row[`expense:${cat}`] = expenses
+    for (const cat of categories) {
+      row[cat] = inRange
         .filter((e) => monthBucket(e.date) === m && e.category === cat)
         .reduce((s, e) => s + Number(e.amount), 0);
     }
@@ -147,21 +159,12 @@ export function MonthlyBar({
         <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
         <Tooltip formatter={(v) => formatCAD(Number(v))} />
         <Legend />
-        {incomeCategories.map((cat, idx) => (
+        {categories.map((cat, idx) => (
           <Bar
-            key={`income:${cat}`}
-            dataKey={`income:${cat}`}
-            stackId="income"
-            fill={INCOME_PALETTE[idx % INCOME_PALETTE.length]}
-            name={cat}
-          />
-        ))}
-        {expenseCategories.map((cat, idx) => (
-          <Bar
-            key={`expense:${cat}`}
-            dataKey={`expense:${cat}`}
+            key={cat}
+            dataKey={cat}
             stackId="expense"
-            fill={EXPENSE_PALETTE[idx % EXPENSE_PALETTE.length]}
+            fill={palette[idx % palette.length]}
             name={cat}
           />
         ))}

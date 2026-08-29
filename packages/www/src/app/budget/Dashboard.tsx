@@ -4,11 +4,12 @@ import { useMemo, useState } from "react";
 import { Card } from "./BudgetApp";
 import {
   AllocationDonut,
+  BIG_CATEGORY_MONTHLY_AVG,
   CashFlowLine,
   ExpenseByCategoryPie,
   IncomeByCategoryPie,
   InvestmentValueLine,
-  MonthlyBar,
+  MonthlyExpenseBar,
 } from "./Charts";
 import MonthlySummary from "./MonthlySummary";
 import TimeRangeSelector, {
@@ -98,8 +99,15 @@ export default function Dashboard({
       <Card>
         <h3 className="m-0 mb-4">Charts</h3>
         <div className="grid grid-cols-1 gap-8">
-          <ChartSection title="Income vs Expenses (monthly)">
-            <MonthlyBar range={range} incomes={incomes} expenses={expenses} />
+          <ChartSection
+            title={`Big spending categories (monthly avg > ${formatCAD(BIG_CATEGORY_MONTHLY_AVG)})`}
+          >
+            <MonthlyExpenseBar range={range} expenses={expenses} tier="big" />
+          </ChartSection>
+          <ChartSection
+            title={`Other spending categories (monthly avg ≤ ${formatCAD(BIG_CATEGORY_MONTHLY_AVG)})`}
+          >
+            <MonthlyExpenseBar range={range} expenses={expenses} tier="small" />
           </ChartSection>
           <ChartSection title="Cumulative cash flow">
             <CashFlowLine range={range} incomes={incomes} expenses={expenses} />
