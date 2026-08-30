@@ -137,6 +137,31 @@ export function openScreen(container: HTMLDivElement, options: ScreenOptions): S
     terminal,
     fit() {
       fitAddon.fit();
+      // The addon holds back 14px of width for a scrollbar, whatever is on
+      // screen. The app is full-screen — it runs in the alternate screen, where
+      // there is nothing to scroll back through — so those cells were showing
+      // as a strip of page down the right edge. Measure the cell the addon just
+      // settled on and take the width back; the shell keeps its scrollback, and
+      // its scrollbar simply overlays a column it does not write to.
+      const cell = metrics();
+      if (cell != null && cell.width > 0 && cell.height > 0) {
+        const cols = Math.max(2, Math.floor(container.clientWidth / cell.width));
+        const rows = Math.max(2, Math.floor(container.clientHeight / cell.height));
+        if (cols !== terminal.cols || rows !== terminal.rows) {
+          terminal.resize(cols, rows);
+        }
+        // A whole number of cells almost never divides the window exactly. Left
+        // alone the remainder all lands at the right and the bottom, which is a
+        // margin the app cannot see and did not ask for — so split it, and the
+        // app's own even margins stay even on the glass. The element's box is
+        // still the container's, so this shifts the grid without changing what
+        // the next fit measures.
+        const element = terminal.element;
+        if (element != null) {
+          element.style.marginLeft = `${Math.floor((container.clientWidth - terminal.cols * cell.width) / 2)}px`;
+          element.style.marginTop = `${Math.floor((container.clientHeight - terminal.rows * cell.height) / 2)}px`;
+        }
+      }
       return { cols: terminal.cols, rows: terminal.rows };
     },
     metrics,

@@ -17,7 +17,47 @@ use iocraft::AnyElement;
 type ComponentRect = taffy::Rect<i32>;
 
 const TITLE: &str = " DEVELOPER SAM ";
-const TAG: &str = " rust · wasm ";
+
+/// The one column everything the app draws is laid out down: the wordmark and
+/// the tabs, the pane's counter, the cards, and the hints along the bottom. It
+/// is the same measure and the same centering the pane's own body uses
+/// ([`crate::column_width`]) — the pane's border and padding are inset by
+/// exactly what the centering gives back, so every one of those lines up on the
+/// same left and right edge whatever the terminal's width.
+fn column_cols(cols: usize) -> u16 {
+    crate::column_width(cols as u16) as u16
+}
+
+#[derive(Props, Default)]
+struct ColumnProps {
+    width: u16,
+    children: Vec<AnyElement<'static>>,
+}
+
+/// Lays its children out in [`column_cols`], centered on the screen and inset
+/// by the cell a card keeps inside its own edges ([`CARD_PAD`]), so that a line
+/// of the header or of the status bar starts exactly under a card's marker
+/// rather than a cell to the left of it.
+#[component]
+fn Column(props: &mut ColumnProps) -> impl Into<AnyElement<'static>> {
+    element! {
+        View(
+            flex_direction: FlexDirection::Row,
+            width: 100pct,
+            justify_content: JustifyContent::Center,
+        ) {
+            View(
+                flex_direction: FlexDirection::Column,
+                width: props.width,
+                flex_shrink: 0.0_f32,
+                padding_left: CARD_PAD,
+                padding_right: CARD_PAD,
+            ) {
+                #(props.children.drain(..))
+            }
+        }
+    }
+}
 
 fn text(content: impl ToString) -> MixedTextContent {
     MixedTextContent::new(content)
@@ -281,19 +321,26 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             flex_direction: FlexDirection::Column,
             width: terminal_width,
             height: terminal_height,
-            background_color: theme::CARD_BG,
+            background_color: theme::SURFACE,
         ) {
-            Header(tab: app.tab, cols: cols)
-            Pane(title: pane_title, counter: counter, closable: app.reader.is_some()) {
+            Header(tab: app.tab, cols: cols, rows: terminal_height as usize)
+            Pane(
+                title: pane_title,
+                counter: counter,
+                closable: app.reader.is_some(),
+                column: column_cols(cols),
+            ) {
                 #(content_element(&app))
             }
-            StatusBar(
-                tab: app.tab,
-                modal_open: app.modal.is_some(),
-                reading: app.reader.is_some(),
-                visited: app.visited_count(),
-                cols: cols,
-            )
+            #((status_rows(terminal_width, terminal_height) > 0).then(|| element! {
+                StatusChrome(
+                    tab: app.tab,
+                    modal_open: app.modal.is_some(),
+                    reading: app.reader.is_some(),
+                    cols: cols,
+                    rows: terminal_height as usize,
+                )
+            }))
             #(app.modal.map(|modal| modal_element(&modal, cols, terminal_height)))
         }
     }
@@ -331,7 +378,9 @@ fn pane_counter(app: &App) -> String {
             tab => (app.scroll(tab) + 1, tab_line_count(tab, app.cols)),
         }
     };
-    format!(" {}/{} ", position, total.max(1))
+    // No trailing space: the counter ends on the column's right edge, where the
+    // cards' own right edge is.
+    format!(" {}/{}", position, total.max(1))
 }
 
 /// What the pane's title row carries beside its counter: nothing, or a name
@@ -378,23 +427,27 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
             flex_grow: 1.0_f32,
             border_style: BorderStyle::Single,
             border_color: theme::BORDER_SUBTLE,
-            background_color: theme::CARD_BG,
+            background_color: theme::SURFACE,
             overflow: Overflow::Hidden,
         ) {
-            View(flex_direction: FlexDirection::Row, width: 100pct, height: 1, padding_left: 1, padding_right: 1) {
-                View(width: spacer, flex_shrink: 0.0_f32)
-                View(flex_grow: 1.0_f32, justify_content: justify, overflow: Overflow::Hidden) {
-                    #(title.map(|title| element! {
-                        Text(
-                            content: format!(" {title} "),
-                            color: theme::ACCENT_TEXT,
-                            weight: Weight::Bold,
-                            wrap: TextWrap::NoWrap,
-                        )
-                    }))
+            View(flex_direction: FlexDirection::Row, width: 100pct, height: 1) {
+                Column(width: props.column) {
+                    View(flex_direction: FlexDirection::Row, width: 100pct) {
+                        View(width: spacer, flex_shrink: 0.0_f32)
+                        View(flex_grow: 1.0_f32, justify_content: justify, overflow: Overflow::Hidden) {
+                            #(title.map(|title| element! {
+                                Text(
+                                    content: format!(" {title} "),
+                                    color: theme::ACCENT_TEXT,
+                                    weight: Weight::Bold,
+                                    wrap: TextWrap::NoWrap,
+                                )
+                            }))
+                        }
+                        Text(content: counter, color: theme::MUTED, wrap: TextWrap::NoWrap)
+                        #(closable.then(|| element! { CloseButton }))
+                    }
                 }
-                Text(content: counter, color: theme::MUTED, wrap: TextWrap::NoWrap)
-                #(closable.then(|| element! { CloseButton }))
             }
             PaneBody {
                 #(props.children.drain(..))
@@ -409,6 +462,9 @@ struct PaneProps {
     counter: String,
     /// Whether the title row carries the reader's close button.
     closable: bool,
+    /// The app's column, which the title row keeps to so that the counter sits
+    /// over the right edge of the cards under it rather than out at the border.
+    column: u16,
     children: Vec<AnyElement<'static>>,
 }
 
@@ -468,96 +524,284 @@ pub fn root_element() -> AnyElement<'static> {
 struct HeaderProps {
     tab: usize,
     cols: usize,
+    rows: usize,
 }
 
-/// What the header can afford to show at the current width.
+/// The wordmark's letters, three cells wide and three rows tall, drawn out of
+/// half blocks. A terminal has one font size — the web host sets it once, for
+/// the whole grid (`screen.ts`) — so the only way to set the site's name at
+/// anything like a heading's size is to draw the letters out of cells. Three
+/// rows is what it takes for a letter to still read as that letter: at two the
+/// crossbars have nowhere to go and the name stops being legible. Only the
+/// letters [`TITLE`] spells are here; [`banner_rows`] gives up on anything else
+/// and the header falls back to the plain one-row title.
+const GLYPHS: [(char, [&str; 3]); 11] = [
+    (' ', [" ", " ", " "]),
+    ('A', ["█▀█", "█▀█", "▀ ▀"]),
+    ('D', ["█▀▄", "█ █", "▀▀ "]),
+    ('E', ["█▀▀", "█▀ ", "▀▀▀"]),
+    ('L', ["█  ", "█  ", "▀▀▀"]),
+    ('M', ["█▄█", "█ █", "▀ ▀"]),
+    ('O', ["█▀█", "█ █", "▀▀▀"]),
+    ('P', ["█▀█", "█▀▀", "▀  "]),
+    ('R', ["█▀█", "█▀▄", "▀ ▀"]),
+    ('S', ["█▀▀", "▀▀█", "▀▀▀"]),
+    ('V', ["█ █", "█ █", " ▀ "]),
+];
+
+/// `text` set in [`GLYPHS`], a cell of air between letters. `None` if it spells
+/// a letter the wordmark has never needed.
+fn banner_rows(text: &str) -> Option<[String; 3]> {
+    let mut rows: [String; 3] = Default::default();
+    for ch in text.chars() {
+        let glyph = GLYPHS.iter().find(|(letter, _)| *letter == ch)?.1;
+        for (row, cells) in rows.iter_mut().zip(glyph) {
+            if !row.is_empty() {
+                row.push(' ');
+            }
+            row.push_str(cells);
+        }
+    }
+    Some(rows)
+}
+
+/// The size at which the app takes itself to be on a phone. The host knows it
+/// is a touch device but only tells the shell (`ffi::sam_start`), not the app,
+/// so size is the only signal the app has: a phone held upright is far narrower
+/// than this, and on its side it is wide enough but only around twenty rows
+/// tall. What it costs a visitor there is the wordmark drawn big and the
+/// keyboard hints along the bottom — neither of which a thumb has any use for.
+const PHONE_COLS: usize = 60;
+const PHONE_ROWS: usize = 24;
+
+/// Whether the app is being read on something the size of a phone.
+fn touch_sized(cols: usize, rows: usize) -> bool {
+    cols < PHONE_COLS || rows < PHONE_ROWS
+}
+
+/// The air between the title and the tabs when they share a row.
+const HEADER_GAP: usize = 2;
+
+/// The air between one tab and the next. It is a gap rather than padding baked
+/// into the labels so that the first tab starts at the same column the title
+/// does, whether the two share a row or the tabs sit under it.
+const TAB_GAP: usize = 3;
+
+/// How the header names the site at the current size.
+enum HeaderTitle {
+    /// The wordmark, drawn three rows tall out of [`GLYPHS`].
+    Banner(Box<[String; 3]>),
+    /// The name as plain text, one row, when the wordmark will not fit.
+    Plain(&'static str),
+    /// Neither, on a terminal too narrow to spare the room for a name.
+    None,
+}
+
+/// What the header can afford to show at the current size.
 struct HeaderPlan {
-    title: Option<&'static str>,
+    title: HeaderTitle,
     labels: Vec<String>,
-    tag: Option<&'static str>,
+    /// Whether the tabs ride the title's last row, at the right edge, rather
+    /// than taking a row of their own under it.
+    inline_tabs: bool,
+}
+
+impl HeaderPlan {
+    /// Rows the title block takes: the wordmark's three, the plain title's one,
+    /// or none at all when the header is too narrow to name the site.
+    fn title_rows(&self) -> usize {
+        match &self.title {
+            HeaderTitle::Banner(_) => 3,
+            HeaderTitle::Plain(_) => 1,
+            HeaderTitle::None => 0,
+        }
+    }
+
+    /// Whether the block under the title needs a row of air under it before the
+    /// pane. The wordmark's last row is drawn in half blocks — `▀`, ink in the
+    /// top half of the cell — so it already carries half a row of air under its
+    /// feet, and the pane's border is drawn half a cell into its own row on top
+    /// of that. A whole row on top of those two put twice as much space under
+    /// the wordmark as the margin above it. The tabs and the plain title are
+    /// ordinary text, ink through the middle of the cell, and do need it.
+    fn air_under(&self) -> bool {
+        !matches!(self.title, HeaderTitle::Banner(_)) || !self.inline_tabs
+    }
+
+    /// Rows the whole header takes: a row of air above the title block, the
+    /// block itself, the tabs' own row if they did not fit beside it, and the
+    /// row of air that sets the pane off from it. The margin above the wordmark
+    /// is the one under the hints at the other end of the screen — the app is
+    /// inset from the terminal's edges by a row, top and bottom.
+    /// [`header_rows`] is what the scroll math reads this through, so the two
+    /// can never disagree about where the pane starts.
+    fn rows(&self) -> usize {
+        1 + self.title_rows() + usize::from(!self.inline_tabs) + usize::from(self.air_under())
+    }
 }
 
 /// Picks the richest header that fits, the way the site's nav collapses on
-/// narrow viewports: full tab names, then numbers with only the current tab
-/// named, then bare numbers. Always fits, so the row never wraps.
-fn header_plan(tab: usize, cols: usize) -> HeaderPlan {
-    let named = |index: usize| format!(" {} {} ", index + 1, TAB_NAMES[index]);
+/// narrow viewports: the wordmark drawn big, then set as plain text, then
+/// dropped; the tabs beside it, then under it; full tab names, then numbers
+/// with only the current tab named, then bare numbers. Always fits, so no row
+/// of it ever wraps.
+fn header_plan(tab: usize, cols: usize, rows: usize) -> HeaderPlan {
+    // The header keeps to the app's column, inset like everything in it, so
+    // that is what it has to fit in.
+    let room = (column_cols(cols) as usize).saturating_sub(2 * crate::CARD_PAD_COLS);
+    let named = |index: usize| format!("{} {}", index + 1, TAB_NAMES[index]);
     let full: Vec<String> = (0..TAB_NAMES.len()).map(named).collect();
     let compact: Vec<String> = (0..TAB_NAMES.len())
         .map(|index| {
             if index == tab {
                 named(index)
             } else {
-                format!(" {} ", index + 1)
+                (index + 1).to_string()
             }
         })
         .collect();
-    let numbers: Vec<String> = (1..=TAB_NAMES.len()).map(|n| format!(" {n} ")).collect();
-
-    let fits = |title: Option<&str>, labels: &[String], tag: Option<&str>| {
-        let width = title.map_or(0, |t| t.chars().count())
-            + labels.iter().map(|l| l.chars().count()).sum::<usize>()
-            + tag.map_or(0, |t| t.chars().count());
-        width <= cols
+    let numbers: Vec<String> = (1..=TAB_NAMES.len()).map(|n| n.to_string()).collect();
+    let width = |labels: &[String]| {
+        labels.iter().map(|l| l.chars().count()).sum::<usize>()
+            + TAB_GAP * labels.len().saturating_sub(1)
     };
-    if fits(Some(TITLE), &full, Some(TAG)) {
-        HeaderPlan {
-            title: Some(TITLE),
-            labels: full,
-            tag: Some(TAG),
-        }
-    } else if fits(Some(TITLE), &full, None) {
-        HeaderPlan {
-            title: Some(TITLE),
-            labels: full,
-            tag: None,
-        }
-    } else if fits(Some(TITLE), &compact, None) {
-        HeaderPlan {
-            title: Some(TITLE),
-            labels: compact,
-            tag: None,
-        }
-    } else if fits(None, &compact, None) {
-        HeaderPlan {
-            title: None,
-            labels: compact,
-            tag: None,
-        }
+    let labels = if width(&full) <= room {
+        full
+    } else if width(&compact) <= room {
+        compact
     } else {
-        HeaderPlan {
-            title: None,
-            labels: numbers,
-            tag: None,
-        }
+        numbers
+    };
+
+    // The wordmark keeps its own rows, so all it has to fit is the width.
+    let banner = (!touch_sized(cols, rows))
+        .then(|| banner_rows(TITLE.trim()))
+        .flatten()
+        .filter(|banner| banner[0].chars().count() <= room);
+    let title = match banner {
+        Some(banner) => HeaderTitle::Banner(Box::new(banner)),
+        None if TITLE.trim().chars().count() <= room => HeaderTitle::Plain(TITLE.trim()),
+        None => HeaderTitle::None,
+    };
+    let title_width = match &title {
+        HeaderTitle::Banner(banner) => banner[0].chars().count(),
+        HeaderTitle::Plain(title) => title.chars().count(),
+        HeaderTitle::None => 0,
+    };
+    // The tabs follow the name on its own row whenever the two fit side by
+    // side, a couple of cells apart, as the site's nav sits beside its title;
+    // they drop to a row of their own — starting at the same column the name
+    // does — only when they would otherwise crowd it.
+    let inline_tabs = title_width > 0 && title_width + HEADER_GAP + width(&labels) <= room;
+    HeaderPlan {
+        title,
+        labels,
+        inline_tabs,
     }
+}
+
+/// Rows the header takes at this size, for the scroll math that has to know
+/// where the pane below it starts.
+pub fn header_rows(cols: u16, rows: u16) -> usize {
+    header_plan(0, cols as usize, rows as usize).rows()
+}
+
+/// Rows the status bar takes: the hints, the row of air under them that matches
+/// the one above the wordmark, and — when the header keeps a row of air over
+/// the pane — the row that matches it under the pane. The bottom of the screen
+/// is the top of it, mirrored, so the app sits evenly between the two edges.
+/// The same at every size: a phone shows the hints too.
+pub fn status_rows(cols: u16, rows: u16) -> usize {
+    2 + usize::from(header_plan(0, cols as usize, rows as usize).air_under())
 }
 
 #[component]
 fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
     let tab = props.tab;
-    let plan = header_plan(tab, props.cols);
+    let plan = header_plan(tab, props.cols, props.rows);
+    let height = plan.rows() as u16;
+    let lines: Vec<String> = match &plan.title {
+        HeaderTitle::Banner(banner) => banner.to_vec(),
+        HeaderTitle::Plain(title) => vec![(*title).to_string()],
+        HeaderTitle::None => Vec::new(),
+    };
+    let tabs = |labels: Vec<String>| {
+        element! {
+            View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::NoWrap) {
+                #(labels.into_iter().enumerate().map(|(index, label)| {
+                    element! {
+                        View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::NoWrap) {
+                            #((index > 0).then(|| element! { View(width: TAB_GAP as u16) }))
+                            TabLabel(label: label, selected: index == tab, index: index)
+                        }
+                    }
+                }))
+            }
+        }
+    };
+    let inline = plan.inline_tabs;
+    let air_under = plan.air_under();
+    let labels = plan.labels;
     element! {
         View(
-            flex_direction: FlexDirection::Row,
+            flex_direction: FlexDirection::Column,
             width: 100pct,
-            // Exactly one row: the fit cascade guarantees the content fits,
-            // so no clipping is needed to keep this from wrapping.
-            height: 1,
+            // Exactly the rows the plan asked for: the fit cascade guarantees
+            // every one of them fits, so nothing here has to wrap or clip.
+            height: height,
             flex_wrap: FlexWrap::NoWrap,
         ) {
-            #(plan.title.map(|title| element! {
-                Text(content: title, color: theme::ACCENT_TEXT, weight: Weight::Bold, wrap: TextWrap::NoWrap)
-            }))
-            #(plan.labels.into_iter().enumerate().map(|(index, label)| {
-                element! {
-                    TabLabel(label: label, selected: index == tab, index: index)
+            // The margin above the wordmark, matched by the one under the hints.
+            View(height: 1)
+            Column(width: column_cols(props.cols)) {
+                View(flex_direction: FlexDirection::Row, width: 100pct, align_items: AlignItems::Center) {
+                    View(flex_direction: FlexDirection::Column) {
+                        #(lines.into_iter().map(|line| element! {
+                            Text(content: line, color: theme::ACCENT_TEXT, wrap: TextWrap::NoWrap)
+                        }))
+                    }
+                    // Beside the name, a couple of cells off it and centered on
+                    // it, rather than adrift at the far edge of the screen.
+                    #(inline.then(|| element! { View(width: HEADER_GAP as u16) }))
+                    #(inline.then(|| tabs(labels.clone())))
                 }
-            }))
-            View(flex_grow: 1.0_f32)
-            #(plan.tag.map(|tag| element! {
-                Text(content: tag, color: theme::BORDER, wrap: TextWrap::NoWrap)
-            }))
+                #((!inline).then(|| tabs(labels.clone())))
+            }
+            // The air between the header and the pane, when what sits above it
+            // is not already carrying half a row of its own.
+            #(air_under.then(|| element! { View(height: 1) }))
+        }
+    }
+}
+
+#[derive(Props, Default)]
+struct StatusChromeProps {
+    tab: usize,
+    modal_open: bool,
+    reading: bool,
+    cols: usize,
+    rows: usize,
+}
+
+/// The hints and the rows of air either side of them, in the app's column so
+/// that they start and end on the same edges as the cards over them. Rendering
+/// the three together is what keeps [`status_rows`] honest.
+#[component]
+fn StatusChrome(props: &StatusChromeProps) -> impl Into<AnyElement<'static>> {
+    element! {
+        View(flex_direction: FlexDirection::Column, width: 100pct) {
+            // The mirror of the header's own air over the pane.
+            #(header_plan(0, props.cols, props.rows).air_under().then(|| element! { View(height: 1) }))
+            Column(width: column_cols(props.cols)) {
+                StatusBar(
+                    tab: props.tab,
+                    modal_open: props.modal_open,
+                    reading: props.reading,
+                    cols: (column_cols(props.cols) as usize).saturating_sub(2 * crate::CARD_PAD_COLS),
+                )
+            }
+            // The margin under the hints, matched by the one above the wordmark.
+            View(height: 1)
         }
     }
 }
@@ -903,7 +1147,7 @@ fn post_card_tree(
                 width: 100pct,
                 border_style: BorderStyle::Single,
                 border_color: if selected { theme::ACCENT } else { theme::BORDER_SUBTLE },
-                background_color: if selected { theme::SELECT_BG } else { theme::CARD_BG },
+                background_color: if selected { theme::SELECT_BG } else { theme::SURFACE },
                 padding_left: 1,
                 padding_right: 1,
             ) {
@@ -1063,9 +1307,14 @@ fn about_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
         .skip(scroll)
         .map(|line| line_element(line, hit::PANE))
         .collect();
+    // The program keeps to the app's column like every other tab's content, so
+    // the code starts under the wordmark rather than out at the pane's border.
+    let column = column_cols(cols as usize);
     // The portrait sits beside the program rather than above it, so it stays
-    // put while the code scrolls and `tab_line_count` keeps counting lines.
-    let portrait = image::enabled(cols).then(|| {
+    // put while the code scrolls and `tab_line_count` keeps counting lines. It
+    // is the column that has to hold the two of them side by side, not the
+    // screen, so that is what decides whether there is room for it.
+    let portrait = image::enabled(column).then(|| {
         element_to_any(element! {
             View(margin_left: 2, flex_shrink: 0.0_f32) {
                 Image(url: image::PORTRAIT, bounds: image::AVATAR)
@@ -1074,21 +1323,30 @@ fn about_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
     });
     element! {
         View(
-            flex_direction: FlexDirection::Row,
+            flex_direction: FlexDirection::Column,
             width: 100pct,
             flex_grow: 1.0_f32,
+            align_items: AlignItems::Center,
             overflow: Overflow::Hidden,
-            background_color: theme::CODE_BG,
-            padding: 1,
         ) {
             View(
-                flex_direction: FlexDirection::Column,
+                flex_direction: FlexDirection::Row,
+                width: column,
                 flex_grow: 1.0_f32,
+                flex_shrink: 0.0_f32,
                 overflow: Overflow::Hidden,
+                background_color: theme::SURFACE,
+                padding: 1,
             ) {
-                #(rows)
+                View(
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0_f32,
+                    overflow: Overflow::Hidden,
+                ) {
+                    #(rows)
+                }
+                #(portrait)
             }
-            #(portrait)
         }
     }
 }
@@ -1276,7 +1534,7 @@ fn Dialog(props: &mut DialogProps, mut hooks: Hooks) -> impl Into<AnyElement<'st
             height: 80pct,
             border_style: BorderStyle::Single,
             border_color: theme::BORDER_SUBTLE,
-            background_color: theme::CARD_BG,
+            background_color: theme::SURFACE,
             flex_direction: FlexDirection::Column,
             overflow: Overflow::Hidden,
         ) {
@@ -1344,14 +1602,12 @@ struct StatusBarProps {
     tab: usize,
     modal_open: bool,
     reading: bool,
-    visited: usize,
     cols: usize,
 }
 
 #[component]
 fn StatusBar(props: &StatusBarProps) -> impl Into<AnyElement<'static>> {
-    let (tab, modal_open, reading, visited) =
-        (props.tab, props.modal_open, props.reading, props.visited);
+    let (tab, modal_open, reading) = (props.tab, props.modal_open, props.reading);
     // Hints in priority order; the least useful ones drop first when narrow.
     let hints: &[(&str, &str)] = if modal_open {
         &[("Esc", "close"), ("↑/↓", "scroll"), ("1-9", "open button")]
@@ -1381,16 +1637,7 @@ fn StatusBar(props: &StatusBarProps) -> impl Into<AnyElement<'static>> {
             ("?", "help"),
         ]
     };
-    let complete = visited == TAB_COUNT;
-    let progress = format!(
-        " {} {}/{} ",
-        if complete { "★" } else { "◆" },
-        visited,
-        TAB_COUNT
-    );
-    let progress_color = if complete { theme::STAR } else { theme::MUTED };
-
-    let budget = props.cols.saturating_sub(progress.chars().count());
+    let budget = props.cols;
     let mut contents: Vec<MixedTextContent> = Vec::new();
     for (index, (keys, description)) in fitted_hints(hints, budget).into_iter().enumerate() {
         if index > 0 {
@@ -1404,11 +1651,9 @@ fn StatusBar(props: &StatusBarProps) -> impl Into<AnyElement<'static>> {
             flex_direction: FlexDirection::Row,
             width: 100pct,
             height: 1,
-            justify_content: JustifyContent::SpaceBetween,
             flex_wrap: FlexWrap::NoWrap,
         ) {
             MixedText(contents: contents)
-            MixedText(contents: vec![colored(progress, progress_color)])
         }
     }
 }

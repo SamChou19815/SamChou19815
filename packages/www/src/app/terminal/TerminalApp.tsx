@@ -147,10 +147,13 @@ export default function TerminalApp(): React.JSX.Element {
   }, []);
 
   return (
+    // No padding: a character grid already leaves a remainder of its own, and
+    // `screen.fit` centers the grid so that remainder falls evenly on all four
+    // sides rather than piling up at the right and the bottom.
     <div className="fixed inset-0 overflow-hidden bg-[#f7f7f7]">
       <div
         ref={containerRef}
-        className="relative h-full w-full p-1"
+        className="relative h-full w-full"
         aria-label="Developer Sam's portfolio as a full-screen terminal app"
         role="application"
       />
