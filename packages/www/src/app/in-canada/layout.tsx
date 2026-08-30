@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "In-Canada Days Counter | Developer Sam",
-  description: "Track days spent in Canada",
   robots: { index: false, follow: false },
 };
 
