@@ -7,6 +7,7 @@
 //! their layout rects each frame; the app dispatches
 //! [`crossterm`] mouse events against that registry.
 
+pub mod crypt;
 pub mod data;
 #[cfg(target_arch = "wasm32")]
 pub mod ffi;
@@ -124,13 +125,18 @@ fn wrapped_rows(text: &str, width: usize) -> usize {
 /// and the next and, on the selected card, the padding inside its tint.
 pub fn card_height(event: &data::TimelineEvent, cols: u16) -> usize {
     let inner = content_width(cols);
-    let detail = event.detail.map_or(0, |detail| wrapped_rows(detail, inner));
+    let detail = event
+        .detail
+        .map_or(0, |detail| wrapped_rows(&detail.decrypt(), inner));
     let links = if event.links.is_empty() {
         0
     } else {
         wrapped_rows(&link_row_label(event.links), inner)
     };
-    let image = image::rows(event.image, image::thumbnail_bounds(cols));
+    let image = image::rows(
+        event.image.map(|url| url.decrypt()).as_deref(),
+        image::thumbnail_bounds(cols),
+    );
     let body: usize = [image, detail, links]
         .into_iter()
         .filter(|rows| *rows > 0)
@@ -144,7 +150,7 @@ pub fn card_height(event: &data::TimelineEvent, cols: u16) -> usize {
 fn link_row_label(links: &[data::Link]) -> String {
     links
         .iter()
-        .map(|link| format!(" {} ", link.name.to_uppercase()))
+        .map(|link| format!(" {} ", link.name.decrypt().to_uppercase()))
         .collect()
 }
 
@@ -616,7 +622,7 @@ impl App {
                 _ => &[],
             };
             if let Some(link) = links.get(index) {
-                self.actions.push(Action::OpenUrl(link.url.to_string()));
+                self.actions.push(Action::OpenUrl(link.url.decrypt()));
             }
             return;
         }
@@ -931,13 +937,13 @@ pub const SHELL_TITLE: &str = "Developer Sam — Terminal";
 pub fn title_for(path: &str) -> String {
     let path = path.strip_suffix('/').unwrap_or(path);
     if let Some(post) = posts::find(path) {
-        return format!("{} | {}", posts::POSTS[post].title, posts::BLOG_TITLE);
+        return format!("{} | {}", posts::POSTS[post].title(), posts::blog_title());
     }
     match view_at(path) {
         Some(View::Tab(ABOUT_TAB)) => "About | Developer Sam".to_string(),
         Some(View::Tab(TIMELINE_TAB)) => "Timeline | Developer Sam".to_string(),
         // The blog index, and anything else under it that is no longer a post.
-        Some(_) => posts::BLOG_TITLE.to_string(),
+        Some(_) => posts::blog_title().to_string(),
         None => SHELL_TITLE.to_string(),
     }
 }

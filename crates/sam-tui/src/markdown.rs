@@ -3,9 +3,9 @@
 //! never decoration. Links are returned alongside the line for click handling
 //! in the view.
 //!
-//! Blog bodies arrive pre-normalized by `build.rs`: every image URL is
-//! site-root-relative, so [`post_blocks`] can borrow each one straight out of
-//! the `'static` body.
+//! Blog bodies arrive pre-normalized by `build.rs`: every image URL in one is
+//! already site-root-relative, so [`post_blocks`] can hand each one to
+//! [`image`] as it finds it.
 
 use crate::{image, theme};
 use iocraft::components::MixedTextContent;
@@ -22,11 +22,16 @@ pub struct ContentLine {
 /// math and what is painted can never disagree.
 pub enum Block {
     Line(ContentLine),
-    Image { url: &'static str, alt: String },
+    /// `url` is owned rather than borrowed from the body: a body is decrypted
+    /// on demand ([`crate::crypt`]), so there is no `'static` text to point at.
+    Image {
+        url: String,
+        alt: String,
+    },
 }
 
 /// Renders a post body into blocks, wrapped to `width` columns.
-pub fn post_blocks(body: &'static str, width: usize) -> Vec<Block> {
+pub fn post_blocks(body: &str, width: usize) -> Vec<Block> {
     let mut blocks: Vec<Block> = Vec::new();
     let mut paragraph: Vec<&str> = Vec::new();
     let mut in_code = false;
@@ -81,7 +86,7 @@ pub fn post_blocks(body: &'static str, width: usize) -> Vec<Block> {
             }
             if let Some(url) = src.filter(|url| image::size(url, image::HERO).is_some()) {
                 blocks.push(Block::Image {
-                    url,
+                    url: url.to_string(),
                     alt: String::new(),
                 });
             }
@@ -89,7 +94,7 @@ pub fn post_blocks(body: &'static str, width: usize) -> Vec<Block> {
             flush(&mut blocks, &mut paragraph, width);
             if image::size(url, image::HERO).is_some() {
                 blocks.push(Block::Image {
-                    url,
+                    url: url.to_string(),
                     alt: alt.to_string(),
                 });
             }

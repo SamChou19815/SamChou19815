@@ -2,6 +2,7 @@
 //! the homepage's design ([`crate::theme`]). Interactive regions register
 //! themselves with [`crate::hit`] each frame via `use_component_rect`.
 
+use crate::crypt::EncryptedString;
 use crate::hit::{self, HitTarget, Rect};
 use crate::image::{self, Image};
 use crate::{
@@ -108,9 +109,11 @@ pub fn modal_line_count(modal: &Modal, cols: u16) -> usize {
 pub fn modal_viewport(modal: &Modal, cols: u16, rows: u16) -> usize {
     let hero = hero_bounds(cols as usize, rows)
         .zip(modal_image(modal))
-        .map_or(0, |(bounds, url)| match image::rows(Some(url), bounds) {
-            0 => 0,
-            drawn => drawn + 1,
+        .map_or(0, |(bounds, url)| {
+            match image::rows(Some(&url.decrypt()), bounds) {
+                0 => 0,
+                drawn => drawn + 1,
+            }
         });
     usize::from(dialog_body_rows(rows))
         .saturating_sub(hero)
@@ -362,7 +365,10 @@ fn pane_title(app: &App, counter: &str, cols: usize) -> PaneTitle {
     let room = cols
         .saturating_sub(2 * counter.chars().count() + 2 * CLOSE_LABEL.len() + 4)
         .max(MIN_TITLE_COLS);
-    PaneTitle::Centered(markdown::truncate(posts::POSTS[reader.post].title, room))
+    PaneTitle::Centered(markdown::truncate(
+        &posts::POSTS[reader.post].title().decrypt(),
+        room,
+    ))
 }
 
 /// "position/total" for the pane's title row. The list tabs count items, so
@@ -881,15 +887,15 @@ fn card_element(
 /// count the scroll math assumes and the row count drawn stay the same number.
 /// `alt` captions the placeholder frame drawn for dimensions-only images.
 fn image_row(
-    url: Option<&'static str>,
+    url: Option<EncryptedString>,
     gutter: &'static str,
     selected: bool,
     cols: u16,
     alt: &str,
 ) -> Option<AnyElement<'static>> {
-    let url = url?;
+    let url = url?.decrypt();
     let bounds = image::thumbnail_bounds(cols);
-    let (_, rows) = image::size(url, bounds)?;
+    let (_, rows) = image::size(&url, bounds)?;
     Some(gutter_block(
         gutter,
         rows,
@@ -981,9 +987,9 @@ fn card_tree(
     // and the title takes whatever is left, as the homepage card header does.
     let tag = format!("[{}]", event.category.label());
     let title_room = inner.saturating_sub(tag.chars().count() + 2);
-    let title_contents = vec![
-        colored(markdown::truncate(event.title, title_room), selected_color).weight(Weight::Bold),
-    ];
+    let title = event.title.decrypt();
+    let title_contents =
+        vec![colored(markdown::truncate(&title, title_room), selected_color).weight(Weight::Bold)];
     let detail_color = if selected {
         theme::SELECT_FG
     } else {
@@ -996,13 +1002,13 @@ fn card_tree(
     // section out spends no rows on it, spacer included. [`crate::card_height`]
     // counts the same rows.
     let sections = [
-        image_row(event.image, RAIL, selected, cols, event.title),
+        image_row(event.image, RAIL, selected, cols, &title),
         event.detail.map(|detail| {
             gutter_row(
                 RAIL,
                 selected,
                 element_to_any(element! {
-                    Text(content: detail, color: detail_color)
+                    Text(content: detail.decrypt(), color: detail_color)
                 }),
             )
         }),
@@ -1013,7 +1019,7 @@ fn card_tree(
                 element_to_any(element! {
                     View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::Wrap) {
                         #(event.links.iter().map(|link| element! {
-                            Button(label: format!("{} ", link.name.to_uppercase()), url: link.url.to_string())
+                            Button(label: format!("{} ", link.name.decrypt().to_uppercase()), url: link.url.decrypt())
                         }))
                     }
                 }),
@@ -1043,7 +1049,7 @@ fn card_tree(
             )
             // The time, as the card's subheader.
             #(gutter_row(RAIL, selected, element_to_any(element! {
-                Text(content: event.time, color: time_color, wrap: TextWrap::NoWrap)
+                Text(content: event.time.decrypt(), color: time_color, wrap: TextWrap::NoWrap)
             })))
             #(body)
             // The row of air that closes the card, so the tint under a selected
@@ -1133,9 +1139,9 @@ fn post_card_tree(
         theme::MUTED
     };
     let title = if post.is_external() {
-        format!("{} ↗", post.title)
+        format!("{} ↗", post.title())
     } else {
-        post.title.to_string()
+        post.title().to_string()
     };
     element! {
         HitBlock(index: index) {
@@ -1177,7 +1183,10 @@ fn reader_element(app: &App, reader: &Reader) -> AnyElement<'static> {
 /// on each call is a few hundred lines a handful of times per keystroke — the
 /// same order as the height math over 28 timeline cards — so it is not cached.
 pub fn reader_blocks(post: usize, cols: u16) -> Vec<markdown::Block> {
-    markdown::post_blocks(posts::POSTS[post].body, crate::blog_column_width(cols))
+    markdown::post_blocks(
+        &posts::POSTS[post].body().decrypt(),
+        crate::blog_column_width(cols),
+    )
 }
 
 /// Rows each block occupies: one for a line, the artwork's height for an image.
@@ -1187,7 +1196,7 @@ pub fn reader_block_heights(post: usize, cols: u16) -> Vec<usize> {
         .map(|block| match block {
             markdown::Block::Line(_) => 1,
             markdown::Block::Image { url, .. } => {
-                image::rows(Some(url), image::reader_bounds(cols))
+                image::rows(Some(url.as_str()), image::reader_bounds(cols))
             }
         })
         .collect()
@@ -1240,9 +1249,9 @@ fn reader_tree(app: &App, reader: &Reader) -> impl Into<AnyElement<'static>> {
             // the scroll offset.
             markdown::Block::Image { url, alt } => {
                 let bounds = image::reader_bounds(app.cols);
-                (image::rows(Some(url), bounds) > 0).then(|| {
+                (image::rows(Some(url.as_str()), bounds) > 0).then(|| {
                     element_to_any(element! {
-                        Image(url: *url, bounds: bounds, alt: alt.clone())
+                        Image(url: url.clone(), bounds: bounds, alt: alt.clone())
                     })
                 })
             }
@@ -1317,7 +1326,7 @@ fn about_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
     let portrait = image::enabled(column).then(|| {
         element_to_any(element! {
             View(margin_left: 2, flex_shrink: 0.0_f32) {
-                Image(url: image::PORTRAIT, bounds: image::AVATAR)
+                Image(url: image::PORTRAIT.to_string(), bounds: image::AVATAR)
             }
         })
     });
@@ -1389,7 +1398,10 @@ fn modal_lines(modal: &Modal, cols: usize) -> Vec<markdown::ContentLine> {
             link: None,
         });
         for link in links {
-            lines.push(markdown::bullet_link(link.name, link.url));
+            lines.push(markdown::bullet_link(
+                &link.name.decrypt(),
+                &link.url.decrypt(),
+            ));
         }
     } else {
         // The key column only earns its keep when the description still fits
@@ -1459,7 +1471,7 @@ fn dialog_content_width(cols: usize) -> usize {
 const NARROW_DIALOG_COLS: usize = 60;
 
 /// The artwork the open dialog leads with, if any.
-fn modal_image(modal: &Modal) -> Option<&'static str> {
+fn modal_image(modal: &Modal) -> Option<EncryptedString> {
     match modal {
         Modal::Timeline { event, .. } => data::TIMELINE[*event].image,
         Modal::Help { .. } => None,
@@ -1486,7 +1498,7 @@ fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'st
         .map(|(bounds, url)| {
             element_to_any(element! {
                 View(width: 100pct, justify_content: JustifyContent::Center, padding_bottom: 1) {
-                    Image(url: url, bounds: bounds, layer: image::LAYER_DIALOG)
+                    Image(url: url.decrypt(), bounds: bounds, layer: image::LAYER_DIALOG)
                 }
             })
         });

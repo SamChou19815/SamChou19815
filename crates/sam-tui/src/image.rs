@@ -167,9 +167,12 @@ fn color([r, g, b]: [u8; 3]) -> Color {
 /// viewport begins inside up out of sight. The overlay lays the full-resolution
 /// file over that origin and crops it to `visible_*`, so it needs the origin of
 /// the picture rather than of the part that survived.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Region {
-    pub url: &'static str,
+    /// Site-root-relative asset path. Owned rather than `&'static str`: a
+    /// timeline card's path lives encrypted in [`crate::data`] and only exists
+    /// as text once it has been decrypted.
+    pub url: String,
     pub x: i16,
     pub y: i16,
     pub cols: u16,
@@ -232,7 +235,7 @@ pub fn regions() -> Vec<Region> {
             .iter()
             .filter(|region| region.layer == TOP_LAYER.with(Cell::get))
             .filter(|region| region.visible_cols > 0 && region.visible_rows > 0)
-            .map(|region| Region { ..*region })
+            .cloned()
             .collect()
     })
 }
@@ -242,7 +245,7 @@ pub fn regions() -> Vec<Region> {
 #[derive(Props, Default)]
 pub struct ImageProps {
     /// Site-root-relative asset path, e.g. `/timeline/flow.webp`.
-    pub url: &'static str,
+    pub url: String,
     /// The cell box to fit inside; one of [`THUMBNAIL`], [`HERO`], [`AVATAR`].
     pub bounds: (u16, u16),
     /// [`LAYER_PANE`] by default; [`LAYER_DIALOG`] for artwork inside a dialog.
@@ -257,7 +260,7 @@ pub struct ImageProps {
 /// background needs the canvas, which only `draw` sees.
 #[derive(Default)]
 pub struct Image {
-    url: &'static str,
+    url: String,
     cols: u16,
     rows: u16,
     layer: u8,
@@ -277,10 +280,10 @@ impl Component for Image {
         _hooks: Hooks,
         updater: &mut ComponentUpdater,
     ) {
-        self.url = props.url;
+        self.url.clone_from(&props.url);
         self.layer = props.layer;
         self.alt = props.alt.clone();
-        let (cols, rows) = size(props.url, props.bounds).unwrap_or((0, 0));
+        let (cols, rows) = size(&props.url, props.bounds).unwrap_or((0, 0));
         self.cols = cols;
         self.rows = rows;
         updater.set_layout_style(taffy::style::Style {
@@ -294,7 +297,7 @@ impl Component for Image {
     }
 
     fn draw(&mut self, drawer: &mut ComponentDrawer<'_>) {
-        let Some(baked) = baked(self.url) else {
+        let Some(baked) = baked(&self.url) else {
             return;
         };
         if self.cols == 0 || self.rows == 0 {
@@ -384,7 +387,7 @@ impl Component for Image {
             None => (x, y, 0, 0),
         };
         record(Region {
-            url: self.url,
+            url: self.url.clone(),
             x,
             y,
             cols: self.cols,
