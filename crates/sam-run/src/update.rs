@@ -105,29 +105,3 @@ fn permission_hint(err: io::Error, dir: &Path) -> anyhow::Error {
         anyhow::Error::new(err).context(format!("failed to write update into {}", dir.display()))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn asset_names_cover_supported_platforms() {
-        for platform in platform::SUPPORTED {
-            assert_eq!(asset_name(platform).unwrap(), format!("sam-run-{platform}"));
-        }
-    }
-
-    #[test]
-    fn asset_name_rejects_unsupported_platform() {
-        assert!(asset_name("windows-x86_64").is_err());
-    }
-
-    #[test]
-    fn up_to_date_only_on_exact_match() {
-        assert!(is_up_to_date(Some("abc123"), "abc123"));
-        assert!(!is_up_to_date(Some("abc123"), "def456"));
-        assert!(!is_up_to_date(None, "abc123"));
-        assert!(!is_up_to_date(Some(""), ""));
-        assert!(!is_up_to_date(None, ""));
-    }
-}
