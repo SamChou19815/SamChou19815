@@ -127,10 +127,10 @@ fn highlight_line(source: &str, mut in_comment: bool) -> (Vec<MixedTextContent>,
                     keyword_color()
                 } else if word.chars().all(|c| c.is_ascii_digit()) {
                     number_color()
-                } else if is_call {
-                    function_color()
                 } else if word.starts_with(|c: char| c.is_ascii_uppercase()) {
                     type_color()
+                } else if is_call {
+                    function_color()
                 } else {
                     plain_color()
                 };
