@@ -159,6 +159,8 @@ fn TimelineTitle(props: &TimelineTitleProps) -> impl Into<AnyElement<'static>> {
         View(
             flex_direction: FlexDirection::Row,
             width: 100pct,
+            padding_left: CARD_PAD,
+            padding_right: CARD_PAD,
             background_color: if props.selected { Some(theme::SELECT_BG) } else { None },
         ) {
             Text(content: props.marker.clone(), color: theme::ACCENT_TEXT, weight: Weight::Bold, wrap: TextWrap::NoWrap)
@@ -297,33 +299,23 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     }
 }
 
-/// What the pane's title row names, if anything. The reader is a mode of the
-/// Blog tab and centers the post it is reading over the pane; the index behind
-/// it names nothing, since the header's own `Blog` tab already says where the
-/// reader is. Titles are cut to what is left beside the counter, so the row
-/// stays exactly one line however narrow the terminal or long the post.
+/// What the pane's title row names, if anything. Only the reader names itself,
+/// centered over the pane: a tab is already named — and marked as the one in
+/// front — by the header a row above, so a pane that repeats it spends a row of
+/// chrome saying what has just been said. The title is cut to what is left
+/// beside the counter, so the row stays exactly one line however narrow the
+/// terminal or long the post.
 fn pane_title(app: &App, counter: &str, cols: usize) -> PaneTitle {
-    let counter_width = counter.chars().count();
-    // What the title has to itself: the row less its padding, the space either
-    // side of the title, the counter, and — when the title is centered — the
-    // spacer that balances the counter on the other side.
-    let room = |mirrored: usize| {
-        cols.saturating_sub(counter_width + mirrored + 4)
-            .max(MIN_TITLE_COLS)
-    };
-    if let Some(reader) = &app.reader {
-        let title = posts::POSTS[reader.post].title;
-        // The close button sits outside the counter on the right, and the
-        // spacer that balances the pair sits outside it on the left.
-        return PaneTitle::Centered(markdown::truncate(
-            title,
-            room(counter_width + 2 * CLOSE_LABEL.len()),
-        ));
-    }
-    if app.tab == BLOG_TAB {
+    let Some(reader) = &app.reader else {
         return PaneTitle::None;
-    }
-    PaneTitle::Left(markdown::truncate(TAB_NAMES[app.tab], room(0)))
+    };
+    // What the title has to itself: the row less its padding, the space either
+    // side of the title, the counter, and the spacer that balances the counter
+    // and the close button on the other side.
+    let room = cols
+        .saturating_sub(2 * counter.chars().count() + 2 * CLOSE_LABEL.len() + 4)
+        .max(MIN_TITLE_COLS);
+    PaneTitle::Centered(markdown::truncate(posts::POSTS[reader.post].title, room))
 }
 
 /// "position/total" for the pane's title row. The list tabs count items, so
@@ -342,13 +334,12 @@ fn pane_counter(app: &App) -> String {
     format!(" {}/{} ", position, total.max(1))
 }
 
-/// What the pane's title row carries beside its counter: nothing, a name at the
-/// left edge, or a name centered over the pane.
+/// What the pane's title row carries beside its counter: nothing, or a name
+/// centered over the pane.
 #[derive(Clone, Default, PartialEq, Eq)]
 enum PaneTitle {
     #[default]
     None,
-    Left(String),
     Centered(String),
 }
 
@@ -378,15 +369,15 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
     };
     let title = match &props.title {
         PaneTitle::None => None,
-        PaneTitle::Left(title) | PaneTitle::Centered(title) => Some(title.clone()),
+        PaneTitle::Centered(title) => Some(title.clone()),
     };
     element! {
         View(
             flex_direction: FlexDirection::Column,
             width: 100pct,
             flex_grow: 1.0_f32,
-            border_style: BorderStyle::Round,
-            border_color: theme::BORDER,
+            border_style: BorderStyle::Single,
+            border_color: theme::BORDER_SUBTLE,
             background_color: theme::CARD_BG,
             overflow: Overflow::Hidden,
         ) {
@@ -627,6 +618,10 @@ fn timeline_tree(app: &App) -> impl Into<AnyElement<'static>> {
 /// title row's marker, and what [`crate::content_width`] holds back for.
 const RAIL: &str = "│  ";
 
+/// The cells of air inside a card's left and right edges, as cells rather than
+/// columns — the other half of what [`crate::content_width`] holds back for.
+const CARD_PAD: u16 = crate::CARD_PAD_COLS as u16;
+
 fn card_element(
     event: &data::TimelineEvent,
     index: usize,
@@ -672,7 +667,11 @@ fn gutter_row(
     gutter_block(gutter, 1, selected, body)
 }
 
-/// A blank row that carries the rail on: the air between a card's sections.
+/// A blank row that carries the rail on: the air between a card's sections, and
+/// the row of it a card keeps top and bottom. Every row of the column carries
+/// the rail, so the spine is one unbroken line from the top of the timeline to
+/// the bottom with the cards' markers sitting on it — a gap in it would read as
+/// the timeline itself stopping between two events.
 fn rail_row(selected: bool) -> AnyElement<'static> {
     gutter_row(
         RAIL,
@@ -695,6 +694,8 @@ fn gutter_block(
         View(
             flex_direction: FlexDirection::Row,
             width: 100pct,
+            padding_left: CARD_PAD,
+            padding_right: CARD_PAD,
             background_color: if selected { Some(theme::SELECT_BG) } else { None },
         ) {
             View(flex_direction: FlexDirection::Column, flex_shrink: 0.0_f32) {
@@ -784,9 +785,10 @@ fn card_tree(
         HitBlock(index: index) {
             // The row of air above every card, as the blog's index has: what
             // separates one card from the last, and what keeps the first one
-            // off the pane's title row. The rail stops for it, so the cards
-            // read as blocks strung along the timeline rather than one column.
-            #(gutter_row("   ", false, element_to_any(element! { Text(content: "") })))
+            // off the pane's title row. On the selected card it is tinted with
+            // the rest, so the highlight opens a row above the title rather
+            // than cutting flush against it.
+            #(rail_row(selected))
             // Title and category tag, pushed to opposite edges.
             TimelineTitle(
                 marker: marker,
@@ -800,6 +802,9 @@ fn card_tree(
                 Text(content: event.time, color: time_color, wrap: TextWrap::NoWrap)
             })))
             #(body)
+            // The row of air that closes the card, so the tint under a selected
+            // one ends a row past its last line rather than on it.
+            #(rail_row(selected))
         }
     }
 }
@@ -863,7 +868,7 @@ fn post_card_element(
     element_to_any(post_card_tree(post, index, selected, text_width))
 }
 
-/// A blog card, mirroring the web's: a rounded box carrying the title as its
+/// A blog card, mirroring the web's: a hairline box carrying the title as its
 /// heading and the date under it. A post that lives elsewhere is marked with
 /// the same `↗` the web index appends to its title.
 fn post_card_tree(
@@ -896,8 +901,8 @@ fn post_card_tree(
             View(
                 flex_direction: FlexDirection::Column,
                 width: 100pct,
-                border_style: BorderStyle::Round,
-                border_color: if selected { theme::ACCENT } else { theme::BORDER },
+                border_style: BorderStyle::Single,
+                border_color: if selected { theme::ACCENT } else { theme::BORDER_SUBTLE },
                 background_color: if selected { theme::SELECT_BG } else { theme::CARD_BG },
                 padding_left: 1,
                 padding_right: 1,
@@ -1269,8 +1274,8 @@ fn Dialog(props: &mut DialogProps, mut hooks: Hooks) -> impl Into<AnyElement<'st
         View(
             width: Percent(if props.narrow { 96.0 } else { 80.0 }),
             height: 80pct,
-            border_style: BorderStyle::Round,
-            border_color: theme::BORDER,
+            border_style: BorderStyle::Single,
+            border_color: theme::BORDER_SUBTLE,
             background_color: theme::CARD_BG,
             flex_direction: FlexDirection::Column,
             overflow: Overflow::Hidden,

@@ -60,11 +60,19 @@ pub const SUBTLE: Color = Color::Rgb {
     g: 65,
     b: 81,
 };
-/// gray-500 — borders and chrome.
+/// gray-500 — chrome drawn as text: the shell prompt, tags, quote bars.
 pub const BORDER: Color = Color::Rgb {
     r: 107,
     g: 114,
     b: 128,
+};
+/// gray-300 — the boxes' borders, the site's own `border-gray-300` on cards.
+/// A cell is as thin as a box line gets, so the hairline look is all color:
+/// this sits far enough back that the card reads as an edge, not a frame.
+pub const BORDER_SUBTLE: Color = Color::Rgb {
+    r: 209,
+    g: 213,
+    b: 219,
 };
 /// amber-600 — the completion star.
 pub const STAR: Color = Color::Rgb {
