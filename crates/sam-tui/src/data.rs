@@ -471,7 +471,10 @@ pub const TIMELINE: &[TimelineEvent] = &[
         image: Some(encrypted_str!("/projects/ten.webp")),
         category: Category::Project,
         detail: None,
-        links: &[Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/ten-golang") }],
+        links: &[Link {
+            name: encrypted_str!("GitHub Repo"),
+            url: encrypted_str!("https://github.com/SamChou19815/ten-golang")
+        }],
     },
     TimelineEvent {
         title: encrypted_str!("Graduated from High School"),

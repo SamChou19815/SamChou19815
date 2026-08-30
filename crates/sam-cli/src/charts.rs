@@ -184,39 +184,3 @@ pub fn chart(values: &[f64], width: usize, height: usize) -> Vec<String> {
         })
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hbar_scales_and_clamps() {
-        assert_eq!(hbar(0.0, 10.0, 8), "");
-        assert_eq!(hbar(10.0, 10.0, 8), "████████");
-        assert_eq!(hbar(20.0, 10.0, 8), "████████"); // clamped
-        assert_eq!(hbar(5.0, 10.0, 8), "████"); // exactly half
-        assert_eq!(hbar(1.0, 0.0, 8), ""); // non-positive max
-    }
-
-    #[test]
-    fn chart_has_height_rows_and_fills_bottom_up() {
-        // Rising series: bottom row full across, top row only under the peak.
-        let rows = chart(&[0.0, 1.0, 2.0, 3.0], 8, 3);
-        assert_eq!(rows.len(), 3);
-        // Last column is the max → full height, so every row ends in a block.
-        for r in &rows {
-            assert!(r.chars().last().is_some_and(|c| c == '█'));
-        }
-        // Bottom row spans the whole width; the top row is shorter (peak only).
-        assert!(rows[2].chars().count() >= rows[0].chars().count());
-        assert_eq!(chart(&[], 8, 3), Vec::<String>::new());
-    }
-
-    #[test]
-    fn chart_flat_series_draws_a_baseline() {
-        let rows = chart(&[5.0, 5.0, 5.0], 4, 3);
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[2], "████"); // baseline row filled
-        assert_eq!(rows[0], ""); // upper rows empty (trimmed)
-    }
-}

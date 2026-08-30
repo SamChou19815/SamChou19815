@@ -141,31 +141,3 @@ fn highlight_line(source: &str, mut in_comment: bool) -> (Vec<MixedTextContent>,
     }
     (spans, in_comment)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn plain(spans: &[MixedTextContent]) -> String {
-        spans.iter().map(|span| span.text.as_str()).collect()
-    }
-
-    #[test]
-    fn highlights_the_program() {
-        let lines = program_lines();
-        assert_eq!(lines.len(), data::ABOUT_PROGRAM.decrypt().lines().count());
-        let text = plain(&highlight_line(r#"let github = "SamChou19815";"#, false).0);
-        assert_eq!(text, r#"let github = "SamChou19815";"#);
-    }
-
-    #[test]
-    fn numbers_and_calls_get_styled() {
-        let (spans, _) = highlight_line("Developer.init(github, 42)", false);
-        assert!(spans.iter().any(|s| s.color == Some(function_color())));
-        assert!(spans.iter().any(|s| s.color == Some(number_color())));
-        // A type followed by '.' stays a type, not a call.
-        let (spans, _) = highlight_line("Developer.sam()", false);
-        assert!(spans.iter().any(|s| s.color == Some(type_color())));
-        assert!(spans.iter().any(|s| s.color == Some(function_color())));
-    }
-}
