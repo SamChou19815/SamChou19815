@@ -593,8 +593,14 @@ fn timeline_element(app: &App) -> AnyElement<'static> {
     element_to_any(timeline_tree(app))
 }
 
+/// The timeline, as a column of cards down the middle of the pane. The column
+/// is capped at the same measure the blog's is ([`crate::timeline_column_width`])
+/// rather than stretched: a card's title and its category tag are held together
+/// at a readable distance, and a wrapped description keeps a measure the eye can
+/// track, however wide the terminal is opened.
 fn timeline_tree(app: &App) -> impl Into<AnyElement<'static>> {
     let selected = app.selected(TIMELINE_TAB);
+    let width = crate::timeline_column_width(app.cols) as u16;
     let inner = crate::content_width(app.cols);
     let cards: Vec<AnyElement<'static>> = data::TIMELINE
         .iter()
@@ -603,13 +609,23 @@ fn timeline_tree(app: &App) -> impl Into<AnyElement<'static>> {
         .map(|(index, event)| card_element(event, index, index == selected, inner, app.cols))
         .collect();
     element! {
-        View(flex_direction: FlexDirection::Column, width: 100pct, flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
-            View(flex_direction: FlexDirection::Column, width: 100pct) {
+        View(
+            flex_direction: FlexDirection::Column,
+            width: 100pct,
+            flex_grow: 1.0_f32,
+            align_items: AlignItems::Center,
+            overflow: Overflow::Hidden,
+        ) {
+            View(flex_direction: FlexDirection::Column, width: width, flex_shrink: 0.0_f32) {
                 #(cards)
             }
         }
     }
 }
+
+/// A card's rail and the air between it and the card's body: as wide as the
+/// title row's marker, and what [`crate::content_width`] holds back for.
+const RAIL: &str = "│  ";
 
 fn card_element(
     event: &data::TimelineEvent,
@@ -654,6 +670,15 @@ fn gutter_row(
     body: AnyElement<'static>,
 ) -> AnyElement<'static> {
     gutter_block(gutter, 1, selected, body)
+}
+
+/// A blank row that carries the rail on: the air between a card's sections.
+fn rail_row(selected: bool) -> AnyElement<'static> {
+    gutter_row(
+        RAIL,
+        selected,
+        element_to_any(element! { Text(content: "") }),
+    )
 }
 
 /// The same, for a body that is `height` rows tall. The gutter is one text per
@@ -719,8 +744,49 @@ fn card_tree(
     } else {
         theme::SUBTLE
     };
+    // What the card carries under its subheader: the artwork first, as the
+    // homepage card leads with its media, then the description and the links.
+    // Each is opened by a blank rail row, so a card reads as stacked blocks
+    // rather than one paragraph of mixed content — and a card that leaves a
+    // section out spends no rows on it, spacer included. [`crate::card_height`]
+    // counts the same rows.
+    let sections = [
+        image_row(event.image, RAIL, selected, cols, event.title),
+        event.detail.map(|detail| {
+            gutter_row(
+                RAIL,
+                selected,
+                element_to_any(element! {
+                    Text(content: detail, color: detail_color)
+                }),
+            )
+        }),
+        (!event.links.is_empty()).then(|| {
+            gutter_row(
+                RAIL,
+                selected,
+                element_to_any(element! {
+                    View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::Wrap) {
+                        #(event.links.iter().map(|link| element! {
+                            Button(label: format!("{} ", link.name.to_uppercase()), url: link.url.to_string())
+                        }))
+                    }
+                }),
+            )
+        }),
+    ];
+    let body: Vec<AnyElement<'static>> = sections
+        .into_iter()
+        .flatten()
+        .flat_map(|section| [rail_row(selected), section])
+        .collect();
     element! {
         HitBlock(index: index) {
+            // The row of air above every card, as the blog's index has: what
+            // separates one card from the last, and what keeps the first one
+            // off the pane's title row. The rail stops for it, so the cards
+            // read as blocks strung along the timeline rather than one column.
+            #(gutter_row("   ", false, element_to_any(element! { Text(content: "") })))
             // Title and category tag, pushed to opposite edges.
             TimelineTitle(
                 marker: marker,
@@ -730,24 +796,10 @@ fn card_tree(
                 selected: selected,
             )
             // The time, as the card's subheader.
-            #(gutter_row("│  ", selected, element_to_any(element! {
+            #(gutter_row(RAIL, selected, element_to_any(element! {
                 Text(content: event.time, color: time_color, wrap: TextWrap::NoWrap)
             })))
-            // The artwork, between the date and the description, as the
-            // homepage card leads with its media.
-            #(image_row(event.image, "│  ", selected, cols, event.title))
-            #(event.detail.map(|detail| gutter_row("│  ", selected, element_to_any(element! {
-                Text(content: detail, color: detail_color)
-            }))))
-            #(if event.links.is_empty() { None } else { Some(gutter_row("│  ", selected, element_to_any(element! {
-                View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::Wrap) {
-                    #(event.links.iter().map(|link| element! {
-                        Button(label: format!("{} ", link.name.to_uppercase()), url: link.url.to_string())
-                    }))
-                }
-            }))) })
-            // Blank separator, so cards read as separate blocks.
-            #(gutter_row("   ", false, element_to_any(element! { Text(content: "") })))
+            #(body)
         }
     }
 }

@@ -46,24 +46,40 @@ const ASSUMED_COLS: u16 = 80;
 /// the finger; see `wheelRows` in [`ffi`].
 pub const WHEEL_ROWS: usize = 3;
 
-/// Usable width inside a card's text column: the pane's border and padding
-/// plus the card's gutter are spoken for before any text is drawn.
-pub fn content_width(cols: u16) -> usize {
-    let cols = if cols == 0 { ASSUMED_COLS } else { cols };
-    (cols as usize).saturating_sub(7).max(12)
-}
-
-/// The widest the blog's column gets, mirroring `max-w-screen-lg` on the web.
+/// The widest a centered column gets, mirroring `max-w-screen-lg` on the web.
 /// A maximized terminal is several times wider than a comfortable measure, and
 /// prose that runs the whole way across is hard to track from the end of one
 /// row to the start of the next.
-const BLOG_MAX_COLS: usize = 88;
+const MAX_COLUMN_COLS: usize = 88;
+
+/// The cells a timeline card's rail takes before its body starts — `│` and the
+/// two spaces that set the body off from it (`view::RAIL`).
+const GUTTER_COLS: usize = 3;
+
+/// Width of a centered column inside the pane's border and its body's padding.
+fn column_width(cols: u16) -> usize {
+    let cols = if cols == 0 { ASSUMED_COLS } else { cols };
+    (cols as usize).saturating_sub(4).clamp(12, MAX_COLUMN_COLS)
+}
+
+/// Width of the timeline's centered column: the rail and the card bodies
+/// beside it. The same measure the blog's column keeps, so moving between the
+/// two list tabs does not move the column they are read down.
+pub fn timeline_column_width(cols: u16) -> usize {
+    column_width(cols)
+}
+
+/// Usable width inside a card's text column: the column, less the card's rail.
+pub fn content_width(cols: u16) -> usize {
+    timeline_column_width(cols)
+        .saturating_sub(GUTTER_COLS)
+        .max(8)
+}
 
 /// Width of the blog's centered column — the index's cards and the reader's
 /// prose — inside the pane's border and its body's padding.
 pub fn blog_column_width(cols: u16) -> usize {
-    let cols = if cols == 0 { ASSUMED_COLS } else { cols };
-    (cols as usize).saturating_sub(4).clamp(12, BLOG_MAX_COLS)
+    column_width(cols)
 }
 
 /// Text width inside a blog card: the column, less the card's border and
@@ -88,9 +104,10 @@ fn wrapped_rows(text: &str, width: usize) -> usize {
     text.chars().count().div_ceil(width.max(1)).max(1)
 }
 
-/// Rows of a timeline card, mirroring the homepage card: title, the time as a
-/// subheader, the artwork, the wrapped detail, a button row, then a blank
-/// separator.
+/// Rows of a timeline card, mirroring the homepage card: the blank separator
+/// that opens it, the title, the time as a subheader, then the artwork, the
+/// wrapped detail and a button row — each behind a blank rail row of its own.
+/// Sections a card leaves out cost it nothing, spacer included.
 pub fn card_height(event: &data::TimelineEvent, cols: u16) -> usize {
     let inner = content_width(cols);
     let detail = event.detail.map_or(0, |detail| wrapped_rows(detail, inner));
@@ -100,7 +117,13 @@ pub fn card_height(event: &data::TimelineEvent, cols: u16) -> usize {
         wrapped_rows(&link_row_label(event.links), inner)
     };
     let image = image::rows(event.image, image::thumbnail_bounds(cols));
-    1 + 1 + image + detail + links + 1
+    let body: usize = [image, detail, links]
+        .into_iter()
+        .filter(|rows| *rows > 0)
+        .map(|rows| rows + 1)
+        .sum();
+    // Separator, title, time, then the body.
+    1 + 1 + 1 + body
 }
 
 /// The button row as it is rendered, for width math.
