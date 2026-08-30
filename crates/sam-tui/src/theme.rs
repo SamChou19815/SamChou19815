@@ -29,14 +29,11 @@ pub const SELECT_FG: Color = Color::Rgb {
     g: 58,
     b: 138,
 };
-/// Card surface: white, like the homepage cards on the `#f7f7f7` body.
-pub const CARD_BG: Color = Color::Rgb {
-    r: 255,
-    g: 255,
-    b: 255,
-};
-/// Code block background `#f7f7f7`, as on the homepage.
-pub const CODE_BG: Color = Color::Rgb {
+/// Every surface the app paints — the screen behind it, the pane, a card, a
+/// dialog — is the homepage's code block, `#f7f7f7`. It is the site's body
+/// colour and the terminal's own background, so the app and the page it is
+/// served on are one colour, edge to edge.
+pub const SURFACE: Color = Color::Rgb {
     r: 247,
     g: 247,
     b: 247,

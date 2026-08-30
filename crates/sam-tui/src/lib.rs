@@ -52,6 +52,12 @@ pub const WHEEL_ROWS: usize = 3;
 /// row to the start of the next.
 const MAX_COLUMN_COLS: usize = 88;
 
+/// Rows the pane spends on its own chrome, whatever is inside it: its border
+/// top and bottom, and its title row. The header's rows and the status bar's
+/// are on top of these and depend on the size — see [`view::header_rows`] and
+/// [`view::status_rows`].
+const PANE_CHROME_ROWS: usize = 3;
+
 /// The cells a timeline card's rail takes before its body starts — `│` and the
 /// two spaces that set the body off from it (`view::RAIL`).
 const GUTTER_COLS: usize = 3;
@@ -406,7 +412,17 @@ impl App {
     /// the pane's border and title row, and the status bar.
     pub fn viewport(&self) -> usize {
         let rows = if self.rows == 0 { 24 } else { self.rows };
-        rows.saturating_sub(5) as usize
+        // The header is measured at the width the layout will use, so the two
+        // agree about where the pane starts even in the frame before the first
+        // resize event lands.
+        let cols = if self.cols == 0 {
+            ASSUMED_COLS
+        } else {
+            self.cols
+        };
+        (rows as usize).saturating_sub(
+            PANE_CHROME_ROWS + view::header_rows(cols, rows) + view::status_rows(cols, rows),
+        )
     }
 
     pub fn scroll(&self, tab: usize) -> usize {
