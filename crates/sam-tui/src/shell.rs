@@ -520,22 +520,26 @@ impl LineEditor {
 }
 
 /// The virtual file system rooted at `/home/sam`.
-fn entries(path: &[String]) -> Option<Vec<(&'static str, bool)>> {
+fn entries(path: &[String]) -> Option<Vec<(String, bool)>> {
     if path.is_empty() {
-        return Some(vec![
-            ("projects/", true),
-            ("about.txt", false),
-            ("contact.txt", false),
-            ("readme.md", false),
-            ("resume.pdf", false),
-            ("timeline.txt", false),
-        ]);
+        return Some(
+            [
+                ("projects/", true),
+                ("about.txt", false),
+                ("contact.txt", false),
+                ("readme.md", false),
+                ("resume.pdf", false),
+                ("timeline.txt", false),
+            ]
+            .map(|(name, directory)| (name.to_string(), directory))
+            .to_vec(),
+        );
     }
     if path.len() == 1 && path[0] == "projects" {
         return Some(
             data::PROJECTS
                 .iter()
-                .map(|project| (project.id, false))
+                .map(|project| (project.id.decrypt(), false))
                 .collect(),
         );
     }
@@ -607,13 +611,14 @@ fn read_file(path: &[String]) -> Option<String> {
             }
             out.push('\n');
             for entry in data::ABOUT_DOC_LINKS {
+                let url = entry.url.decrypt();
                 out.push_str(&format!(
                     "{} {}{}\n",
                     paint(
                         Style::new().fg(theme::ACCENT_TEXT).bold(),
                         &format!("@{}:", entry.name)
                     ),
-                    link(entry.url, entry.url),
+                    link(&url, &url),
                     reset(),
                 ));
             }
@@ -622,13 +627,14 @@ fn read_file(path: &[String]) -> Option<String> {
         ["contact.txt"] => {
             let mut out = String::new();
             for entry in data::SOCIAL_LINKS {
+                let url = entry.url.decrypt();
                 out.push_str(&format!(
                     "{} {}{}\n",
                     paint(
                         Style::new().fg(theme::ACCENT_TEXT).bold(),
                         &format!("{:<10}", entry.name)
                     ),
-                    link(entry.url, entry.url),
+                    link(&url, &url),
                     reset(),
                 ));
             }
@@ -651,7 +657,7 @@ fn read_file(path: &[String]) -> Option<String> {
                         Style::new().fg(theme::MUTED),
                         &format!("{:>3}  {:<15}", index + 1, event.time)
                     ),
-                    paint(Style::new().fg(theme::TEXT), event.title),
+                    paint(Style::new().fg(theme::TEXT), &event.title.decrypt()),
                     paint(
                         Style::new().fg(event.category.color()),
                         &format!(" [{}]", event.category.label())
@@ -664,20 +670,26 @@ fn read_file(path: &[String]) -> Option<String> {
             Some(out)
         }
         ["projects", name] => {
-            let project = data::PROJECTS.iter().find(|project| project.id == *name)?;
+            let project = data::PROJECTS
+                .iter()
+                .find(|project| project.id.decrypt() == *name)?;
             let mut out = format!(
                 "{}\n{}\n\n",
-                paint(Style::new().fg(theme::ACCENT_TEXT).bold(), project.id),
-                paint(Style::new().fg(theme::SUBTLE), project.tagline),
+                paint(
+                    Style::new().fg(theme::ACCENT_TEXT).bold(),
+                    &project.id.decrypt()
+                ),
+                paint(Style::new().fg(theme::SUBTLE), &project.tagline.decrypt()),
             );
             for entry in project.links {
+                let url = entry.url.decrypt();
                 out.push_str(&format!(
                     "  {} {}{}\n",
                     paint(
                         Style::new().fg(theme::ACCENT_TEXT).bold(),
                         &format!("{:<12}", entry.name)
                     ),
-                    link(entry.url, entry.url),
+                    link(&url, &url),
                     reset(),
                 ));
             }

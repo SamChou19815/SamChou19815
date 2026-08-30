@@ -60,12 +60,13 @@ pub fn doc_comment_lines() -> Vec<ContentLine> {
     };
     let mut lines = vec![plain("/**"), plain(&format!(" * {}", data::COPYRIGHT))];
     for link in data::ABOUT_DOC_LINKS {
+        let url = link.url.decrypt();
         lines.push(ContentLine {
             contents: vec![
                 styled(&format!(" * @{} ", link.name), comment_color()),
-                styled(link.url, comment_color()).decoration(TextDecoration::Underline),
+                styled(&url, comment_color()).decoration(TextDecoration::Underline),
             ],
-            link: Some(link.url.to_string()),
+            link: Some(url),
         });
     }
     lines.push(plain(" */"));
@@ -76,7 +77,8 @@ pub fn doc_comment_lines() -> Vec<ContentLine> {
 pub fn program_lines() -> Vec<Vec<MixedTextContent>> {
     let mut result = Vec::new();
     let mut in_comment = false;
-    for source_line in data::ABOUT_PROGRAM.lines() {
+    let program = data::ABOUT_PROGRAM.decrypt();
+    for source_line in program.lines() {
         let (spans, comment_continues) = highlight_line(source_line, in_comment);
         in_comment = comment_continues;
         result.push(spans);
@@ -151,7 +153,7 @@ mod tests {
     #[test]
     fn highlights_the_program() {
         let lines = program_lines();
-        assert_eq!(lines.len(), data::ABOUT_PROGRAM.lines().count());
+        assert_eq!(lines.len(), data::ABOUT_PROGRAM.decrypt().lines().count());
         let text = plain(&highlight_line(r#"let github = "SamChou19815";"#, false).0);
         assert_eq!(text, r#"let github = "SamChou19815";"#);
     }
