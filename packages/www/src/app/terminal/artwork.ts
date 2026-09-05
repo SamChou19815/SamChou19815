@@ -1,10 +1,9 @@
 /**
  * The card artwork laid over the terminal.
  *
- * The backend already draws it in-band as truecolor half-blocks — that is what
- * the native `dev-sam` binary shows — and reports where each one landed. Here
- * we cover those cells with the real asset, so the web gets full resolution and
- * the half-blocks become the fallback if an image fails to load.
+ * The backend reserves a cell box for each picture, frames it, and reports
+ * where it landed. Here we cover those cells with the real asset, so the frame
+ * is only ever what shows while the file loads — or what stays if it 404s.
  *
  * This is the one thing that cannot live in the backend: placing an `<img>`
  * needs the cell grid in pixels, which only the browser knows.

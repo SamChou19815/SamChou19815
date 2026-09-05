@@ -1,20 +1,15 @@
-//! Bakes the homepage's card artwork into the binary as small RGB pixel grids,
-//! and compiles the blog's posts and image dimensions into `posts.rs`.
+//! Records the size of every image the TUI places, and compiles the blog's
+//! posts into `posts.rs`.
 //!
-//! The TUI paints images as half-blocks (`▀`), so one cell carries two stacked
-//! pixels and the pixel grid is roughly square. Each asset is fitted into
-//! [`MAX_COLS`]x[`MAX_ROWS`] cells — the largest any placement asks for — and
-//! resampled once, here, at build time. The runtime box-filters that grid down
-//! for smaller placements, so a single bake serves both the card thumbnails and
-//! the modal hero.
+//! Only *dimensions* cross into the binary, never pixels: the web front-end
+//! lays the real file over the box the TUI reserved, so a decoded copy in the
+//! wasm would be downloaded only to be covered up. Each asset is fitted into
+//! [`MAX_COLS`]x[`MAX_ROWS`] cells — the largest box any placement asks for,
+//! `image::HERO` — and the runtime scales that down for smaller placements, so
+//! one recorded size serves the card thumbnails and the modal hero alike.
 //!
-//! Baking pixels rather than finished `(fg, bg)` cell pairs costs the same six
-//! bytes per cell and stays resamplable. The whole set is ~63KB.
-//!
-//! Blog images take the other road: only their *dimensions* are recorded
-//! (`len == 0` in the index), so the binary does not grow by a single pixel.
-//! The TUI reserves the cell box and draws a captioned frame there; the web
-//! overlay then lays the real, full-resolution file over the reported region.
+//! Two pixels per cell vertically is what makes fitting against a 1:1 pixel
+//! grid correct: the TUI's cells are half as tall as they are wide.
 //!
 //! The blog's post list is compiled here too — titles, dates, thumbnails,
 //! excerpts and full bodies — mirroring `computeAllMedatda()` in
@@ -39,8 +34,10 @@ const MAX_COLS: u32 = 56;
 const MAX_ROWS: u32 = 16;
 
 /// Site-root-relative asset paths, which double as the `<img src>` the web
-/// overlay needs and as the key `data.rs` refers to them by.
-const ASSETS: &[&str] = &[
+/// overlay needs and as the key `data.rs` refers to them by. The blog's own
+/// images are found by walking `public/blog` instead — see
+/// [`blog_image_urls`].
+const ARTWORK: &[&str] = &[
     "/timeline/canada.webp",
     "/timeline/courseplan-promotion.png",
     "/timeline/critter-compiler.webp",
@@ -61,8 +58,7 @@ const ASSETS: &[&str] = &[
 ];
 
 /// Cells an image of `width`x`height` occupies when fitted into the box,
-/// preserving aspect. Two pixels per cell vertically is what makes the
-/// comparison against a 1:1 pixel grid correct.
+/// preserving aspect.
 fn fit(width: u32, height: u32) -> (u32, u32) {
     let mut cols = MAX_COLS;
     let mut rows = ((cols as f64 * height as f64) / (2.0 * width as f64)).round() as u32;
@@ -82,42 +78,16 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/cipher.rs");
 
-    let mut blob: Vec<u8> = Vec::new();
     let mut index = String::new();
-
-    for url in ASSETS {
-        let source: &Path = &public.join(url.trim_start_matches('/'));
-        println!("cargo:rerun-if-changed={}", source.display());
-
-        let decoded = image::ImageReader::open(source)
-            .unwrap_or_else(|error| panic!("opening {}: {error}", source.display()))
-            .decode()
-            .unwrap_or_else(|error| panic!("decoding {}: {error}", source.display()))
-            .to_rgb8();
-        let (cols, rows) = fit(decoded.width(), decoded.height());
-        let resized = image::imageops::resize(
-            &decoded,
-            cols,
-            rows * 2,
-            image::imageops::FilterType::Lanczos3,
-        );
-
-        let offset = blob.len();
-        blob.extend_from_slice(resized.as_raw());
-        writeln!(
-            index,
-            "    Baked {{ url: {url:?}, cols: {cols}, rows: {rows}, offset: {offset}, len: {} }},",
-            blob.len() - offset,
-        )
-        .expect("writing to a String cannot fail");
-    }
-
-    // Blog images: dimensions only, so the binary stays blind to their pixels.
-    // The `len: 0` sentinel tells the runtime to draw a placeholder frame and
-    // report the region for the web overlay, exactly as a baked image does.
-    for url in blog_image_urls(&public) {
+    let urls = ARTWORK
+        .iter()
+        .map(|url| (*url).to_string())
+        .chain(blog_image_urls(&public));
+    for url in urls {
         let source = public.join(url.trim_start_matches('/'));
         println!("cargo:rerun-if-changed={}", source.display());
+        // Headers only: no image the site serves is ever decoded here, let
+        // alone carried into the binary.
         let (width, height) = image::ImageReader::open(&source)
             .unwrap_or_else(|error| panic!("opening {}: {error}", source.display()))
             .into_dimensions()
@@ -125,18 +95,16 @@ fn main() {
         let (cols, rows) = fit(width, height);
         writeln!(
             index,
-            "    Baked {{ url: {url:?}, cols: {cols}, rows: {rows}, offset: 0, len: 0 }},"
+            "    Asset {{ url: {url:?}, cols: {cols}, rows: {rows} }},"
         )
         .expect("writing to a String cannot fail");
     }
 
-    std::fs::write(out.join("images.bin"), &blob).expect("writing images.bin");
     std::fs::write(
         out.join("images.rs"),
         format!(
             "// @generated by build.rs — do not edit.\n\
-             static BLOB: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/images.bin\"));\n\
-             static INDEX: &[Baked] = &[\n{index}];\n"
+             static ASSETS: &[Asset] = &[\n{index}];\n"
         ),
     )
     .expect("writing images.rs");
@@ -196,8 +164,7 @@ struct PostSource {
 /// Generates `posts.rs` and the ciphertext blob it reads its strings out of.
 ///
 /// Nothing readable crosses into the generated source: every string is
-/// encrypted here and referred to by its offset into `posts.bin`, the same
-/// shape the baked artwork already uses.
+/// encrypted here and referred to by its offset into `posts.bin`.
 fn compile_posts(public: &Path, www_src: &Path) -> (String, Vec<u8>) {
     let mut posts = local_posts(public, www_src);
     posts.extend(external_posts(www_src));

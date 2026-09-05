@@ -6,9 +6,8 @@
 //!
 //! Every string is one run of a single ciphertext blob. A [`Post`] records
 //! only where its strings sit ([`EncryptedRun`]) and the accessors below
-//! resolve those against [`POSTS_BLOB`] when read — the shape `image::Baked`
-//! already uses, and for the same reason: a `static` table holding slices of
-//! the blob would carry a second copy of the whole corpus.
+//! resolve those against [`POSTS_BLOB`] when read: a `static` table holding
+//! slices of the blob would carry a second copy of the whole corpus.
 
 use crate::crypt::{EncryptedRun, EncryptedString};
 
