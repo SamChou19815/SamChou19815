@@ -3,14 +3,15 @@
 //! same tree runs natively (crossterm over stdio) and in the browser
 //! (a wasm engine pumped by the web terminal through a plain C ABI).
 //!
-//! Mouse handling: components register clickable regions ([`hit`]) from
-//! their layout rects each frame; the app dispatches
-//! [`crossterm`] mouse events against that registry.
+//! Mouse handling: components register clickable regions ([`hit`]) as they
+//! paint, and the app dispatches [`crossterm`] mouse events against that
+//! registry.
 
 pub mod crypt;
 pub mod data;
 #[cfg(target_arch = "wasm32")]
 pub mod ffi;
+pub mod frame;
 mod highlight;
 pub mod hit;
 pub mod image;
@@ -830,12 +831,11 @@ impl App {
             // A click that lands on the open dialog itself, on anything but one
             // of its links: it is already where the reader wants to be.
             Some(hit::HitTarget::Dialog) => {}
-            // Clicks outside any region close an open dialog.
-            None => {
-                if self.modal.is_some() {
-                    self.modal = None;
-                }
-            }
+            // The screen around an open dialog, which is a region of its own —
+            // so this is a click that asked for the dialog to go, not one that
+            // happened to hit nothing while a dialog was up.
+            Some(hit::HitTarget::Dismiss) => self.modal = None,
+            None => {}
         }
     }
 

@@ -211,10 +211,10 @@ thread_local! {
     static TOP_LAYER: Cell<u8> = const { Cell::new(LAYER_PANE) };
 }
 
-/// Drops the previous frame's rects. Called from `Root` at the top of the
-/// update pass, which iocraft always runs to completion — update, then draw,
-/// then write — inside a single host poll. So the host only ever observes a
-/// whole frame's worth, and a card that scrolled away leaves no ghost behind.
+/// Drops the previous frame's rects, so the host only ever observes a whole
+/// frame's worth and a card that scrolled away leaves no ghost behind. Called
+/// by [`crate::frame`] before the frame paints — and by hand on the way out of
+/// the app, when there is no next frame to do it.
 pub fn begin_frame(top_layer: u8) {
     REGIONS.with(|regions| regions.borrow_mut().clear());
     TOP_LAYER.with(|layer| layer.set(top_layer));
