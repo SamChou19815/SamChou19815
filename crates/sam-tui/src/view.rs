@@ -851,7 +851,7 @@ fn card_element(
 /// A card's artwork, indented under the timeline rail like the rest of its
 /// body. `None` whenever [`crate::image::rows`] would report zero, so the row
 /// count the scroll math assumes and the row count drawn stay the same number.
-/// `alt` captions the placeholder frame drawn for dimensions-only images.
+/// `alt` captions the frame the web overlay lays the real file over.
 fn image_row(
     url: Option<EncryptedString>,
     gutter: &'static str,
@@ -1210,7 +1210,7 @@ fn reader_tree(app: &App, reader: &Reader) -> impl Into<AnyElement<'static>> {
         .skip(start)
         .filter_map(|block| match block {
             markdown::Block::Line(line) => Some(line_element(line)),
-            // An image nothing was baked under counts as no rows at all;
+            // An image with no recorded size counts as no rows at all;
             // drawing one anyway would put every row below it out of step with
             // the scroll offset.
             markdown::Block::Image { url, alt } => {
@@ -1288,7 +1288,7 @@ fn about_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
     let portrait = image::enabled(column).then(|| {
         element_to_any(element! {
             View(margin_left: 2, flex_shrink: 0.0_f32) {
-                Image(url: image::PORTRAIT.to_string(), bounds: image::AVATAR)
+                Image(url: image::PORTRAIT.to_string(), bounds: image::AVATAR, alt: "Sam".to_string())
             }
         })
     });
@@ -1458,9 +1458,10 @@ fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'st
     let hero = hero_bounds(cols, rows)
         .zip(modal_image(modal))
         .map(|(bounds, url)| {
+            let alt = title.trim().to_string();
             element_to_any(element! {
                 View(width: 100pct, justify_content: JustifyContent::Center, padding_bottom: 1) {
-                    Image(url: url.decrypt(), bounds: bounds, layer: image::LAYER_DIALOG)
+                    Image(url: url.decrypt(), bounds: bounds, layer: image::LAYER_DIALOG, alt: alt)
                 }
             })
         });

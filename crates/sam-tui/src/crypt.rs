@@ -44,8 +44,7 @@ impl EncryptedString {
 /// Deliberately holds no reference to the blob, only offsets into it, and is
 /// resolved by [`EncryptedRun::of`] at run time. A `static` table that pointed
 /// into the blob would drag its bytes into that table's own const-evaluated
-/// allocation, and the binary would carry the corpus twice — the same reason
-/// `image::Baked` records an offset and a length rather than a slice.
+/// allocation, and the binary would carry the corpus twice.
 #[derive(Clone, Copy)]
 pub struct EncryptedRun {
     seed: u32,

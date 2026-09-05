@@ -1,39 +1,32 @@
-//! Inline images, painted as truecolor half-blocks.
+//! Inline images: a cell box reserved for the web front-end to fill.
 //!
-//! Each cell is a `▀` whose foreground is the upper pixel and whose background
-//! is the lower one, so a cell carries two stacked pixels and the effective
-//! pixel grid is square. That is plain SGR output: it works in the native
-//! binary and on the web with no graphics protocol, no xterm addon, and no
-//! further patches to iocraft.
+//! The TUI never draws artwork itself. It works out how many cells a picture
+//! takes, draws a captioned frame there, and records where the box landed; the
+//! host reads [`regions`] and lays the real, full-resolution file over it — see
+//! `packages/www/src/app/terminal/artwork.ts`. The frame is what shows while
+//! that file loads, and what stays if it never arrives.
 //!
-//! `build.rs` bakes every asset once, at [`HERO`] resolution; smaller
-//! placements box-filter that grid down here. Each image also records where it
-//! landed, which the web front-end uses to lay a crisp `<img>` over the art —
-//! see [`regions`].
+//! So nothing but a width and a height ever reaches the wasm binary: `build.rs`
+//! records each asset's size in cells, at [`HERO`] scale, and smaller
+//! placements scale that down here.
 
 use crate::theme;
-use crossterm::style::Color;
 use iocraft::prelude::*;
 use std::cell::{Cell, RefCell};
 
-/// One baked asset: `cols * 2 * rows` RGB pixels at `offset` in [`BLOB`].
-/// `len == 0` marks a dimensions-only entry — the blog's images, whose pixels
-/// are never baked. The terminal draws a captioned placeholder frame there and
-/// the web overlay lays the real, full-resolution file over the reported
-/// region, exactly as it does for a baked image.
-struct Baked {
+/// One asset's size in cells, fitted to [`HERO`]: the aspect ratio every
+/// placement scales down from.
+struct Asset {
     url: &'static str,
     cols: u16,
     rows: u16,
-    offset: usize,
-    len: usize,
 }
 
 include!(concat!(env!("OUT_DIR"), "/images.rs"));
 
 /// Card and project-row thumbnails.
 pub const THUMBNAIL: (u16, u16) = (32, 8);
-/// The detail dialog's hero, and the size everything is baked at.
+/// The detail dialog's hero, and the box every recorded size is fitted to.
 pub const HERO: (u16, u16) = (56, 16);
 /// The portrait beside the About pane's program.
 pub const AVATAR: (u16, u16) = (26, 13);
@@ -83,22 +76,23 @@ pub fn reader_bounds(cols: u16) -> (u16, u16) {
     fit_width(crate::blog_column_width(cols), HERO)
 }
 
-fn baked(url: &str) -> Option<&'static Baked> {
-    INDEX.iter().find(|baked| baked.url == url)
+fn asset(url: &str) -> Option<&'static Asset> {
+    ASSETS.iter().find(|asset| asset.url == url)
 }
 
 /// Cells `url` occupies when fitted into `bounds`, preserving aspect. `None`
-/// when nothing is baked under that name.
+/// when the site serves no asset under that name.
 pub fn size(url: &str, (max_cols, max_rows): (u16, u16)) -> Option<(u16, u16)> {
-    let baked = baked(url)?;
-    // Never upscale past what was baked — there are no more pixels to show.
+    let asset = asset(url)?;
+    // Never past HERO, the largest box the design lays out. Recorded sizes
+    // already sit inside it, so this only guards a caller asking for more.
     let scale = f64::min(
-        f64::from(max_cols) / f64::from(baked.cols),
-        f64::from(max_rows) / f64::from(baked.rows),
+        f64::from(max_cols) / f64::from(asset.cols),
+        f64::from(max_rows) / f64::from(asset.rows),
     )
     .min(1.0);
-    let cols = (f64::from(baked.cols) * scale).round() as u16;
-    let rows = (f64::from(baked.rows) * scale).round() as u16;
+    let cols = (f64::from(asset.cols) * scale).round() as u16;
+    let rows = (f64::from(asset.rows) * scale).round() as u16;
     Some((cols.max(1), rows.max(1)))
 }
 
@@ -110,46 +104,6 @@ pub fn rows(url: Option<&str>, bounds: (u16, u16)) -> usize {
         .map_or(0, |(_, rows)| usize::from(rows))
 }
 
-/// Box-filters a baked grid down to `cols * 2 * rows` RGB pixels.
-fn sample(baked: &Baked, cols: u16, rows: u16) -> Vec<[u8; 3]> {
-    let source = &BLOB[baked.offset..baked.offset + baked.len];
-    let (source_width, source_height) = (usize::from(baked.cols), usize::from(baked.rows) * 2);
-    let (width, height) = (usize::from(cols), usize::from(rows) * 2);
-    let mut pixels = Vec::with_capacity(width * height);
-    for y in 0..height {
-        let y0 = y * source_height / height;
-        let y1 = (((y + 1) * source_height).div_ceil(height))
-            .min(source_height)
-            .max(y0 + 1);
-        for x in 0..width {
-            let x0 = x * source_width / width;
-            let x1 = (((x + 1) * source_width).div_ceil(width))
-                .min(source_width)
-                .max(x0 + 1);
-            let (mut red, mut green, mut blue, mut count) = (0u32, 0u32, 0u32, 0u32);
-            for sy in y0..y1 {
-                for sx in x0..x1 {
-                    let at = (sy * source_width + sx) * 3;
-                    red += u32::from(source[at]);
-                    green += u32::from(source[at + 1]);
-                    blue += u32::from(source[at + 2]);
-                    count += 1;
-                }
-            }
-            pixels.push([
-                (red / count) as u8,
-                (green / count) as u8,
-                (blue / count) as u8,
-            ]);
-        }
-    }
-    pixels
-}
-
-fn color([r, g, b]: [u8; 3]) -> Color {
-    Color::Rgb { r, g, b }
-}
-
 // --- Where each image landed, for the web overlay -----------------------------
 
 /// A drawn image's cell rectangle, in canvas coordinates. The app runs in the
@@ -157,8 +111,8 @@ fn color([r, g, b]: [u8; 3]) -> Color {
 /// offset to place an `<img>` over it.
 ///
 /// `visible_*` is the part that survived the pane's clipping. A card scrolled
-/// half off the bottom paints only part of its artwork, and the overlay has to
-/// crop to the same rectangle or the picture spills over the status bar. It is
+/// half off the bottom paints only part of its box, and the overlay has to crop
+/// to the same rectangle or the picture spills over the status bar. It is
 /// measured, not predicted: [`CanvasSubviewMut::cell`] returns `None` outside
 /// the clip region, so the draw loop learns each cell's fate as it writes it.
 ///
@@ -224,7 +178,6 @@ fn record(region: Region) {
     REGIONS.with(|regions| regions.borrow_mut().push(region));
 }
 
-/// Every image drawn in the current frame.
 /// Every image with something on screen in the current frame. Fully clipped
 /// ones are left out, so the host never mounts an `<img>` for a card that
 /// scrolled away.
@@ -250,14 +203,14 @@ pub struct ImageProps {
     pub bounds: (u16, u16),
     /// [`LAYER_PANE`] by default; [`LAYER_DIALOG`] for artwork inside a dialog.
     pub layer: u8,
-    /// Caption for the placeholder frame drawn when no pixels were baked.
+    /// Caption for the frame, read while the real file is on its way.
     pub alt: String,
 }
 
-/// Draws a baked image as half-blocks, or a captioned frame when the asset is
-/// dimensions-only. Implemented against `Component` directly rather than
-/// through `#[component]`, because painting per-cell foreground *and*
-/// background needs the canvas, which only `draw` sees.
+/// Reserves an image's cells, frames them, and reports the rectangle the host
+/// covers. Implemented against `Component` directly rather than through
+/// `#[component]`, because it has to measure how much of itself the pane's
+/// clipping let through, which only the canvas `draw` sees can tell it.
 #[derive(Default)]
 pub struct Image {
     url: String,
@@ -297,85 +250,59 @@ impl Component for Image {
     }
 
     fn draw(&mut self, drawer: &mut ComponentDrawer<'_>) {
-        let Some(baked) = baked(&self.url) else {
-            return;
-        };
         if self.cols == 0 || self.rows == 0 {
             return;
         }
         let position = drawer.canvas_position();
-        let width = usize::from(self.cols);
+        let (width, height) = (usize::from(self.cols), usize::from(self.rows));
         let mut canvas = drawer.canvas();
         // `CanvasTextStyle` is `#[non_exhaustive]`, so it is built by mutation
         // rather than by a struct literal.
         let mut style = CanvasTextStyle::default();
         // The clipped region is a rectangle, so tracking its corners is enough.
         let (mut first, mut last) = (None, (0usize, 0usize));
-        if baked.len == 0 {
-            // Dimensions only: probe every cell so `first`/`last` measure the
-            // clipped rectangle exactly as the pixel path does, then draw the
-            // placeholder the web overlay's `<img>` replaces.
-            for row in 0..usize::from(self.rows) {
-                for col in 0..width {
-                    if canvas.cell(col as isize, row as isize).is_some() {
-                        first.get_or_insert((col, row));
-                        last = (last.0.max(col), row);
-                    }
+        // A border wants a row above and below the caption; anything shorter is
+        // captioned bare.
+        let framed = height >= 3;
+        let margin = usize::from(framed);
+        for row in 0..height {
+            for col in 0..width {
+                if canvas.cell(col as isize, row as isize).is_some() {
+                    first.get_or_insert((col, row));
+                    last = (last.0.max(col), row);
                 }
-            }
-            let rows = usize::from(self.rows);
-            let framed = rows >= 3;
-            let margin = usize::from(framed);
-            let label = if self.alt.is_empty() {
-                "[image]".to_string()
-            } else {
-                format!("[image: {}]", self.alt)
-            };
-            let caption =
-                crate::markdown::truncate(&label, width.saturating_sub(2 * margin).max(1));
-            let caption_row = rows / 2;
-            let start =
-                margin + (width.saturating_sub(2 * margin).max(1) - caption.chars().count()) / 2;
-            for row in 0..rows {
-                for col in 0..width {
-                    let glyph = if framed {
-                        frame_glyph(col, row, width, rows)
-                    } else {
-                        ""
-                    };
-                    if glyph.is_empty() {
-                        continue;
-                    }
+                let glyph = if framed {
+                    frame_glyph(col, row, width, height)
+                } else {
+                    ""
+                };
+                if !glyph.is_empty() {
                     style.color = Some(theme::BORDER);
                     canvas.set_text(col as isize, row as isize, glyph, style);
                 }
             }
-            style.color = Some(theme::MUTED);
-            for (offset, glyph) in caption.char_indices() {
-                let piece = &caption[offset..offset + glyph.len_utf8()];
-                canvas.set_text(
-                    (start + offset) as isize,
-                    caption_row as isize,
-                    piece,
-                    style,
-                );
-            }
-        } else {
-            let pixels = sample(baked, self.cols, self.rows);
-            for row in 0..usize::from(self.rows) {
-                for col in 0..width {
-                    if canvas.cell(col as isize, row as isize).is_some() {
-                        first.get_or_insert((col, row));
-                        last = (last.0.max(col), row);
-                    }
-                    let upper = pixels[row * 2 * width + col];
-                    let lower = pixels[(row * 2 + 1) * width + col];
-                    canvas.set_background_color(col as isize, row as isize, 1, 1, color(lower));
-                    style.color = Some(color(upper));
-                    canvas.set_text(col as isize, row as isize, "▀", style);
-                }
-            }
         }
+
+        let inner = width.saturating_sub(2 * margin).max(1);
+        let label = if self.alt.is_empty() {
+            "[image]".to_string()
+        } else {
+            format!("[image: {}]", self.alt)
+        };
+        let caption = crate::markdown::truncate(&label, inner);
+        let caption_row = height / 2;
+        let start = margin + (inner - caption.chars().count()) / 2;
+        style.color = Some(theme::MUTED);
+        let mut buffer = [0u8; 4];
+        for (offset, glyph) in caption.chars().enumerate() {
+            canvas.set_text(
+                (start + offset) as isize,
+                caption_row as isize,
+                glyph.encode_utf8(&mut buffer),
+                style,
+            );
+        }
+
         let (x, y) = (position.x, position.y);
         let (visible_x, visible_y, visible_cols, visible_rows) = match first {
             Some((col, row)) => (
@@ -401,8 +328,8 @@ impl Component for Image {
     }
 }
 
-/// The box-drawing glyph for one cell of a placeholder's frame; the empty
-/// string for the interior.
+/// The box-drawing glyph for one cell of a frame; the empty string for the
+/// interior.
 fn frame_glyph(col: usize, row: usize, cols: usize, rows: usize) -> &'static str {
     if row == 0 {
         if col == 0 {

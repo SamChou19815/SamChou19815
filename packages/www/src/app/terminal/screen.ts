@@ -105,8 +105,8 @@ export function openScreen(container: HTMLDivElement, options: ScreenOptions): S
     terminal.textarea.readOnly = true;
   }
 
-  // Try WebGL: its renderer draws block elements procedurally, so the
-  // half-block artwork tiles seamlessly. The DOM renderer leaves hairline
+  // Try WebGL: its renderer draws box-drawing characters procedurally, so the
+  // panes, dialogs and image frames join up. The DOM renderer leaves hairline
   // gaps between rows because it depends on font metrics and line height.
   try {
     terminal.loadAddon(new WebglAddon());
