@@ -135,7 +135,6 @@ impl Session {
     /// shell. Restarting after a quit leaks a fresh tree rather than reviving
     /// the finished one.
     fn launch(&mut self) {
-        crate::hit::begin_frame(false);
         let element: &'static mut _ = Box::leak(Box::new(view::root_element()));
         let future = element
             .fullscreen()
