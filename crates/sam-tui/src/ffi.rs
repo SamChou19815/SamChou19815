@@ -172,11 +172,11 @@ impl Session {
         crate::reset_route_sync();
         crate::push_host_event(crate::HostEvent::Route {
             replace: true,
-            path: "/".to_string(),
+            path: crate::site_path::SitePath::root(),
             title: crate::SHELL_TITLE.to_string(),
         });
-        let banner = self.editor.resume();
-        self.write(&banner);
+        let screen = self.editor.after_dev_sam_app_exit();
+        self.write(&screen);
     }
 
     /// Consumes whatever input the host has just pushed.
@@ -202,7 +202,7 @@ impl Session {
             let Ok(Event::Key(key)) = crossterm::event::read() else {
                 continue;
             };
-            let (ansi, launch) = self.editor.key(key, &mut self.shell);
+            let (ansi, launch) = self.editor.handle_key(key, &mut self.shell);
             self.write(&ansi);
             if launch {
                 // Whatever is still queued belongs to the app, not the shell.
@@ -215,14 +215,16 @@ impl Session {
     /// link followed inside a post, or wherever the back button just went. A
     /// path that is no view of this app means the visitor has left it.
     fn go_to(&mut self, path: &str) {
-        if !crate::has_view(path) {
+        let Some(path) =
+            crate::site_path::SitePath::parse(path).filter(|path| crate::has_view(path))
+        else {
             if matches!(self.mode, Mode::App(_)) {
                 crate::request_quit();
                 self.wake();
             }
             return;
-        }
-        crate::request_route(path);
+        };
+        crate::request_route(&path);
         match self.mode {
             Mode::App(_) => self.wake(),
             Mode::Shell => self.launch(),
@@ -248,16 +250,17 @@ pub fn sam_start(cols: u16, rows: u16, path: &str, touch: bool) {
         let session = session.insert(Session::new(cols, rows));
         crossterm::set_size(cols, rows);
         crate::reset_route_sync();
-        if crate::has_view(path) {
-            // A visitor who arrived at a view asked for it by name: open it,
-            // with no banner and nothing to press.
-            crate::request_route(path);
+        // A visitor who arrived at a view asked for it by name: open it, with
+        // no banner and nothing to press. Anything else the browser may have
+        // handed over is not this app's to serve, so the shell opens instead.
+        if let Some(path) =
+            crate::site_path::SitePath::parse(path).filter(|path| crate::has_view(path))
+        {
+            crate::request_route(&path);
             session.launch();
         } else {
-            // Otherwise open the shell; the app is one `dev-sam` away, already
-            // typed at the prompt.
-            let banner = session.editor.banner(touch);
-            session.write(&banner);
+            let screen = session.editor.opening_screen(touch);
+            session.write(&screen);
         }
     });
 }
@@ -300,7 +303,7 @@ pub fn sam_navigate(path: &str) {
 #[wasm_bindgen(js_name = openLink)]
 pub fn sam_open_link(url: &str) {
     with_session(|session| match crate::link_target(url) {
-        crate::LinkTarget::View(path) => session.go_to(&path),
+        crate::LinkTarget::View(path) => session.go_to(path.as_str()),
         crate::LinkTarget::External(url) => crate::push_host_event(crate::HostEvent::Open(url)),
         crate::LinkTarget::Ignore => {}
     });

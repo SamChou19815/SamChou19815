@@ -5,8 +5,8 @@ const path = require("node:path");
 
 /**
  * The post's frontmatter: a `---` fenced block of `key: "value"` lines at the
- * very top of the file. Only `title` and the optional hero `image` live there,
- * so a hand-rolled reader is enough and the site keeps no YAML dependency.
+ * very top of the file. Only `title` lives there, so a hand-rolled reader is
+ * enough and the site keeps no YAML dependency.
  * `crates/sam-tui/build.rs` parses the same block for the TUI.
  */
 function parseFrontmatter(/** @type {string} */ source, /** @type {string} */ fullPath) {
@@ -55,14 +55,13 @@ function computeAllMedatada() {
       for (const date of fs.readdirSync(path.join(BLOG_POSTS_ROOT, year, month))) {
         for (const file of fs.readdirSync(path.join(BLOG_POSTS_ROOT, year, month, date))) {
           const fullPath = path.join(BLOG_POSTS_ROOT, year, month, date, file);
-          const { title, image } = parseFrontmatter(fs.readFileSync(fullPath).toString(), fullPath);
+          const { title } = parseFrontmatter(fs.readFileSync(fullPath).toString(), fullPath);
           allMetadata.push({
             title,
             year,
             month,
             date,
             titleSlug: path.basename(file, ".md"),
-            ...(image == null ? {} : { image }),
           });
         }
       }

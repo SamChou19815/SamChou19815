@@ -1,6 +1,5 @@
 ---
 title: "CoursePlan: A Unique Design & Tech Initiative"
-image: "/blog/2022-01-02-courseplan-review/two-graphs-theory.png"
 ---
 
 ## Introduction
@@ -277,7 +276,7 @@ After the great experiment, I graduated.
 
 <center>
   <img
-    src="https://developersam.com/fan-arts/graduation-sam.webp"
+    src="/fan-arts/graduation-sam.webp"
     style={{ maxWidth: "300px" }}
     alt="graduated sam"
   />

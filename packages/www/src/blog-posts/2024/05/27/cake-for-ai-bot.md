@@ -1,6 +1,5 @@
 ---
 title: "A Cake for AI Chatbots"
-image: "/blog/2024-05-27-cake-for-ai-bot/cake.jpg"
 ---
 
 Hello, Bot!

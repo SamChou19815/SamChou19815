@@ -18,6 +18,7 @@ pub mod image;
 pub mod markdown;
 pub mod posts;
 pub mod shell;
+pub mod site_path;
 pub mod theme;
 pub mod view;
 
@@ -135,7 +136,10 @@ pub fn card_height(event: &data::TimelineEvent, cols: u16) -> usize {
         wrapped_rows(&link_row_label(event.links), inner)
     };
     let image = image::rows(
-        event.image.map(|url| url.decrypt()).as_deref(),
+        event
+            .image
+            .map(|url| site_path::SitePath::new(url.decrypt()))
+            .as_ref(),
         image::thumbnail_bounds(cols),
     );
     let body: usize = [image, detail, links]
@@ -209,7 +213,7 @@ pub enum HostEvent {
     /// Put the URL bar and the document title on a view.
     Route {
         replace: bool,
-        path: String,
+        path: site_path::SitePath,
         title: String,
     },
 }
@@ -247,7 +251,7 @@ pub fn poll_host_event() -> Option<HostEvent> {
 /// than pushes. Called when a session boots.
 pub fn reset_route_sync() {
     ROUTE_SYNCED.with(|synced| synced.set(false));
-    CURRENT_ROUTE.with(|route| route.borrow_mut().clear());
+    CURRENT_ROUTE.with(|route| *route.borrow_mut() = None);
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -278,30 +282,32 @@ thread_local! {
     /// A view the host has asked for — a URL entered, a link followed, or the
     /// back button. Applied by the next [`App`] to look, which is either the
     /// one being built ([`App::new`]) or the one handling the next event.
-    static PENDING_ROUTE: std::cell::RefCell<Option<String>> =
+    static PENDING_ROUTE: std::cell::RefCell<Option<site_path::SitePath>> =
         const { std::cell::RefCell::new(None) };
     /// Set when the host has decided the visitor has left the app — the back
     /// button landing somewhere the app has no view for. Applied by the next
     /// frame, so the app exits through its own path and restores the screen.
     static PENDING_QUIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The view the app is on, republished every frame for the host to read.
-    static CURRENT_ROUTE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    /// `None` until the first one is drawn.
+    static CURRENT_ROUTE: std::cell::RefCell<Option<site_path::SitePath>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Asks the app to show the view at `path`. Takes effect on the next frame.
-pub fn request_route(path: &str) {
-    PENDING_ROUTE.with(|pending| *pending.borrow_mut() = Some(path.to_string()));
+pub fn request_route(path: &site_path::SitePath) {
+    PENDING_ROUTE.with(|pending| *pending.borrow_mut() = Some(path.clone()));
 }
 
 /// Records the view a frame is about to draw, queueing a [`HostEvent::Route`]
 /// whenever it changes so the URL bar and the document title follow the app.
-pub fn publish_route(route: String) {
+pub fn publish_route(route: site_path::SitePath) {
     let changed = CURRENT_ROUTE.with(|current| {
         let mut current = current.borrow_mut();
-        if *current == route {
+        if current.as_ref() == Some(&route) {
             return false;
         }
-        current.clone_from(&route);
+        *current = Some(route.clone());
         true
     });
     if !changed {
@@ -318,7 +324,7 @@ pub fn publish_route(route: String) {
 
 /// Takes whatever view the host last asked for, leaving nothing behind: a
 /// request is applied once, by the first frame to look.
-pub(crate) fn take_pending_route() -> Option<String> {
+pub(crate) fn take_pending_route() -> Option<site_path::SitePath> {
     PENDING_ROUTE.with(|pending| pending.borrow_mut().take())
 }
 
@@ -382,17 +388,17 @@ impl App {
 
     /// The view the app is on, as a site path — what the URL bar should read.
     /// An open post is its own permalink; everything else is its tab.
-    pub fn route(&self) -> String {
+    pub fn route(&self) -> site_path::SitePath {
         match &self.reader {
             Some(reader) => posts::POSTS[reader.post].path(),
-            None => TAB_ROUTES[self.tab].to_string(),
+            None => site_path::SitePath::new(TAB_ROUTES[self.tab]),
         }
     }
 
     /// Shows the view a site path names, and reports whether it named one. A
     /// permalink opens its post in the reader; the blog index and the other
     /// tabs close it.
-    pub fn go_to(&mut self, path: &str) -> bool {
+    pub fn go_to(&mut self, path: &site_path::SitePath) -> bool {
         match view_at(path) {
             Some(View::Post(post)) => {
                 self.switch_tab(BLOG_TAB);
@@ -903,18 +909,18 @@ enum View {
 /// The view a site path names, if the app has one. An unknown post still asks
 /// for the blog, so it lands on the index; a path that is no view at all —
 /// `/`, `/budget` — belongs to the browser, not the app.
-fn view_at(path: &str) -> Option<View> {
-    let path = path.strip_suffix('/').unwrap_or(path);
+fn view_at(path: &site_path::SitePath) -> Option<View> {
     if let Some(post) = posts::find(path) {
         return Some(View::Post(post));
     }
     TAB_ROUTES
         .iter()
-        .position(|route| *route == path)
+        .position(|route| *route == path.as_str())
         // Anything else under the blog — a post that has since been unpublished,
         // say — still asked for the blog, so the index is where it lands.
         .or_else(|| {
-            path.strip_prefix(BLOG_ROUTE)
+            path.as_str()
+                .strip_prefix(BLOG_ROUTE)
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
                 .then_some(BLOG_TAB)
         })
@@ -924,7 +930,7 @@ fn view_at(path: &str) -> Option<View> {
 /// Whether the app has a view at `path`. The host asks before following a link
 /// or a back button itself rather than handing it to the browser, so the two
 /// never disagree about what this app is responsible for.
-pub fn has_view(path: &str) -> bool {
+pub fn has_view(path: &site_path::SitePath) -> bool {
     view_at(path).is_some()
 }
 
@@ -934,8 +940,7 @@ pub const SHELL_TITLE: &str = "Developer Sam — Terminal";
 /// What the document is called while the view at `path` is on screen. The post
 /// titles come from `posts.rs`, which build.rs compiles out of the same
 /// sources the site renders, so the tab and the page cannot disagree.
-pub fn title_for(path: &str) -> String {
-    let path = path.strip_suffix('/').unwrap_or(path);
+pub fn title_for(path: &site_path::SitePath) -> String {
     if let Some(post) = posts::find(path) {
         return format!("{} | {}", posts::POSTS[post].title(), posts::blog_title());
     }
@@ -951,7 +956,7 @@ pub fn title_for(path: &str) -> String {
 /// Where activating a link should lead.
 pub enum LinkTarget {
     /// A view of this app: follow it here, without touching the browser.
-    View(String),
+    View(site_path::SitePath),
     /// Somewhere else on the web: the host opens it in a new tab.
     External(String),
     /// Neither, so nothing happens. The page renders whatever bytes reach it,
@@ -977,17 +982,17 @@ pub fn link_target(url: &str) -> LinkTarget {
 /// The site path a URL points at, if it points at this site. Both forms turn up
 /// in post bodies: relative links as the author wrote them, and absolute ones
 /// the native binary needs a host for.
-fn site_path(url: &str) -> Option<String> {
+fn site_path(url: &str) -> Option<site_path::SitePath> {
     if url.starts_with('/') {
-        return Some(url.to_string());
+        return Some(site_path::SitePath::new(url));
     }
     let rest = strip_prefix_ignore_case(url, "https://")
         .or_else(|| strip_prefix_ignore_case(url, "http://"))?;
     let rest = strip_prefix_ignore_case(rest, "www.").unwrap_or(rest);
     let rest = strip_prefix_ignore_case(rest, "developersam.com")?;
     match rest {
-        "" => Some("/".to_string()),
-        _ if rest.starts_with('/') => Some(rest.to_string()),
+        "" => Some(site_path::SitePath::root()),
+        _ if rest.starts_with('/') => Some(site_path::SitePath::new(rest)),
         // A different host that merely starts the same way, e.g.
         // `developersam.com.example.org`.
         _ => None,

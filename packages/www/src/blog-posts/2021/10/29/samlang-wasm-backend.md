@@ -1,6 +1,5 @@
 ---
 title: "WebAssembly Backend for samlang"
-image: "/blog/2021-10-29-samlang-wasm-backend/wasm.png"
 ---
 
 Since the release of Apple M1 MacBook, a ticking bomb starts: eventually there will be a day that I

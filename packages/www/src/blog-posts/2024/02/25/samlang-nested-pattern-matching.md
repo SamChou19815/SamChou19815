@@ -1,6 +1,5 @@
 ---
 title: "Deeply Nested Pattern Matching in samlang"
-image: "/blog/2024-02-25-samlang-nested-pattern-matching/pattern-matching-not-exhaustive.png"
 ---
 
 ![Pattern matching with error](/blog/2024-02-25-samlang-nested-pattern-matching/pattern-matching-not-exhaustive.png)

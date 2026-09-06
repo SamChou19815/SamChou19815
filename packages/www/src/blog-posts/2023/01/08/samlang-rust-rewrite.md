@@ -1,6 +1,5 @@
 ---
 title: "Rewriting samlang in Rust"
-image: "/blog/2023-01-08-samlang-in-rust/optimization.png"
 ---
 
 ## Motivation

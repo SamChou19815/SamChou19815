@@ -10,6 +10,7 @@
 //! slices of the blob would carry a second copy of the whole corpus.
 
 use crate::crypt::{EncryptedRun, EncryptedString};
+use crate::site_path::SitePath;
 
 pub struct Post {
     title: EncryptedRun,
@@ -19,17 +20,13 @@ pub struct Post {
     /// Empty for external posts, which have no page on this site.
     slug: EncryptedRun,
     external_url: Option<EncryptedRun>,
-    /// Card artwork: the post's OG image, else its first inline image.
-    thumbnail: Option<EncryptedRun>,
-    excerpt: EncryptedRun,
     /// Markdown body with the frontmatter stripped. Empty for external posts.
     body: EncryptedRun,
 }
 
 include!(concat!(env!("OUT_DIR"), "/posts.rs"));
 
-/// The blog's name, read from `blog-constants.ts` by build.rs so the TUI and
-/// the site can never disagree about what to call it.
+/// The blog's name.
 pub fn blog_title() -> EncryptedString {
     BLOG_TITLE.of(POSTS_BLOB)
 }
@@ -39,18 +36,8 @@ impl Post {
         self.title.of(POSTS_BLOB)
     }
 
-    pub fn excerpt(&self) -> EncryptedString {
-        self.excerpt.of(POSTS_BLOB)
-    }
-
-    /// Markdown body with the frontmatter stripped. Empty for external posts.
     pub fn body(&self) -> EncryptedString {
         self.body.of(POSTS_BLOB)
-    }
-
-    /// Card artwork: the post's OG image, else its first inline image.
-    pub fn thumbnail(&self) -> Option<EncryptedString> {
-        self.thumbnail.map(|run| run.of(POSTS_BLOB))
     }
 
     pub fn is_external(&self) -> bool {
@@ -69,14 +56,14 @@ impl Post {
     /// The post's permalink as a site path. Only local posts have one; an
     /// external post's empty slug makes this meaningless, which is why
     /// [`find`] never matches one.
-    pub fn path(&self) -> String {
-        format!(
+    pub fn path(&self) -> SitePath {
+        SitePath::new(format!(
             "/blog/{}/{}/{}/{}",
             self.year.of(POSTS_BLOB),
             self.month.of(POSTS_BLOB),
             self.date.of(POSTS_BLOB),
             self.slug.of(POSTS_BLOB)
-        )
+        ))
     }
 
     /// Where the post lives on the web — the external host, or this site.
@@ -89,8 +76,8 @@ impl Post {
 }
 
 /// The post a site path names, if it is one this site hosts.
-pub fn find(path: &str) -> Option<usize> {
+pub fn find(path: &SitePath) -> Option<usize> {
     POSTS
         .iter()
-        .position(|post| !post.is_external() && post.path() == path)
+        .position(|post| !post.is_external() && &post.path() == path)
 }
