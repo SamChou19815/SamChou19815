@@ -9,18 +9,18 @@ use crate::hit::{HitTarget, UseHit};
 use crate::image::{self, Image};
 use crate::site_path::SitePath;
 use crate::{
-    data, markdown, posts, theme, App, Modal, Reader, ABOUT_TAB, BLOG_TAB, TAB_COUNT, TAB_NAMES,
-    TIMELINE_TAB,
+    data, markdown, posts, theme, App, Modal, Reader, ABOUT_TAB, BLOG_TAB, HELP_TAB, TAB_COUNT,
+    TAB_NAMES, TIMELINE_TAB,
 };
 use crossterm::style::Color;
 use iocraft::components::MixedTextContent;
 use iocraft::prelude::*;
 use iocraft::AnyElement;
 
-const TITLE: &str = " DEVELOPER SAM ";
+const TITLE: &str = " DEV SAM ";
 
 /// The one column everything the app draws is laid out down: the wordmark and
-/// the tabs, the pane's counter, the cards, and the hints along the bottom. It
+/// the tabs, the cards, and the hints along the bottom. It
 /// is the same measure and the same centering the pane's own body uses
 /// ([`crate::column_width`]) — the pane's border and padding are inset by
 /// exactly what the centering gives back, so every one of those lines up on the
@@ -95,13 +95,14 @@ pub fn tab_line_count(tab: usize, cols: u16) -> usize {
             .sum(),
         BLOG_TAB => crate::blog_rows(),
         ABOUT_TAB => about_lines().len(),
+        HELP_TAB => help_lines(cols as usize).len(),
         _ => 0,
     }
 }
 
 /// Total number of lines a modal's scrollable body can show.
-pub fn modal_line_count(modal: &Modal, cols: u16) -> usize {
-    modal_lines(modal, cols as usize).len()
+pub fn modal_line_count(modal: &Modal) -> usize {
+    modal_lines(modal).len()
 }
 
 /// Rows of text the open dialog shows at once: its body, less the hero
@@ -285,9 +286,8 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     // The URL bar is one more thing the host mirrors from the frame it is
     // about to see, so it is published here with the rest of them.
     crate::publish_route(app.route());
-    let counter = pane_counter(&app);
     let cols = terminal_width as usize;
-    let pane_title = pane_title(&app, &counter, cols);
+    let pane_title = pane_title(&app, cols);
     element! {
         View(
             flex_direction: FlexDirection::Column,
@@ -298,21 +298,11 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             Header(tab: app.tab, cols: cols, rows: terminal_height as usize)
             Pane(
                 title: pane_title,
-                counter: counter,
                 closable: app.reader.is_some(),
                 column: column_cols(cols),
             ) {
                 #(content_element(&app))
             }
-            #((status_rows(terminal_width, terminal_height) > 0).then(|| element! {
-                StatusChrome(
-                    tab: app.tab,
-                    modal_open: app.modal.is_some(),
-                    reading: app.reader.is_some(),
-                    cols: cols,
-                    rows: terminal_height as usize,
-                )
-            }))
             #(app.modal.map(|modal| modal_element(&modal, cols, terminal_height)))
         }
     }
@@ -322,17 +312,17 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 /// centered over the pane: a tab is already named — and marked as the one in
 /// front — by the header a row above, so a pane that repeats it spends a row of
 /// chrome saying what has just been said. The title is cut to what is left
-/// beside the counter, so the row stays exactly one line however narrow the
+/// beside the close button, so the row stays exactly one line however narrow the
 /// terminal or long the post.
-fn pane_title(app: &App, counter: &str, cols: usize) -> PaneTitle {
+fn pane_title(app: &App, cols: usize) -> PaneTitle {
     let Some(reader) = &app.reader else {
         return PaneTitle::None;
     };
     // What the title has to itself: the row less its padding, the space either
-    // side of the title, the counter, and the spacer that balances the counter
-    // and the close button on the other side.
+    // side of the title, and the spacer that balances the close button on the
+    // other side.
     let room = cols
-        .saturating_sub(2 * counter.chars().count() + 2 * CLOSE_LABEL.len() + 4)
+        .saturating_sub(2 * CLOSE_LABEL.len() + 4)
         .max(MIN_TITLE_COLS);
     PaneTitle::Centered(markdown::truncate(
         &posts::POSTS[reader.post].title().decrypt(),
@@ -340,26 +330,8 @@ fn pane_title(app: &App, counter: &str, cols: usize) -> PaneTitle {
     ))
 }
 
-/// "position/total" for the pane's title row. The list tabs count items, so
-/// the counter tracks the selection the reader is actually moving; an open
-/// reader counts the blocks it scrolls through instead.
-fn pane_counter(app: &App) -> String {
-    let (position, total) = if let Some(reader) = &app.reader {
-        (reader.scroll + 1, reader_row_count(reader.post, app.cols))
-    } else {
-        match app.tab {
-            TIMELINE_TAB => (app.selected(TIMELINE_TAB) + 1, data::TIMELINE.len()),
-            BLOG_TAB => (app.selected(BLOG_TAB) + 1, posts::POSTS.len()),
-            tab => (app.scroll(tab) + 1, tab_line_count(tab, app.cols)),
-        }
-    };
-    // No trailing space: the counter ends on the column's right edge, where the
-    // cards' own right edge is.
-    format!(" {}/{}", position, total.max(1))
-}
-
-/// What the pane's title row carries beside its counter: nothing, or a name
-/// centered over the pane.
+/// What the pane's title row carries: nothing, or a name centered over the
+/// pane.
 #[derive(Clone, Default, PartialEq, Eq)]
 enum PaneTitle {
     #[default]
@@ -367,7 +339,7 @@ enum PaneTitle {
     Centered(String),
 }
 
-/// The narrowest a title is cut to, however little room the counter leaves.
+/// The narrowest a title is cut to, however little room the close button leaves.
 const MIN_TITLE_COLS: usize = 8;
 
 /// The reader's close button, padded either side so the target is three cells
@@ -375,15 +347,14 @@ const MIN_TITLE_COLS: usize = 8;
 const CLOSE_LABEL: &str = " x ";
 
 /// The homepage's white card: a bordered box filling the remaining height,
-/// with a title and scroll counter as its title row.
+/// with a title row over it.
 #[component]
 fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
-    let counter = props.counter.clone();
     let closable = props.closable;
     // Centering is done against a spacer as wide as everything on the right
     // rather than by centering the whole row: the title is then centered over
-    // the pane, not over the space the counter happens to leave.
-    let right = counter.chars().count() + if closable { CLOSE_LABEL.len() } else { 0 };
+    // the pane, not over the space the close button leaves.
+    let right = if closable { CLOSE_LABEL.len() } else { 0 };
     let spacer = matches!(props.title, PaneTitle::Centered(_))
         .then_some(right as u16)
         .unwrap_or(0);
@@ -419,7 +390,6 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
                                 )
                             }))
                         }
-                        Text(content: counter, color: theme::MUTED, wrap: TextWrap::NoWrap)
                         #(closable.then(|| element! { CloseButton }))
                     }
                 }
@@ -434,10 +404,9 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
 #[derive(Props, Default)]
 struct PaneProps {
     title: PaneTitle,
-    counter: String,
     /// Whether the title row carries the reader's close button.
     closable: bool,
-    /// The app's column, which the title row keeps to so that the counter sits
+    /// The app's column, which the title row keeps to so the close button sits
     /// over the right edge of the cards under it rather than out at the border.
     column: u16,
     children: Vec<AnyElement<'static>>,
@@ -573,7 +542,7 @@ enum HeaderTitle {
 /// What the header can afford to show at the current size.
 struct HeaderPlan {
     title: HeaderTitle,
-    labels: Vec<String>,
+    labels: Vec<(usize, &'static str)>,
     /// Whether the tabs ride the title's last row, at the right edge, rather
     /// than taking a row of their own under it.
     inline_tabs: bool,
@@ -615,36 +584,26 @@ impl HeaderPlan {
 
 /// Picks the richest header that fits, the way the site's nav collapses on
 /// narrow viewports: the wordmark drawn big, then set as plain text, then
-/// dropped; the tabs beside it, then under it; full tab names, then numbers
-/// with only the current tab named, then bare numbers. Always fits, so no row
-/// of it ever wraps.
+/// dropped; the tabs beside it, then under it; every name, then only the tab
+/// in front. Always fits, so no row of it ever wraps.
 fn header_plan(tab: usize, cols: usize, rows: usize) -> HeaderPlan {
     // The header keeps to the app's column, inset like everything in it, so
     // that is what it has to fit in.
     let room = (column_cols(cols) as usize).saturating_sub(2 * crate::CARD_PAD_COLS);
-    let named = |index: usize| format!("{} {}", index + 1, TAB_NAMES[index]);
-    let full: Vec<String> = (0..TAB_NAMES.len()).map(named).collect();
-    let compact: Vec<String> = (0..TAB_NAMES.len())
-        .map(|index| {
-            if index == tab {
-                named(index)
-            } else {
-                (index + 1).to_string()
-            }
-        })
+    let full: Vec<(usize, &str)> = (0..TAB_NAMES.len())
+        .map(|index| (index, TAB_NAMES[index]))
         .collect();
-    let numbers: Vec<String> = (1..=TAB_NAMES.len()).map(|n| n.to_string()).collect();
-    let width = |labels: &[String]| {
-        labels.iter().map(|l| l.chars().count()).sum::<usize>()
+    // When the names do not fit, only the tab in front is named: the arrow
+    // keys and the number keys still reach the rest.
+    let compact: Vec<(usize, &str)> = vec![(tab, TAB_NAMES[tab])];
+    let width = |labels: &[(usize, &str)]| {
+        labels
+            .iter()
+            .map(|(_, label)| label.chars().count())
+            .sum::<usize>()
             + TAB_GAP * labels.len().saturating_sub(1)
     };
-    let labels = if width(&full) <= room {
-        full
-    } else if width(&compact) <= room {
-        compact
-    } else {
-        numbers
-    };
+    let labels = if width(&full) <= room { full } else { compact };
 
     // The wordmark keeps its own rows, so all it has to fit is the width.
     let banner = (!touch_sized(cols, rows))
@@ -679,15 +638,6 @@ pub fn header_rows(cols: u16, rows: u16) -> usize {
     header_plan(0, cols as usize, rows as usize).rows()
 }
 
-/// Rows the status bar takes: the hints, the row of air under them that matches
-/// the one above the wordmark, and — when the header keeps a row of air over
-/// the pane — the row that matches it under the pane. The bottom of the screen
-/// is the top of it, mirrored, so the app sits evenly between the two edges.
-/// The same at every size: a phone shows the hints too.
-pub fn status_rows(cols: u16, rows: u16) -> usize {
-    2 + usize::from(header_plan(0, cols as usize, rows as usize).air_under())
-}
-
 #[component]
 fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
     let tab = props.tab;
@@ -698,14 +648,14 @@ fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
         HeaderTitle::Plain(title) => vec![(*title).to_string()],
         HeaderTitle::None => Vec::new(),
     };
-    let tabs = |labels: Vec<String>| {
+    let tabs = |labels: Vec<(usize, &'static str)>| {
         element! {
             View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::NoWrap) {
-                #(labels.into_iter().enumerate().map(|(index, label)| {
+                #(labels.into_iter().enumerate().map(|(position, (index, label))| {
                     element! {
                         View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::NoWrap) {
-                            #((index > 0).then(|| element! { View(width: TAB_GAP as u16) }))
-                            TabLabel(label: label, selected: index == tab, index: index)
+                            #((position > 0).then(|| element! { View(width: TAB_GAP as u16) }))
+                            TabLabel(label: label.to_string(), selected: index == tab, index: index)
                         }
                     }
                 }))
@@ -747,38 +697,6 @@ fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
     }
 }
 
-#[derive(Props, Default)]
-struct StatusChromeProps {
-    tab: usize,
-    modal_open: bool,
-    reading: bool,
-    cols: usize,
-    rows: usize,
-}
-
-/// The hints and the rows of air either side of them, in the app's column so
-/// that they start and end on the same edges as the cards over them. Rendering
-/// the three together is what keeps [`status_rows`] honest.
-#[component]
-fn StatusChrome(props: &StatusChromeProps) -> impl Into<AnyElement<'static>> {
-    element! {
-        View(flex_direction: FlexDirection::Column, width: 100pct) {
-            // The mirror of the header's own air over the pane.
-            #(header_plan(0, props.cols, props.rows).air_under().then(|| element! { View(height: 1) }))
-            Column(width: column_cols(props.cols)) {
-                StatusBar(
-                    tab: props.tab,
-                    modal_open: props.modal_open,
-                    reading: props.reading,
-                    cols: (column_cols(props.cols) as usize).saturating_sub(2 * crate::CARD_PAD_COLS),
-                )
-            }
-            // The margin under the hints, matched by the one above the wordmark.
-            View(height: 1)
-        }
-    }
-}
-
 // --- Content panes -------------------------------------------------------------
 
 fn content_element(app: &App) -> AnyElement<'static> {
@@ -789,6 +707,7 @@ fn content_tree(app: &App) -> AnyElement<'static> {
     match app.tab {
         TIMELINE_TAB => timeline_element(app),
         ABOUT_TAB => about_element(app.scroll(ABOUT_TAB), app.cols),
+        HELP_TAB => help_element(app.scroll(HELP_TAB), app.cols),
         BLOG_TAB => match &app.reader {
             Some(reader) => reader_element(app, reader),
             None => blog_element(app),
@@ -1256,6 +1175,14 @@ fn reader_tree(app: &App, reader: &Reader) -> impl Into<AnyElement<'static>> {
     }
 }
 
+/// The code box's chrome: its margin off the pane's border and the padding
+/// inside it.
+const CODE_MARGIN: u16 = 1;
+const CODE_PADDING: u16 = 2;
+/// A pane narrower than this draws no second frame inside its own — there is
+/// no room for the two to breathe.
+const BOX_MIN_COLS: u16 = 60;
+
 fn about_lines() -> Vec<markdown::ContentLine> {
     let mut lines = crate::highlight::doc_comment_lines();
     lines.push(markdown::ContentLine {
@@ -1275,69 +1202,65 @@ fn about_element(scroll: usize, cols: u16) -> AnyElement<'static> {
     element_to_any(about_tree(scroll, cols))
 }
 
+fn help_element(scroll: usize, cols: u16) -> AnyElement<'static> {
+    element_to_any(help_tree(scroll, cols))
+}
+
+fn help_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
+    let lines = help_lines(cols as usize);
+    let rows: Vec<AnyElement<'static>> = lines.iter().skip(scroll).map(line_element).collect();
+    boxed(rows, cols)
+}
+
 fn about_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
     let lines = about_lines();
     let rows: Vec<AnyElement<'static>> = lines.iter().skip(scroll).map(line_element).collect();
-    // The program keeps to the app's column like every other tab's content, so
-    // the code starts under the wordmark rather than out at the pane's border.
-    let column = column_cols(cols as usize);
-    // The portrait sits beside the program rather than above it, so it stays
-    // put while the code scrolls and `tab_line_count` keeps counting lines. It
-    // is the column that has to hold the two of them side by side, not the
-    // screen, so that is what decides whether there is room for it.
-    let portrait = image::enabled(column).then(|| {
-        element_to_any(element! {
-            View(margin_left: 2, flex_shrink: 0.0_f32) {
-                Image(url: SitePath::new(image::PORTRAIT), bounds: image::AVATAR)
-            }
-        })
-    });
-    element! {
+    boxed(rows, cols)
+}
+
+/// `rows` in a subtle box, centered in the pane. The box hugs the listing on a
+/// wide pane and never outgrows the pane on a narrow one: `max_width` caps it,
+/// and the lines — `MixedText`, wrapping by default — wrap to whatever the box
+/// then has. A pane too narrow for two frames draws none: the pane's border is
+/// the box.
+fn boxed(rows: Vec<AnyElement<'static>>, cols: u16) -> AnyElement<'static> {
+    let boxed = cols >= BOX_MIN_COLS;
+    element_to_any(element! {
         View(
             flex_direction: FlexDirection::Column,
             width: 100pct,
             flex_grow: 1.0_f32,
             align_items: AlignItems::Center,
-            overflow: Overflow::Hidden,
         ) {
             View(
-                flex_direction: FlexDirection::Row,
-                width: column,
-                flex_grow: 1.0_f32,
+                flex_direction: FlexDirection::Column,
+                border_style: if boxed { BorderStyle::Single } else { BorderStyle::None },
+                border_color: theme::BORDER_SUBTLE,
+                margin: if boxed { CODE_MARGIN } else { 0 },
+                padding: CODE_PADDING,
+                max_width: 100pct,
                 flex_shrink: 0.0_f32,
-                overflow: Overflow::Hidden,
-                background_color: theme::SURFACE,
-                padding: 1,
             ) {
-                View(
-                    flex_direction: FlexDirection::Column,
-                    flex_grow: 1.0_f32,
-                    overflow: Overflow::Hidden,
-                ) {
-                    #(rows)
-                }
-                #(portrait)
+                #(rows)
             }
         }
-    }
+    })
 }
 
 // --- Modal --------------------------------------------------------------------
 
-fn modal_lines(modal: &Modal, cols: usize) -> Vec<markdown::ContentLine> {
+fn modal_lines(modal: &Modal) -> Vec<markdown::ContentLine> {
     let mut lines = Vec::new();
-    let (fields, links): (Vec<String>, &[data::Link]) = match modal {
-        Modal::Timeline { event, .. } => {
-            let event = &data::TIMELINE[*event];
-            (
-                vec![
-                    format!("time: {}", event.time),
-                    format!("category: {}", event.category.label()),
-                ],
-                event.links,
-            )
-        }
-        Modal::Help { .. } => (Vec::new(), &[]),
+    let (fields, links): (Vec<String>, &[data::Link]) = {
+        let Modal::Timeline { event, .. } = modal;
+        let event = &data::TIMELINE[*event];
+        (
+            vec![
+                format!("time: {}", event.time),
+                format!("category: {}", event.category.label()),
+            ],
+            event.links,
+        )
     };
     let had_fields = !fields.is_empty();
     for field in fields {
@@ -1354,30 +1277,37 @@ fn modal_lines(modal: &Modal, cols: usize) -> Vec<markdown::ContentLine> {
             link: None,
         });
     }
-    if !matches!(modal, Modal::Help { .. }) {
-        lines.push(markdown::ContentLine {
-            contents: vec![bold_colored("links (press 1-9)", theme::ACCENT_TEXT)],
-            link: None,
-        });
-        for link in links {
-            lines.push(markdown::bullet_link(
-                &link.name.decrypt(),
-                &link.url.decrypt(),
-            ));
-        }
-    } else {
+    lines.push(markdown::ContentLine {
+        contents: vec![bold_colored("links (press 1-9)", theme::ACCENT_TEXT)],
+        link: None,
+    });
+    for link in links {
+        lines.push(markdown::bullet_link(
+            &link.name.decrypt(),
+            &link.url.decrypt(),
+        ));
+    }
+    lines
+}
+
+/// The Help tab: every key the app listens for, one line each. The key column
+/// only earns its keep when the description still fits beside it; below that,
+/// the description stacks on its own line.
+fn help_lines(cols: usize) -> Vec<markdown::ContentLine> {
+    let mut lines = Vec::new();
+    {
         // The key column only earns its keep when the description still fits
         // beside it; below that, stack the description on its own line.
         let stacked = cols < 56;
         for (keys, description) in [
             ("←/→ or h/l", "switch between tabs"),
-            ("1 … 3", "jump to a tab"),
+            ("1 … 4", "jump to a tab"),
             ("↑/↓ or j/k", "move selection / scroll"),
             ("Enter", "read a post / open details"),
             ("1 … 9", "open a button of the open dialog"),
             ("g / G", "jump to top / bottom"),
-            ("Esc", "close the reader or this dialog"),
-            ("?", "toggle this help"),
+            ("Esc", "close the reader or a dialog"),
+            ("?", "open this tab"),
             ("q / Ctrl+C", "quit"),
             ("mouse", "click tabs, cards and buttons · wheel scrolls"),
         ] {
@@ -1434,10 +1364,8 @@ const NARROW_DIALOG_COLS: usize = 60;
 
 /// The artwork the open dialog leads with, if any.
 fn modal_image(modal: &Modal) -> Option<EncryptedString> {
-    match modal {
-        Modal::Timeline { event, .. } => data::TIMELINE[*event].image,
-        Modal::Help { .. } => None,
-    }
+    let Modal::Timeline { event, .. } = modal;
+    data::TIMELINE[*event].image
 }
 
 fn modal_element(modal: &Modal, cols: usize, rows: u16) -> AnyElement<'static> {
@@ -1445,13 +1373,9 @@ fn modal_element(modal: &Modal, cols: usize, rows: u16) -> AnyElement<'static> {
 }
 
 fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'static>> {
-    let scroll = match modal {
-        Modal::Timeline { scroll, .. } | Modal::Help { scroll } => *scroll,
-    };
-    let title = match modal {
-        Modal::Timeline { event, .. } => format!(" {} ", data::TIMELINE[*event].title),
-        Modal::Help { .. } => " help ".to_string(),
-    };
+    let Modal::Timeline { event, scroll } = modal;
+    let title = format!(" {} ", data::TIMELINE[*event].title);
+    let scroll = *scroll;
     // The hero is fixed above the scrolling body rather than part of it, so
     // `modal_line_count` keeps counting only text and every line stays
     // reachable however tall the artwork is.
@@ -1464,7 +1388,7 @@ fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'st
                 }
             })
         });
-    let lines = modal_lines(modal, cols);
+    let lines = modal_lines(modal);
     let rows: Vec<AnyElement<'static>> = lines.iter().skip(scroll).map(line_element).collect();
     element! {
         ModalOverlay {
@@ -1528,8 +1452,16 @@ fn Dialog(props: &mut DialogProps, mut hooks: Hooks) -> impl Into<AnyElement<'st
             flex_direction: FlexDirection::Column,
             overflow: Overflow::Hidden,
         ) {
-            View(width: 100pct, padding_left: 1, padding_right: 1) {
-                Text(content: props.title.clone(), color: theme::SELECT_FG, weight: Weight::Bold)
+            View(
+                flex_direction: FlexDirection::Row,
+                width: 100pct,
+                padding_left: 1,
+                padding_right: 1,
+            ) {
+                View(flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
+                    Text(content: props.title.clone(), color: theme::SELECT_FG, weight: Weight::Bold)
+                }
+                CloseButton
             }
             DialogBody {
                 #(props.children.drain(..))
@@ -1552,111 +1484,6 @@ fn DialogBody(props: &mut DialogBodyProps, mut hooks: Hooks) -> impl Into<AnyEle
     element! {
         View(flex_direction: FlexDirection::Column, width: 100pct, padding: 1, overflow: Overflow::Hidden) {
             #(props.children.drain(..))
-        }
-    }
-}
-
-// --- Status bar ----------------------------------------------------------------
-
-const HINT_SEPARATOR: &str = " · ";
-
-/// Width one hint occupies, including the separator before it.
-fn hint_width(keys: &str, description: &str, first: bool) -> usize {
-    let separator = if first {
-        0
-    } else {
-        HINT_SEPARATOR.chars().count()
-    };
-    separator + keys.chars().count() + 1 + description.chars().count()
-}
-
-/// Keeps the hints that fit in `budget`, in the order given, so the status bar
-/// sheds its least important hints instead of wrapping onto a second row.
-fn fitted_hints<'a>(hints: &[(&'a str, &'a str)], budget: usize) -> Vec<(&'a str, &'a str)> {
-    let mut kept: Vec<(&str, &str)> = Vec::new();
-    let mut used = 0;
-    for (keys, description) in hints {
-        let width = hint_width(keys, description, kept.is_empty());
-        if used + width > budget {
-            continue;
-        }
-        used += width;
-        kept.push((keys, description));
-    }
-    kept
-}
-
-#[derive(Props, Default)]
-struct StatusBarProps {
-    tab: usize,
-    modal_open: bool,
-    reading: bool,
-    cols: usize,
-}
-
-#[component]
-fn StatusBar(props: &StatusBarProps) -> impl Into<AnyElement<'static>> {
-    let (tab, modal_open, reading) = (props.tab, props.modal_open, props.reading);
-    // Hints in priority order; the least useful ones drop first when narrow.
-    let hints: &[(&str, &str)] = if modal_open {
-        &[("Esc", "close"), ("↑/↓", "scroll"), ("1-9", "open button")]
-    } else if reading {
-        &[("Esc", "back"), ("↑/↓", "scroll"), ("?", "help")]
-    } else if tab == TIMELINE_TAB {
-        &[
-            ("←/→", "tabs"),
-            ("q", "quit"),
-            ("↑/↓", "select"),
-            ("Enter", "details"),
-            ("?", "help"),
-        ]
-    } else if tab == BLOG_TAB {
-        &[
-            ("←/→", "tabs"),
-            ("q", "quit"),
-            ("↑/↓", "select"),
-            ("Enter", "read"),
-            ("?", "help"),
-        ]
-    } else {
-        &[
-            ("←/→", "tabs"),
-            ("q", "quit"),
-            ("↑/↓", "scroll"),
-            ("?", "help"),
-        ]
-    };
-    let budget = props.cols;
-    let mut contents: Vec<MixedTextContent> = Vec::new();
-    for (index, (keys, description)) in fitted_hints(hints, budget).into_iter().enumerate() {
-        if index > 0 {
-            contents.push(muted(HINT_SEPARATOR));
-        }
-        contents.push(bold_colored(keys.to_string(), theme::ACCENT_TEXT));
-        contents.push(muted(format!(" {description}")));
-    }
-    element! {
-        View(
-            flex_direction: FlexDirection::Row,
-            width: 100pct,
-            height: 1,
-            flex_wrap: FlexWrap::NoWrap,
-        ) {
-            MixedText(contents: contents)
-        }
-    }
-}
-
-/// Clones enough of the app to render a pure frame.
-impl App {
-    pub fn clone_snapshot(&self) -> AppSnapshot {
-        AppSnapshot {
-            tab: self.tab,
-            scroll: self.scroll,
-            selected: self.selected,
-            reader: self.reader.clone(),
-            modal: self.modal.clone(),
-            visited_count: self.visited_count(),
         }
     }
 }

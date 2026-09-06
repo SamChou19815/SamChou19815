@@ -50,9 +50,6 @@ fn styled_italic(text: &str, color: crossterm::style::Color) -> MixedTextContent
     styled(text, color).italic()
 }
 
-/// Renders the license header as comment-styled code lines. Its `@` tags carry
-/// their URL, so the reader can open one the way the homepage's docblock lets
-/// them click it — underlined in the comment color, exactly as it is there.
 pub fn doc_comment_lines() -> Vec<ContentLine> {
     let plain = |text: &str| ContentLine {
         contents: vec![styled(text, comment_color())],
@@ -73,7 +70,6 @@ pub fn doc_comment_lines() -> Vec<ContentLine> {
     lines
 }
 
-/// Renders the about program as one styled line per source line.
 pub fn program_lines() -> Vec<Vec<MixedTextContent>> {
     let mut result = Vec::new();
     let mut in_comment = false;

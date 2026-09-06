@@ -34,7 +34,6 @@ const ARTWORK: &[&str] = &[
     "/projects/samwise.webp",
     "/projects/ten.webp",
     "/fan-arts/graduation-sam.webp",
-    "/sam-by-megan-3-square.webp",
 ];
 
 fn image_size_in_terminal_cells(width: u32, height: u32) -> (u32, u32) {

@@ -359,7 +359,11 @@ impl WrapRow {
 /// boundaries, carrying each span's color, weight, italic and decoration onto
 /// every row it lands on. `indent` columns of leading space on rows after the
 /// first. Never returns empty: an empty input yields one empty row.
-fn wrap(spans: Vec<MixedTextContent>, width: usize, indent: usize) -> Vec<Vec<MixedTextContent>> {
+pub(crate) fn wrap(
+    spans: Vec<MixedTextContent>,
+    width: usize,
+    indent: usize,
+) -> Vec<Vec<MixedTextContent>> {
     let width = width.max(1);
     let indent = indent.min(width - 1);
     let mut rows = vec![WrapRow::default()];
@@ -417,9 +421,10 @@ fn place(
     indent: usize,
 ) {
     let count = word.chars().count();
+    let separator =
+        usize::from(*pending_space && !rows.last().expect("wrap seeds one row").fresh());
     {
         let row = rows.last_mut().expect("wrap seeds one row");
-        let separator = usize::from(*pending_space && !row.fresh());
         if row.used + separator + count <= width {
             if separator == 1 {
                 append_text(row, " ", style);
@@ -440,6 +445,11 @@ fn place(
     let mut start = 0;
     while start < chars.len() {
         let row = rows.last_mut().expect("wrap seeds one row");
+        // The first piece still owes the separator that preceded the word;
+        // without it a long URL lands glued to the word before it.
+        if start == 0 && separator == 1 {
+            append_text(row, " ", style);
+        }
         let room = width.saturating_sub(row.used);
         if room == 0 {
             rows.push(WrapRow::indented(indent));

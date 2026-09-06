@@ -26,16 +26,17 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
 
-pub const TAB_NAMES: [&str; 3] = ["About", "Timeline", "Blog"];
-pub const TAB_COUNT: usize = 3;
+pub const TAB_NAMES: [&str; 4] = ["About", "Timeline", "Blog", "Help"];
+pub const TAB_COUNT: usize = 4;
 pub const ABOUT_TAB: usize = 0;
 pub const TIMELINE_TAB: usize = 1;
 pub const BLOG_TAB: usize = 2;
+pub const HELP_TAB: usize = 3;
 
 /// The site path each tab is served at. The web front-end keeps the URL bar on
 /// whatever the app is showing, so every view the app can be in has to be a
 /// place the site can be entered at — see [`App::route`] and [`App::go_to`].
-pub const TAB_ROUTES: [&str; TAB_COUNT] = ["/about", "/timeline", "/blog"];
+pub const TAB_ROUTES: [&str; TAB_COUNT] = ["/about", "/timeline", "/blog", "/help"];
 
 /// Where the blog index lives, and the prefix every post's permalink shares.
 pub const BLOG_ROUTE: &str = "/blog";
@@ -56,9 +57,8 @@ pub const WHEEL_ROWS: usize = 3;
 const MAX_COLUMN_COLS: usize = 88;
 
 /// Rows the pane spends on its own chrome, whatever is inside it: its border
-/// top and bottom, and its title row. The header's rows and the status bar's
-/// are on top of these and depend on the size — see [`view::header_rows`] and
-/// [`view::status_rows`].
+/// top and bottom, and its title row. The header's rows are on top of these
+/// and depend on the size — see [`view::header_rows`].
 const PANE_CHROME_ROWS: usize = 3;
 
 /// The cells a timeline card's rail takes before its body starts — `│` and the
@@ -257,7 +257,6 @@ pub fn reset_route_sync() {
 #[derive(Clone, PartialEq, Eq)]
 pub enum Modal {
     Timeline { event: usize, scroll: usize },
-    Help { scroll: usize },
 }
 
 /// An open post, filling the content pane. The header and status bar stay put,
@@ -433,9 +432,7 @@ impl App {
         } else {
             self.cols
         };
-        (rows as usize).saturating_sub(
-            PANE_CHROME_ROWS + view::header_rows(cols, rows) + view::status_rows(cols, rows),
-        )
+        (rows as usize).saturating_sub(PANE_CHROME_ROWS + view::header_rows(cols, rows))
     }
 
     pub fn scroll(&self, tab: usize) -> usize {
@@ -552,9 +549,9 @@ impl App {
             Key::Right | Key::Char('l') | Key::Tab => self.switch_tab(self.tab + 1),
             Key::BackTab => self.switch_tab(self.tab + TAB_COUNT - 1),
             Key::Esc => {}
-            Key::Char('?') => self.modal = Some(Modal::Help { scroll: 0 }),
+            Key::Char('?') => self.switch_tab(HELP_TAB),
             Key::Char('q') => self.quit = true,
-            Key::Char(c @ '1'..='3') => self.switch_tab(c as usize - '1' as usize),
+            Key::Char(c @ '1'..='4') => self.switch_tab(c as usize - '1' as usize),
             Key::Up => self.move_selection(-1, 1),
             Key::Char('k') if !mods.ctrl => self.move_selection(-1, 1),
             Key::Down => self.move_selection(1, 1),
@@ -575,7 +572,7 @@ impl App {
             Key::Esc | Key::Backspace | Key::Char('q') | Key::Left | Key::Char('h') => {
                 self.reader = None;
             }
-            Key::Char('?') => self.modal = Some(Modal::Help { scroll: 0 }),
+            Key::Char('?') => self.switch_tab(HELP_TAB),
             Key::Up | Key::Char('k') => self.scroll_reader(-1, 1),
             Key::Down | Key::Char('j') => self.scroll_reader(1, 1),
             Key::PageUp => {
@@ -743,7 +740,7 @@ impl App {
 
     /// The same for the open dialog's body.
     fn max_modal_scroll(&self, modal: &Modal) -> usize {
-        view::modal_line_count(modal, self.cols)
+        view::modal_line_count(modal)
             .saturating_sub(view::modal_viewport(modal, self.cols, self.rows))
     }
 
@@ -822,8 +819,13 @@ impl App {
             }
             Some(hit::HitTarget::Tab(index)) => self.switch_tab(index),
             // The same way out `q` and Esc take, for a pointer that has
-            // neither: a phone reads posts with nothing but taps.
-            Some(hit::HitTarget::Close) => self.reader = None,
+            // neither: a phone reads posts with nothing but taps. A dialog's
+            // own close button takes priority over the reader's.
+            Some(hit::HitTarget::Close) => {
+                if self.modal.take().is_none() {
+                    self.reader = None;
+                }
+            }
             // A pointer names the card it means by landing on it, so there is
             // nothing left for a second click to say. Selecting on the first
             // click and opening only on the second is what left every card on
@@ -947,6 +949,7 @@ pub fn title_for(path: &site_path::SitePath) -> String {
     match view_at(path) {
         Some(View::Tab(ABOUT_TAB)) => "About | Developer Sam".to_string(),
         Some(View::Tab(TIMELINE_TAB)) => "Timeline | Developer Sam".to_string(),
+        Some(View::Tab(HELP_TAB)) => "Help | Developer Sam".to_string(),
         // The blog index, and anything else under it that is no longer a post.
         Some(_) => posts::blog_title().to_string(),
         None => SHELL_TITLE.to_string(),
@@ -1008,7 +1011,6 @@ fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> 
 }
 
 fn modal_scroll(modal: &mut Modal) -> &mut usize {
-    match modal {
-        Modal::Timeline { scroll, .. } | Modal::Help { scroll } => scroll,
-    }
+    let Modal::Timeline { scroll, .. } = modal;
+    scroll
 }
