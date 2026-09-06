@@ -56,11 +56,6 @@ pub const WHEEL_ROWS: usize = 3;
 /// row to the start of the next.
 const MAX_COLUMN_COLS: usize = 88;
 
-/// Rows the pane spends on its own chrome, whatever is inside it: its border
-/// top and bottom, and its title row. The header's rows are on top of these
-/// and depend on the size — see [`view::header_rows`].
-const PANE_CHROME_ROWS: usize = 3;
-
 /// The cells a timeline card's rail takes before its body starts — `│` and the
 /// two spaces that set the body off from it (`view::RAIL`).
 const GUTTER_COLS: usize = 3;
@@ -70,7 +65,8 @@ const GUTTER_COLS: usize = 3;
 /// off its marker and its category tag instead of running it flush to both.
 const CARD_PAD_COLS: usize = 1;
 
-/// Width of a centered column inside the pane's border and its body's padding.
+/// Width of a centered column inside the body's own margin off the left and
+/// right edges of the screen (`view::BODY_MARGIN`, two cells either side).
 fn column_width(cols: u16) -> usize {
     let cols = if cols == 0 { ASSUMED_COLS } else { cols };
     (cols as usize).saturating_sub(4).clamp(12, MAX_COLUMN_COLS)
@@ -92,7 +88,7 @@ pub fn content_width(cols: u16) -> usize {
 }
 
 /// Width of the blog's centered column — the index's cards and the reader's
-/// prose — inside the pane's border and its body's padding.
+/// prose — inside the body's margin.
 pub fn blog_column_width(cols: u16) -> usize {
     column_width(cols)
 }
@@ -420,8 +416,10 @@ impl App {
         self.rows = rows.max(1);
     }
 
-    /// Rows visible inside the content pane: the screen minus the header,
-    /// the pane's border and title row, and the status bar.
+    /// Rows visible inside the content pane: the screen, less the header and
+    /// the rule under it, and the title row the reader — and only the reader —
+    /// puts over the body. Nothing is held back at the foot of the screen: the
+    /// body runs to the last row.
     pub fn viewport(&self) -> usize {
         let rows = if self.rows == 0 { 24 } else { self.rows };
         // The header is measured at the width the layout will use, so the two
@@ -432,7 +430,8 @@ impl App {
         } else {
             self.cols
         };
-        (rows as usize).saturating_sub(PANE_CHROME_ROWS + view::header_rows(cols, rows))
+        let chrome = view::header_rows(self.tab, cols, rows) + usize::from(self.reader.is_some());
+        (rows as usize).saturating_sub(chrome)
     }
 
     pub fn scroll(&self, tab: usize) -> usize {
