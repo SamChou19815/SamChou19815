@@ -20,11 +20,11 @@ use iocraft::AnyElement;
 const TITLE: &str = " DEV SAM ";
 
 /// The one column everything the app draws is laid out down: the wordmark and
-/// the tabs, the cards, and the hints along the bottom. It
+/// the tabs, the cards, and the reader's title row. It
 /// is the same measure and the same centering the pane's own body uses
-/// ([`crate::column_width`]) — the pane's border and padding are inset by
-/// exactly what the centering gives back, so every one of those lines up on the
-/// same left and right edge whatever the terminal's width.
+/// ([`crate::column_width`]) — the body's margin is exactly what the centering
+/// gives back, so every one of those lines up on the same left and right edge
+/// whatever the terminal's width.
 fn column_cols(cols: usize) -> u16 {
     crate::column_width(cols as u16) as u16
 }
@@ -77,11 +77,12 @@ fn muted(content: impl ToString) -> MixedTextContent {
 }
 
 /// Rows of text a scrolling tab pane shows at once, given the height of the
-/// pane's body. The About pane insets its program by a row top and bottom
-/// ([`about_tree`]), so it fits two fewer lines than the body is tall.
+/// pane's body. The two listing tabs open with a row of air ([`listing`]), so
+/// they fit one fewer line than the body is tall — and their last screenful is
+/// their last line on the last row of it.
 pub fn tab_viewport(tab: usize, body_rows: usize) -> usize {
     match tab {
-        ABOUT_TAB => body_rows.saturating_sub(2).max(1),
+        ABOUT_TAB | HELP_TAB => body_rows.saturating_sub(LISTING_AIR_ROWS).max(1),
         _ => body_rows.max(1),
     }
 }
@@ -218,11 +219,18 @@ struct LineProps {
 /// One line of rendered markdown, clickable when it carries a link. Where it is
 /// — a post in the pane, or an open dialog's body — is a question of where it
 /// paints and what clipped it, so it is not a question the line has to answer.
+///
+/// It is one row, never two: a post's prose is wrapped into lines before it
+/// gets here ([`markdown::post_blocks`]), and the listings and the dialog would
+/// otherwise paint a row their scroll math has not counted — every one of those
+/// counts lines. What will not fit is clipped at the pane's edge, which for the
+/// About tab is what a code listing wants anyway: an indent that survives a
+/// narrow screen, rather than a line broken across two rows under it.
 #[component]
 fn Line(props: &LineProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     hooks.use_hit_region(props.url.clone().map(HitTarget::Link));
     element! {
-        MixedText(contents: props.contents.clone())
+        MixedText(contents: props.contents.clone(), wrap: TextWrap::NoWrap)
     }
 }
 
@@ -318,11 +326,12 @@ fn pane_title(app: &App, cols: usize) -> PaneTitle {
     let Some(reader) = &app.reader else {
         return PaneTitle::None;
     };
-    // What the title has to itself: the row less its padding, the space either
-    // side of the title, and the spacer that balances the close button on the
-    // other side.
-    let room = cols
-        .saturating_sub(2 * CLOSE_LABEL.len() + 4)
+    // What the title has to itself: the column the row is laid out down, less
+    // the cell it keeps inside its own edges, the close button and the spacer
+    // that balances it on the other side, and the space either side of the
+    // title itself.
+    let room = (column_cols(cols) as usize)
+        .saturating_sub(2 * crate::CARD_PAD_COLS + 2 * CLOSE_LABEL.len() + 2)
         .max(MIN_TITLE_COLS);
     PaneTitle::Centered(markdown::truncate(
         &posts::POSTS[reader.post].title().decrypt(),
@@ -346,8 +355,10 @@ const MIN_TITLE_COLS: usize = 8;
 /// wide rather than one — it is aimed at with a fingertip.
 const CLOSE_LABEL: &str = " x ";
 
-/// The homepage's white card: a bordered box filling the remaining height,
-/// with a title row over it.
+/// Everything under the header's rule: the app's body, filling the remaining
+/// height, with the reader's title row over it when a post is open. It draws no
+/// box of its own — the rule is the one edge the app's chrome has, and the body
+/// hangs off it as the page does on the web.
 #[component]
 fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
     let closable = props.closable;
@@ -371,29 +382,29 @@ fn Pane(props: &mut PaneProps) -> impl Into<AnyElement<'static>> {
             flex_direction: FlexDirection::Column,
             width: 100pct,
             flex_grow: 1.0_f32,
-            border_style: BorderStyle::Single,
-            border_color: theme::BORDER_SUBTLE,
             background_color: theme::SURFACE,
             overflow: Overflow::Hidden,
         ) {
-            View(flex_direction: FlexDirection::Row, width: 100pct, height: 1) {
-                Column(width: props.column) {
-                    View(flex_direction: FlexDirection::Row, width: 100pct) {
-                        View(width: spacer, flex_shrink: 0.0_f32)
-                        View(flex_grow: 1.0_f32, justify_content: justify, overflow: Overflow::Hidden) {
-                            #(title.map(|title| element! {
+            // A row only the reader spends: a tab is named by the header, so
+            // the rest of the app gives the row back to what it is showing.
+            #(title.map(|title| element! {
+                View(flex_direction: FlexDirection::Row, width: 100pct, height: 1) {
+                    Column(width: props.column) {
+                        View(flex_direction: FlexDirection::Row, width: 100pct) {
+                            View(width: spacer, flex_shrink: 0.0_f32)
+                            View(flex_grow: 1.0_f32, justify_content: justify, overflow: Overflow::Hidden) {
                                 Text(
                                     content: format!(" {title} "),
                                     color: theme::ACCENT_TEXT,
                                     weight: Weight::Bold,
                                     wrap: TextWrap::NoWrap,
                                 )
-                            }))
+                            }
+                            #(closable.then(|| element! { CloseButton }))
                         }
-                        #(closable.then(|| element! { CloseButton }))
                     }
                 }
-            }
+            }))
             PaneBody {
                 #(props.children.drain(..))
             }
@@ -407,7 +418,8 @@ struct PaneProps {
     /// Whether the title row carries the reader's close button.
     closable: bool,
     /// The app's column, which the title row keeps to so the close button sits
-    /// over the right edge of the cards under it rather than out at the border.
+    /// over the right edge of the cards under it rather than out at the edge of
+    /// the screen.
     column: u16,
     children: Vec<AnyElement<'static>>,
 }
@@ -431,8 +443,12 @@ fn CloseButton(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 /// The pane's scrolling body, a component of its own so that it can bound what
 /// it holds. The pane lays out every card of a tab and shows only the ones that
 /// fit, so the card after the last visible one is laid out past the bottom
-/// edge, over the status bar — close enough to click. Clipping its children's
+/// edge, off the screen — close enough to click. Clipping its children's
 /// regions to this box keeps those clicks off it.
+///
+/// Its margin is the app's page margin: the two cells the pane's border and its
+/// padding used to hold back between them, which is what [`crate::column_width`]
+/// still counts on.
 #[component]
 fn PaneBody(props: &mut PaneBodyProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     hooks.use_hit_clip();
@@ -442,8 +458,8 @@ fn PaneBody(props: &mut PaneBodyProps, mut hooks: Hooks) -> impl Into<AnyElement
             width: 100pct,
             flex_grow: 1.0_f32,
             overflow: Overflow::Hidden,
-            padding_left: 1,
-            padding_right: 1,
+            padding_left: BODY_MARGIN,
+            padding_right: BODY_MARGIN,
         ) {
             #(props.children.drain(..))
         }
@@ -454,6 +470,9 @@ fn PaneBody(props: &mut PaneBodyProps, mut hooks: Hooks) -> impl Into<AnyElement
 struct PaneBodyProps {
     children: Vec<AnyElement<'static>>,
 }
+
+/// The cells the body keeps clear of the left and right edges of the screen.
+const BODY_MARGIN: u16 = 2;
 
 /// The element tree for a given app state; exposed for tests.
 pub fn root_element() -> AnyElement<'static> {
@@ -511,8 +530,9 @@ fn banner_rows(text: &str) -> Option<[String; 3]> {
 /// is a touch device but only tells the shell (`ffi::sam_start`), not the app,
 /// so size is the only signal the app has: a phone held upright is far narrower
 /// than this, and on its side it is wide enough but only around twenty rows
-/// tall. What it costs a visitor there is the wordmark drawn big and the
-/// keyboard hints along the bottom — neither of which a thumb has any use for.
+/// tall. What it costs a visitor there is the wordmark drawn big and the rows
+/// of air the app is inset by ([`margin_rows`]) — a screenful of rows is worth
+/// more to a thumb than either.
 const PHONE_COLS: usize = 60;
 const PHONE_ROWS: usize = 24;
 
@@ -521,8 +541,10 @@ fn touch_sized(cols: usize, rows: usize) -> bool {
     cols < PHONE_COLS || rows < PHONE_ROWS
 }
 
-/// The air between the title and the tabs when they share a row.
-const HEADER_GAP: usize = 2;
+/// The least air the header leaves between the name and the tabs when they
+/// share a row, and what the fit is tested against. The gap the tabs actually
+/// sit at grows past this with the room the name leaves — see [`header_plan`].
+const HEADER_GAP_MIN: usize = 4;
 
 /// The air between one tab and the next. It is a gap rather than padding baked
 /// into the labels so that the first tab starts at the same column the title
@@ -543,9 +565,14 @@ enum HeaderTitle {
 struct HeaderPlan {
     title: HeaderTitle,
     labels: Vec<(usize, &'static str)>,
-    /// Whether the tabs ride the title's last row, at the right edge, rather
-    /// than taking a row of their own under it.
+    /// Whether the tabs ride the title's last row rather than taking a row of
+    /// their own under it.
     inline_tabs: bool,
+    /// The air between the name and the tabs when they do share a row.
+    gap: usize,
+    /// The rows of air the app keeps above the header — see
+    /// [`header_margin_rows`].
+    margin: usize,
 }
 
 impl HeaderPlan {
@@ -559,27 +586,27 @@ impl HeaderPlan {
         }
     }
 
-    /// Whether the block under the title needs a row of air under it before the
-    /// pane. The wordmark's last row is drawn in half blocks — `▀`, ink in the
-    /// top half of the cell — so it already carries half a row of air under its
-    /// feet, and the pane's border is drawn half a cell into its own row on top
-    /// of that. A whole row on top of those two put twice as much space under
-    /// the wordmark as the margin above it. The tabs and the plain title are
-    /// ordinary text, ink through the middle of the cell, and do need it.
-    fn air_under(&self) -> bool {
-        !matches!(self.title, HeaderTitle::Banner(_)) || !self.inline_tabs
-    }
-
-    /// Rows the whole header takes: a row of air above the title block, the
-    /// block itself, the tabs' own row if they did not fit beside it, and the
-    /// row of air that sets the pane off from it. The margin above the wordmark
-    /// is the one under the hints at the other end of the screen — the app is
-    /// inset from the terminal's edges by a row, top and bottom.
-    /// [`header_rows`] is what the scroll math reads this through, so the two
-    /// can never disagree about where the pane starts.
+    /// Rows the whole header takes: the margin above the title block, the block
+    /// itself, the tabs' own row if they did not fit beside it, and the rule
+    /// that closes the bar off from the body. [`header_rows`] is what the
+    /// scroll math reads this through, so the two can never disagree about
+    /// where the body starts.
     fn rows(&self) -> usize {
-        1 + self.title_rows() + usize::from(!self.inline_tabs) + usize::from(self.air_under())
+        self.margin + self.title_rows() + usize::from(!self.inline_tabs) + RULE_ROWS
     }
+}
+
+/// The rule under the header, which is one row.
+const RULE_ROWS: usize = 1;
+
+/// The row of air the app keeps above the wordmark. A desktop window can spare
+/// it, and it is what sets the header off from the edge of the glass; a phone
+/// cannot — a screenful there is barely thirty rows. Nothing matches it at the
+/// foot of the screen: the body scrolls, so it runs to the last row the way a
+/// page runs to the bottom of a window, and a row of air under a card cut off
+/// mid-way would read as the pane ending there.
+fn header_margin_rows(cols: usize, rows: usize) -> usize {
+    usize::from(!touch_sized(cols, rows))
 }
 
 /// Picks the richest header that fits, the way the site's nav collapses on
@@ -621,21 +648,34 @@ fn header_plan(tab: usize, cols: usize, rows: usize) -> HeaderPlan {
         HeaderTitle::None => 0,
     };
     // The tabs follow the name on its own row whenever the two fit side by
-    // side, a couple of cells apart, as the site's nav sits beside its title;
-    // they drop to a row of their own — starting at the same column the name
-    // does — only when they would otherwise crowd it.
-    let inline_tabs = title_width > 0 && title_width + HEADER_GAP + width(&labels) <= room;
+    // side with air to spare, as the site's nav sits beside its title; they
+    // drop to a row of their own — starting at the same column the name does —
+    // only when they would otherwise crowd it.
+    let inline_tabs = title_width > 0 && title_width + HEADER_GAP_MIN + width(&labels) <= room;
+    // Where the tabs sit on that row: centered in whatever the name leaves, so
+    // a wide screen puts real air between the two rather than the couple of
+    // cells a narrow one can spare, and neither leaves them adrift at the far
+    // edge. The column is capped ([`crate::MAX_COLUMN_COLS`]), so this is too.
+    let gap = if inline_tabs {
+        (room.saturating_sub(title_width + width(&labels)) / 2).max(HEADER_GAP_MIN)
+    } else {
+        0
+    };
     HeaderPlan {
         title,
         labels,
         inline_tabs,
+        gap,
+        margin: header_margin_rows(cols, rows),
     }
 }
 
 /// Rows the header takes at this size, for the scroll math that has to know
-/// where the pane below it starts.
-pub fn header_rows(cols: u16, rows: u16) -> usize {
-    header_plan(0, cols as usize, rows as usize).rows()
+/// where the body below it starts. The tab in front is part of that: it is what
+/// the header names when it is too narrow to name them all, and a shorter name
+/// can be what lets the tabs share the title's row.
+pub fn header_rows(tab: usize, cols: u16, rows: u16) -> usize {
+    header_plan(tab, cols as usize, rows as usize).rows()
 }
 
 #[component]
@@ -663,7 +703,8 @@ fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
         }
     };
     let inline = plan.inline_tabs;
-    let air_under = plan.air_under();
+    let gap = plan.gap as u16;
+    let margin = plan.margin > 0;
     let labels = plan.labels;
     element! {
         View(
@@ -674,8 +715,8 @@ fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
             height: height,
             flex_wrap: FlexWrap::NoWrap,
         ) {
-            // The margin above the wordmark, matched by the one under the hints.
-            View(height: 1)
+            // The margin above the wordmark, on a screen that can spare it.
+            #(margin.then(|| element! { View(height: 1) }))
             Column(width: column_cols(props.cols)) {
                 View(flex_direction: FlexDirection::Row, width: 100pct, align_items: AlignItems::Center) {
                     View(flex_direction: FlexDirection::Column) {
@@ -683,16 +724,24 @@ fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
                             Text(content: line, color: theme::ACCENT_TEXT, wrap: TextWrap::NoWrap)
                         }))
                     }
-                    // Beside the name, a couple of cells off it and centered on
-                    // it, rather than adrift at the far edge of the screen.
-                    #(inline.then(|| element! { View(width: HEADER_GAP as u16) }))
+                    // Beside the name and centered on it, as far off it as the
+                    // room the name leaves allows.
+                    #(inline.then(|| element! { View(width: gap) }))
                     #(inline.then(|| tabs(labels.clone())))
                 }
                 #((!inline).then(|| tabs(labels.clone())))
             }
-            // The air between the header and the pane, when what sits above it
-            // is not already carrying half a row of its own.
-            #(air_under.then(|| element! { View(height: 1) }))
+            // The bar's own edge, run the whole width of the screen: what the
+            // header is set on, and what separates it from the body under it.
+            // The wordmark's last row is drawn in half blocks — `▀`, ink in the
+            // top half of the cell — so it comes down on half a row of air; the
+            // tabs and the plain title are ordinary text and sit on it directly,
+            // the way a nav sits on the line under it.
+            Text(
+                content: "─".repeat(props.cols),
+                color: theme::BORDER_SUBTLE,
+                wrap: TextWrap::NoWrap,
+            )
         }
     }
 }
@@ -1175,14 +1224,6 @@ fn reader_tree(app: &App, reader: &Reader) -> impl Into<AnyElement<'static>> {
     }
 }
 
-/// The code box's chrome: its margin off the pane's border and the padding
-/// inside it.
-const CODE_MARGIN: u16 = 1;
-const CODE_PADDING: u16 = 2;
-/// A pane narrower than this draws no second frame inside its own — there is
-/// no room for the two to breathe.
-const BOX_MIN_COLS: u16 = 60;
-
 fn about_lines() -> Vec<markdown::ContentLine> {
     let mut lines = crate::highlight::doc_comment_lines();
     lines.push(markdown::ContentLine {
@@ -1209,35 +1250,41 @@ fn help_element(scroll: usize, cols: u16) -> AnyElement<'static> {
 fn help_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
     let lines = help_lines(cols as usize);
     let rows: Vec<AnyElement<'static>> = lines.iter().skip(scroll).map(line_element).collect();
-    boxed(rows, cols)
+    listing(rows)
 }
 
-fn about_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
+fn about_tree(scroll: usize, _cols: u16) -> impl Into<AnyElement<'static>> {
     let lines = about_lines();
     let rows: Vec<AnyElement<'static>> = lines.iter().skip(scroll).map(line_element).collect();
-    boxed(rows, cols)
+    listing(rows)
 }
 
-/// `rows` in a subtle box, centered in the pane. The box hugs the listing on a
-/// wide pane and never outgrows the pane on a narrow one: `max_width` caps it,
-/// and the lines — `MixedText`, wrapping by default — wrap to whatever the box
-/// then has. A pane too narrow for two frames draws none: the pane's border is
-/// the box.
-fn boxed(rows: Vec<AnyElement<'static>>, cols: u16) -> AnyElement<'static> {
-    let boxed = cols >= BOX_MIN_COLS;
+/// The row of air a listing opens with, under the header's rule: the row the
+/// timeline opens with over its first card and the blog over its first, so all
+/// four tabs start their content on the same row. [`tab_viewport`] is what the
+/// scroll math reads it through.
+const LISTING_AIR_ROWS: usize = 1;
+
+/// `rows` as a plain block down the middle of the pane. It hugs the listing on
+/// a wide pane and never outgrows a narrow one: `max_width` caps it, and the
+/// lines — `MixedText`, wrapping by default — wrap to whatever it then has.
+///
+/// It is drawn in no box of its own. A frame here can only hug what it holds,
+/// so on any screen taller than the listing it would close a few rows above the
+/// bottom of the pane and leave the gap under it reading as chrome; the rule
+/// under the header is the one edge the app draws, and this hangs off it like
+/// everything else.
+fn listing(rows: Vec<AnyElement<'static>>) -> AnyElement<'static> {
     element_to_any(element! {
         View(
             flex_direction: FlexDirection::Column,
             width: 100pct,
             flex_grow: 1.0_f32,
             align_items: AlignItems::Center,
+            padding_top: LISTING_AIR_ROWS as u16,
         ) {
             View(
                 flex_direction: FlexDirection::Column,
-                border_style: if boxed { BorderStyle::Single } else { BorderStyle::None },
-                border_color: theme::BORDER_SUBTLE,
-                margin: if boxed { CODE_MARGIN } else { 0 },
-                padding: CODE_PADDING,
                 max_width: 100pct,
                 flex_shrink: 0.0_f32,
             ) {
