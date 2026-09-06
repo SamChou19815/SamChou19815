@@ -7,6 +7,7 @@ use crate::crypt::EncryptedString;
 use crate::frame::UseFrame;
 use crate::hit::{HitTarget, UseHit};
 use crate::image::{self, Image};
+use crate::site_path::SitePath;
 use crate::{
     data, markdown, posts, theme, App, Modal, Reader, ABOUT_TAB, BLOG_TAB, TAB_COUNT, TAB_NAMES,
     TIMELINE_TAB,
@@ -109,7 +110,7 @@ pub fn modal_viewport(modal: &Modal, cols: u16, rows: u16) -> usize {
     let hero = hero_bounds(cols as usize, rows)
         .zip(modal_image(modal))
         .map_or(0, |(bounds, url)| {
-            match image::rows(Some(&url.decrypt()), bounds) {
+            match image::rows(Some(&SitePath::new(url.decrypt())), bounds) {
                 0 => 0,
                 drawn => drawn + 1,
             }
@@ -851,15 +852,13 @@ fn card_element(
 /// A card's artwork, indented under the timeline rail like the rest of its
 /// body. `None` whenever [`crate::image::rows`] would report zero, so the row
 /// count the scroll math assumes and the row count drawn stay the same number.
-/// `alt` captions the frame the web overlay lays the real file over.
 fn image_row(
     url: Option<EncryptedString>,
     gutter: &'static str,
     selected: bool,
     cols: u16,
-    alt: &str,
 ) -> Option<AnyElement<'static>> {
-    let url = url?.decrypt();
+    let url = SitePath::new(url?.decrypt());
     let bounds = image::thumbnail_bounds(cols);
     let (_, rows) = image::size(&url, bounds)?;
     Some(gutter_block(
@@ -867,7 +866,7 @@ fn image_row(
         rows,
         selected,
         element_to_any(element! {
-            Image(url: url, bounds: bounds, alt: alt.to_string())
+            Image(url: url, bounds: bounds)
         }),
     ))
 }
@@ -968,7 +967,7 @@ fn card_tree(
     // section out spends no rows on it, spacer included. [`crate::card_height`]
     // counts the same rows.
     let sections = [
-        image_row(event.image, RAIL, selected, cols, &title),
+        image_row(event.image, RAIL, selected, cols),
         event.detail.map(|detail| {
             gutter_row(
                 RAIL,
@@ -1162,7 +1161,7 @@ pub fn reader_block_heights(post: usize, cols: u16) -> Vec<usize> {
         .map(|block| match block {
             markdown::Block::Line(_) => 1,
             markdown::Block::Image { url, .. } => {
-                image::rows(Some(url.as_str()), image::reader_bounds(cols))
+                image::rows(Some(url), image::reader_bounds(cols))
             }
         })
         .collect()
@@ -1213,11 +1212,12 @@ fn reader_tree(app: &App, reader: &Reader) -> impl Into<AnyElement<'static>> {
             // An image with no recorded size counts as no rows at all;
             // drawing one anyway would put every row below it out of step with
             // the scroll offset.
-            markdown::Block::Image { url, alt } => {
+            markdown::Block::Image { url } => {
                 let bounds = image::reader_bounds(app.cols);
-                (image::rows(Some(url.as_str()), bounds) > 0).then(|| {
+                let url = url.clone();
+                (image::rows(Some(&url), bounds) > 0).then(|| {
                     element_to_any(element! {
-                        Image(url: url.clone(), bounds: bounds, alt: alt.clone())
+                        Image(url: url, bounds: bounds)
                     })
                 })
             }
@@ -1288,7 +1288,7 @@ fn about_tree(scroll: usize, cols: u16) -> impl Into<AnyElement<'static>> {
     let portrait = image::enabled(column).then(|| {
         element_to_any(element! {
             View(margin_left: 2, flex_shrink: 0.0_f32) {
-                Image(url: image::PORTRAIT.to_string(), bounds: image::AVATAR, alt: "Sam".to_string())
+                Image(url: SitePath::new(image::PORTRAIT), bounds: image::AVATAR)
             }
         })
     });
@@ -1458,10 +1458,9 @@ fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'st
     let hero = hero_bounds(cols, rows)
         .zip(modal_image(modal))
         .map(|(bounds, url)| {
-            let alt = title.trim().to_string();
             element_to_any(element! {
                 View(width: 100pct, justify_content: JustifyContent::Center, padding_bottom: 1) {
-                    Image(url: url.decrypt(), bounds: bounds, layer: image::LAYER_DIALOG, alt: alt)
+                    Image(url: SitePath::new(url.decrypt()), bounds: bounds, layer: image::LAYER_DIALOG)
                 }
             })
         });

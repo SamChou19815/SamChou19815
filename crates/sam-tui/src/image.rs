@@ -1,16 +1,15 @@
 //! Inline images: a cell box reserved for the web front-end to fill.
 //!
-//! The TUI never draws artwork itself. It works out how many cells a picture
-//! takes, draws a captioned frame there, and records where the box landed; the
-//! host reads [`regions`] and lays the real, full-resolution file over it — see
-//! `packages/www/src/app/terminal/artwork.ts`. The frame is what shows while
-//! that file loads, and what stays if it never arrives.
+//! The TUI never draws artwork itself, not even a placeholder: anything painted
+//! in the box would show through an image with transparency. It works out how
+//! many cells a picture takes and records where the box landed; the host reads
+//! [`regions`] and lays the real, full-resolution file over it — see
+//! `packages/www/src/app/terminal/artwork.ts`.
 //!
 //! So nothing but a width and a height ever reaches the wasm binary: `build.rs`
 //! records each asset's size in cells, at [`HERO`] scale, and smaller
 //! placements scale that down here.
 
-use crate::theme;
 use iocraft::prelude::*;
 use std::cell::{Cell, RefCell};
 
@@ -76,14 +75,17 @@ pub fn reader_bounds(cols: u16) -> (u16, u16) {
     fit_width(crate::blog_column_width(cols), HERO)
 }
 
-fn asset(url: &str) -> Option<&'static Asset> {
-    ASSETS.iter().find(|asset| asset.url == url)
+fn asset(path: &crate::site_path::SitePath) -> Option<&'static Asset> {
+    ASSETS.iter().find(|asset| asset.url == path.as_str())
 }
 
-/// Cells `url` occupies when fitted into `bounds`, preserving aspect. `None`
-/// when the site serves no asset under that name.
-pub fn size(url: &str, (max_cols, max_rows): (u16, u16)) -> Option<(u16, u16)> {
-    let asset = asset(url)?;
+/// Cells the image at `path` occupies when fitted into `bounds`, preserving
+/// aspect. `None` when the site serves no asset under that name.
+pub fn size(
+    path: &crate::site_path::SitePath,
+    (max_cols, max_rows): (u16, u16),
+) -> Option<(u16, u16)> {
+    let asset = asset(path)?;
     // Never past HERO, the largest box the design lays out. Recorded sizes
     // already sit inside it, so this only guards a caller asking for more.
     let scale = f64::min(
@@ -99,8 +101,8 @@ pub fn size(url: &str, (max_cols, max_rows): (u16, u16)) -> Option<(u16, u16)> {
 /// Rows an optional image contributes to a row of a list, within `bounds`.
 /// Zero when there is no image under that name — the single answer both the
 /// view and the height functions use.
-pub fn rows(url: Option<&str>, bounds: (u16, u16)) -> usize {
-    url.and_then(|url| size(url, bounds))
+pub fn rows(path: Option<&crate::site_path::SitePath>, bounds: (u16, u16)) -> usize {
+    path.and_then(|path| size(path, bounds))
         .map_or(0, |(_, rows)| usize::from(rows))
 }
 
@@ -114,7 +116,7 @@ pub fn rows(url: Option<&str>, bounds: (u16, u16)) -> usize {
 /// half off the bottom paints only part of its box, and the overlay has to crop
 /// to the same rectangle or the picture spills over the status bar. It is
 /// measured, not predicted: [`CanvasSubviewMut::cell`] returns `None` outside
-/// the clip region, so the draw loop learns each cell's fate as it writes it.
+/// the clip region, so the draw loop reads each cell's fate off the canvas.
 ///
 /// `x`/`y` is where the whole picture starts, and goes negative when it is
 /// scrolled part-way off the top of a pane — the reader pulls the block its
@@ -126,7 +128,7 @@ pub struct Region {
     /// Site-root-relative asset path. Owned rather than `&'static str`: a
     /// timeline card's path lives encrypted in [`crate::data`] and only exists
     /// as text once it has been decrypted.
-    pub url: String,
+    pub url: crate::site_path::SitePath,
     pub x: i16,
     pub y: i16,
     pub cols: u16,
@@ -135,7 +137,6 @@ pub struct Region {
     pub visible_y: i16,
     pub visible_cols: u16,
     pub visible_rows: u16,
-    pub layer: u8,
 }
 
 impl Region {
@@ -186,7 +187,6 @@ pub fn regions() -> Vec<Region> {
         regions
             .borrow()
             .iter()
-            .filter(|region| region.layer == TOP_LAYER.with(Cell::get))
             .filter(|region| region.visible_cols > 0 && region.visible_rows > 0)
             .cloned()
             .collect()
@@ -197,27 +197,23 @@ pub fn regions() -> Vec<Region> {
 
 #[derive(Props, Default)]
 pub struct ImageProps {
-    /// Site-root-relative asset path, e.g. `/timeline/flow.webp`.
-    pub url: String,
+    pub url: crate::site_path::SitePath,
     /// The cell box to fit inside; one of [`THUMBNAIL`], [`HERO`], [`AVATAR`].
     pub bounds: (u16, u16),
     /// [`LAYER_PANE`] by default; [`LAYER_DIALOG`] for artwork inside a dialog.
     pub layer: u8,
-    /// Caption for the frame, read while the real file is on its way.
-    pub alt: String,
 }
 
-/// Reserves an image's cells, frames them, and reports the rectangle the host
-/// covers. Implemented against `Component` directly rather than through
+/// Reserves an image's cells and reports the rectangle the host covers.
+/// Implemented against `Component` directly rather than through
 /// `#[component]`, because it has to measure how much of itself the pane's
 /// clipping let through, which only the canvas `draw` sees can tell it.
 #[derive(Default)]
 pub struct Image {
-    url: String,
+    url: crate::site_path::SitePath,
     cols: u16,
     rows: u16,
     layer: u8,
-    alt: String,
 }
 
 impl Component for Image {
@@ -233,9 +229,8 @@ impl Component for Image {
         _hooks: Hooks,
         updater: &mut ComponentUpdater,
     ) {
-        self.url.clone_from(&props.url);
+        self.url = props.url.clone();
         self.layer = props.layer;
-        self.alt = props.alt.clone();
         let (cols, rows) = size(&props.url, props.bounds).unwrap_or((0, 0));
         self.cols = cols;
         self.rows = rows;
@@ -253,54 +248,24 @@ impl Component for Image {
         if self.cols == 0 || self.rows == 0 {
             return;
         }
+        // Only the frame's top layer reports: the flat `<img>` overlay has no
+        // stacking of its own, so a dialog open over the pane hides every card
+        // thumbnail behind it.
+        if self.layer != TOP_LAYER.with(Cell::get) {
+            return;
+        }
         let position = drawer.canvas_position();
         let (width, height) = (usize::from(self.cols), usize::from(self.rows));
-        let mut canvas = drawer.canvas();
-        // `CanvasTextStyle` is `#[non_exhaustive]`, so it is built by mutation
-        // rather than by a struct literal.
-        let mut style = CanvasTextStyle::default();
+        let canvas = drawer.canvas();
         // The clipped region is a rectangle, so tracking its corners is enough.
         let (mut first, mut last) = (None, (0usize, 0usize));
-        // A border wants a row above and below the caption; anything shorter is
-        // captioned bare.
-        let framed = height >= 3;
-        let margin = usize::from(framed);
         for row in 0..height {
             for col in 0..width {
                 if canvas.cell(col as isize, row as isize).is_some() {
                     first.get_or_insert((col, row));
                     last = (last.0.max(col), row);
                 }
-                let glyph = if framed {
-                    frame_glyph(col, row, width, height)
-                } else {
-                    ""
-                };
-                if !glyph.is_empty() {
-                    style.color = Some(theme::BORDER);
-                    canvas.set_text(col as isize, row as isize, glyph, style);
-                }
             }
-        }
-
-        let inner = width.saturating_sub(2 * margin).max(1);
-        let label = if self.alt.is_empty() {
-            "[image]".to_string()
-        } else {
-            format!("[image: {}]", self.alt)
-        };
-        let caption = crate::markdown::truncate(&label, inner);
-        let caption_row = height / 2;
-        let start = margin + (inner - caption.chars().count()) / 2;
-        style.color = Some(theme::MUTED);
-        let mut buffer = [0u8; 4];
-        for (offset, glyph) in caption.chars().enumerate() {
-            canvas.set_text(
-                (start + offset) as isize,
-                caption_row as isize,
-                glyph.encode_utf8(&mut buffer),
-                style,
-            );
         }
 
         let (x, y) = (position.x, position.y);
@@ -323,33 +288,6 @@ impl Component for Image {
             visible_y,
             visible_cols,
             visible_rows,
-            layer: self.layer,
         });
-    }
-}
-
-/// The box-drawing glyph for one cell of a frame; the empty string for the
-/// interior.
-fn frame_glyph(col: usize, row: usize, cols: usize, rows: usize) -> &'static str {
-    if row == 0 {
-        if col == 0 {
-            "┌"
-        } else if col + 1 == cols {
-            "┐"
-        } else {
-            "─"
-        }
-    } else if row + 1 == rows {
-        if col == 0 {
-            "└"
-        } else if col + 1 == cols {
-            "┘"
-        } else {
-            "─"
-        }
-    } else if col == 0 || col + 1 == cols {
-        "│"
-    } else {
-        ""
     }
 }

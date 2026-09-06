@@ -1,6 +1,5 @@
 ---
 title: "Bounded Qualification in samlang"
-image: "/blog/2022-09-05-bounded-qualification/bounded-qualification.png"
 ---
 
 ## Introduction

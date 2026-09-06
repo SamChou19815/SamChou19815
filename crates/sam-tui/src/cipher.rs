@@ -1,12 +1,4 @@
-// The cipher itself, with no dependencies of its own.
-//
-// Included textually by both `crypt.rs` and `build.rs`: the crate encrypts its
-// own literals through `encrypted_str!`, while the build script encrypts the
-// blog corpus, and the two must agree byte for byte. A build script cannot
-// depend on the crate it builds, so sharing the source is what keeps one
-// definition of the cipher rather than two that can drift.
-//
-// See `crypt.rs` for what this is for and what it is not.
+// Zero dependency FNV-1a cipher. Not designed to be secure.
 
 /// The key the keystream is derived from.
 const KEY: &[u8] = b"dev-sam";
@@ -14,8 +6,6 @@ const KEY: &[u8] = b"dev-sam";
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-/// FNV-1a over [`KEY`], folded once so every keystream byte does not pay for
-/// it again.
 const fn key_hash() -> u64 {
     let mut hash = FNV_OFFSET;
     let mut index = 0;
@@ -28,12 +18,7 @@ const fn key_hash() -> u64 {
 
 const KEY_HASH: u64 = key_hash();
 
-/// The mask byte position `index` of a string seeded with `seed` is hidden
-/// under: the key's hash carried on through the seed and the position.
-///
-/// The seed is what keeps two strings that start alike — the many
-/// `https://github.com/SamChou19815/…` URLs — from sharing a ciphertext
-/// prefix, which a position-only keystream would leave in plain sight.
+/// Given a seed and position, generate xor cipher key.
 const fn keystream(seed: u32, index: usize) -> u8 {
     let mut hash = KEY_HASH;
     let mut mixed = ((seed as u64) << 32) | (index as u64 & 0xffff_ffff);
@@ -48,10 +33,8 @@ const fn keystream(seed: u32, index: usize) -> u8 {
     (hash ^ (hash >> 24) ^ (hash >> 48)) as u8
 }
 
-/// One byte of ciphertext. The rotation after the mask moves a plaintext
-/// byte's bits out from under it, so a run of ASCII does not stay a run of
-/// bytes with the same high bits.
 pub(crate) const fn scramble(byte: u8, seed: u32, index: usize) -> u8 {
+    // XOR cipher, with a simple rotation to avoid simple ASCII decoding
     (byte ^ keystream(seed, index)).rotate_left(3)
 }
 
@@ -60,9 +43,7 @@ const fn unscramble(byte: u8, seed: u32, index: usize) -> u8 {
     byte.rotate_right(3) ^ keystream(seed, index)
 }
 
-/// A string's own seed: FNV-1a over its bytes, so no two distinct strings are
-/// masked with the same keystream. Stored beside the ciphertext — it is a
-/// diversifier, not a second secret.
+/// A string's own seed: FNV-1a over its bytes.
 pub const fn seed_of(text: &str) -> u32 {
     let bytes = text.as_bytes();
     let mut hash: u32 = 0x811c_9dc5;

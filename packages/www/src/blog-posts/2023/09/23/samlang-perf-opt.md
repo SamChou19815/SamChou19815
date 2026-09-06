@@ -1,6 +1,5 @@
 ---
 title: "Performance Optimization on the samlang Compiler"
-image: "/blog/2023-09-23-samlang-perf-opt/comparison.png"
 ---
 
 With a long-planned Rust rewrite of samlang finally done at the start of 2023, I decided to focus this year on fixing a lot of rough edges of the language, including syntax, semantics, and IDE services. Nine months later, I managed to tick quite a few items in the continuously growing [checklist](https://github.com/SamChou19815/samlang/issues/921).

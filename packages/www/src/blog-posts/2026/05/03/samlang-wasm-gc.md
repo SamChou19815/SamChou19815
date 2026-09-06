@@ -17,7 +17,7 @@ which doesn't need any special handling on the compiler side.
 The solution remained unchanged for quite some time, even after a
 [full TS rewrite](/blog/2020/08/30/samlang-ts-rewrite). However, it went through a first major
 rewrite after
-[samlang began to target WASM GC](http://localhost:3000/blog/2021/10/29/samlang-wasm-backend). For
+[samlang began to target WASM GC](/blog/2021/10/29/samlang-wasm-backend). For
 the first time, I could no longer easily add some lazy `malloc`-compatible GC solution in wasm since
 there wasn't any. I settled on using reference counting, while hoping for a future when WASM GC
 would finally become standardized.

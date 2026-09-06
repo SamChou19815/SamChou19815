@@ -233,7 +233,7 @@ discrepancies, I decide to directly quote my words in my college admission essay
 To grasp the situation entirely, I might need to have more background. The main homework feed of the
 student side is rendered as a waterfall card UI like the following screenshot.
 
-![SAM Screenshot 2015](https://developersam.com/static/media/sam-first.566cbe7e.png)
+![SAM Screenshot 2015](/static/media/sam-first.566cbe7e.png)
 
 To accurately decide whether a student has seen a homework, at least the bottom-most reached
 y-scrollbar needs to be tracked and sent back to the server. I feel very uncomfortable about

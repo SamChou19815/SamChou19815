@@ -7,7 +7,7 @@
 //! already site-root-relative, so [`post_blocks`] can hand each one to
 //! [`image`] as it finds it.
 
-use crate::{image, theme};
+use crate::{image, site_path::SitePath, theme};
 use iocraft::components::MixedTextContent;
 use iocraft::prelude::*;
 
@@ -25,8 +25,7 @@ pub enum Block {
     /// `url` is owned rather than borrowed from the body: a body is decrypted
     /// on demand ([`crate::crypt`]), so there is no `'static` text to point at.
     Image {
-        url: String,
-        alt: String,
+        url: SitePath,
     },
 }
 
@@ -84,19 +83,17 @@ pub fn post_blocks(body: &str, width: usize) -> Vec<Block> {
                     }
                 }
             }
-            if let Some(url) = src.filter(|url| image::size(url, image::HERO).is_some()) {
-                blocks.push(Block::Image {
-                    url: url.to_string(),
-                    alt: String::new(),
-                });
+            if let Some(url) = src
+                .map(SitePath::new)
+                .filter(|url| image::size(url, image::HERO).is_some())
+            {
+                blocks.push(Block::Image { url });
             }
-        } else if let Some((alt, url, rest)) = leading_image(trimmed) {
+        } else if let Some((url, rest)) = leading_image(trimmed) {
             flush(&mut blocks, &mut paragraph, width);
-            if image::size(url, image::HERO).is_some() {
-                blocks.push(Block::Image {
-                    url: url.to_string(),
-                    alt: alt.to_string(),
-                });
+            let url = SitePath::new(url);
+            if image::size(&url, image::HERO).is_some() {
+                blocks.push(Block::Image { url });
             }
             // A caption trailing the image starts a new paragraph.
             let rest = rest.trim();
@@ -160,17 +157,13 @@ fn numbered_item(line: &str) -> Option<&str> {
     Some(&line[digits + 2..])
 }
 
-/// A `![alt](url)` reference leading a line: its alt, url and trailing text.
-fn leading_image(line: &str) -> Option<(&str, &str, &str)> {
+/// An `![alt](url)` reference leading a line: its url and trailing text.
+fn leading_image(line: &str) -> Option<(&str, &str)> {
     let after_marker = line.strip_prefix("![")?;
     let close = after_marker.find("](")?;
     let after_url_open = &after_marker[close + 2..];
     let end = after_url_open.find(')')?;
-    Some((
-        &after_marker[..close],
-        &after_url_open[..end],
-        &after_url_open[end + 1..],
-    ))
+    Some((&after_url_open[..end], &after_url_open[end + 1..]))
 }
 
 /// The URL in an HTML fragment's `src="…"`, if it carries one.

@@ -24,7 +24,7 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   const title = `${post.title} | ${BLOG_TITLE}`;
   return {
     title,
-    openGraph: { type: "article", title, images: post.image },
+    openGraph: { type: "article", title },
   };
 }
 
