@@ -215,9 +215,7 @@ impl Session {
     /// link followed inside a post, or wherever the back button just went. A
     /// path that is no view of this app means the visitor has left it.
     fn go_to(&mut self, path: &str) {
-        let Some(path) =
-            crate::site_path::SitePath::parse(path).filter(|path| crate::has_view(path))
-        else {
+        let Some(path) = crate::site_path::SitePath::parse(path).filter(crate::has_view) else {
             if matches!(self.mode, Mode::App(_)) {
                 crate::request_quit();
                 self.wake();
@@ -253,9 +251,7 @@ pub fn sam_start(cols: u16, rows: u16, path: &str, touch: bool) {
         // A visitor who arrived at a view asked for it by name: open it, with
         // no banner and nothing to press. Anything else the browser may have
         // handed over is not this app's to serve, so the shell opens instead.
-        if let Some(path) =
-            crate::site_path::SitePath::parse(path).filter(|path| crate::has_view(path))
-        {
+        if let Some(path) = crate::site_path::SitePath::parse(path).filter(crate::has_view) {
             crate::request_route(&path);
             session.launch();
         } else {

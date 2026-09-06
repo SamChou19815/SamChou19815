@@ -27,16 +27,6 @@ include!(concat!(env!("OUT_DIR"), "/images.rs"));
 pub const THUMBNAIL: (u16, u16) = (32, 8);
 /// The detail dialog's hero, and the box every recorded size is fitted to.
 pub const HERO: (u16, u16) = (56, 16);
-/// The portrait beside the About pane's program.
-pub const AVATAR: (u16, u16) = (26, 13);
-
-/// The About pane's portrait, as on the homepage.
-pub const PORTRAIT: &str = "/sam-by-megan-3-square.webp";
-
-/// Narrower than this and the About pane's two columns have nothing to spare,
-/// so the portrait beside the program is dropped rather than squeezed. Artwork
-/// that has a column to itself scales down instead — see [`fit_width`].
-const MIN_COLS: u16 = 60;
 
 /// Which stacking layer an image sits on. The canvas paints the open dialog
 /// over the pane and the cards behind it simply stop being visible, but the web
@@ -45,13 +35,6 @@ const MIN_COLS: u16 = 60;
 /// no artwork of its own still hides every card thumbnail behind it.
 pub const LAYER_PANE: u8 = 0;
 pub const LAYER_DIALOG: u8 = 1;
-
-/// Whether the About pane has the width for its portrait beside the program.
-pub fn enabled(cols: u16) -> bool {
-    // 0 is the pre-resize placeholder, which `crate::content_width` reads as a
-    // comfortable 80 columns; the portrait is on there too.
-    cols == 0 || cols >= MIN_COLS
-}
 
 /// The box an image may fill inside a column `width` cells wide: the bounds
 /// the design asks for, narrowed to the column whenever the column is the
@@ -198,7 +181,7 @@ pub fn regions() -> Vec<Region> {
 #[derive(Props, Default)]
 pub struct ImageProps {
     pub url: crate::site_path::SitePath,
-    /// The cell box to fit inside; one of [`THUMBNAIL`], [`HERO`], [`AVATAR`].
+    /// The cell box to fit inside; one of [`THUMBNAIL`] or [`HERO`].
     pub bounds: (u16, u16),
     /// [`LAYER_PANE`] by default; [`LAYER_DIALOG`] for artwork inside a dialog.
     pub layer: u8,
