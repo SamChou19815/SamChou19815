@@ -274,6 +274,57 @@ pub struct Reader {
     pub scroll: usize,
 }
 
+/// The one view the app is showing: a tab, or a post open in the reader —
+/// never both. The reader is a mode of the Blog tab, so an open post carries
+/// that tab with it rather than sitting in a field beside one; showing
+/// anything else replaces this whole value, which is what closes the reader
+/// without anyone having to remember to.
+///
+/// It is also what a site path names ([`screen_at`]) and what the URL bar
+/// reads back ([`Screen::route`]), so the views the app can be in and the
+/// views the site can be entered at are one set rather than two that have to
+/// be kept in step.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Screen {
+    Tab(usize),
+    Post(Reader),
+}
+
+impl Screen {
+    /// The tab the header marks as the one in front. A post is read on the
+    /// Blog tab, so an open post marks that one.
+    pub fn tab(&self) -> usize {
+        match self {
+            Screen::Tab(tab) => *tab,
+            Screen::Post(_) => BLOG_TAB,
+        }
+    }
+
+    /// The post in the reader, if this view is one.
+    pub fn reader(&self) -> Option<&Reader> {
+        match self {
+            Screen::Tab(_) => None,
+            Screen::Post(reader) => Some(reader),
+        }
+    }
+
+    fn reader_mut(&mut self) -> Option<&mut Reader> {
+        match self {
+            Screen::Tab(_) => None,
+            Screen::Post(reader) => Some(reader),
+        }
+    }
+
+    /// This view as a site path — what the URL bar should read. An open post
+    /// is its own permalink; a tab is the path it is served at.
+    pub fn route(&self) -> site_path::SitePath {
+        match self {
+            Screen::Tab(tab) => site_path::SitePath::new(TAB_ROUTES[*tab]),
+            Screen::Post(reader) => posts::POSTS[reader.post].path(),
+        }
+    }
+}
+
 thread_local! {
     /// Work for the host, drained one line at a time by the wasm bridge.
     static HOST_EVENTS: std::cell::RefCell<std::collections::VecDeque<HostEvent>> =
@@ -351,16 +402,20 @@ const NO_SELECTION: usize = usize::MAX;
 pub struct App {
     pub cols: u16,
     pub rows: u16,
-    pub tab: usize,
+    /// The view on screen. Everything that changes what the app is showing
+    /// goes through [`App::switch_tab`] or [`App::open_post`], each of which
+    /// replaces this outright — so the app can never be showing a tab with a
+    /// post's chrome still over it.
+    screen: Screen,
     visited: u32,
     /// Vertical scroll offset for the scrolling tab panes: rows for About and
     /// for the Blog index, whose cards are all one height, and the index of
     /// the topmost card for the Timeline, whose cards are not.
     scroll: [usize; TAB_COUNT],
-    /// Selected row for the two list tabs.
+    /// Selected row for the two list tabs. Kept across a tab switch, and
+    /// across a post being opened and closed, so a tab is returned to where it
+    /// was left.
     selected: [usize; TAB_COUNT],
-    /// The post open in the Blog tab's reader, if any.
-    pub reader: Option<Reader>,
     pub quit: bool,
     actions: Vec<Action>,
 }
@@ -376,11 +431,10 @@ impl App {
         let mut app = App {
             cols: 0,
             rows: 0,
-            tab: ABOUT_TAB,
+            screen: Screen::Tab(ABOUT_TAB),
             visited: 1 << ABOUT_TAB,
             scroll: [0; TAB_COUNT],
             selected: [0; TAB_COUNT],
-            reader: None,
             quit: false,
             actions: Vec::new(),
         };
@@ -403,11 +457,10 @@ impl App {
             // The rows are what the scroll math clamps against, and a page has
             // no scroll to clamp.
             rows: 1,
-            tab: ABOUT_TAB,
+            screen: Screen::Tab(ABOUT_TAB),
             visited: 1 << ABOUT_TAB,
             scroll: [0; TAB_COUNT],
             selected: [NO_SELECTION; TAB_COUNT],
-            reader: None,
             quit: false,
             actions: Vec::new(),
         };
@@ -440,7 +493,7 @@ impl App {
     /// timeline, whose cards are their own detail view — the first of its
     /// links, exactly as Enter opens them.
     fn item_errand(&self, index: usize) -> Option<HostEvent> {
-        match self.tab {
+        match self.tab() {
             BLOG_TAB => {
                 let post = posts::POSTS.get(index)?;
                 if post.is_external() {
@@ -457,34 +510,34 @@ impl App {
         }
     }
 
+    /// The tab the header marks as the one in front — the Blog tab whenever a
+    /// post is open, since the reader is a mode of it.
+    pub fn tab(&self) -> usize {
+        self.screen.tab()
+    }
+
+    /// The post open in the reader, if one is.
+    pub fn reader(&self) -> Option<&Reader> {
+        self.screen.reader()
+    }
+
     /// The view the app is on, as a site path — what the URL bar should read.
-    /// An open post is its own permalink; everything else is its tab.
     pub fn route(&self) -> site_path::SitePath {
-        match &self.reader {
-            Some(reader) => posts::POSTS[reader.post].path(),
-            None => site_path::SitePath::new(TAB_ROUTES[self.tab]),
-        }
+        self.screen.route()
     }
 
     /// Shows the view a site path names, and reports whether it named one. A
     /// permalink opens its post in the reader; the blog index and the other
-    /// tabs close it.
+    /// tabs are tabs, so landing on one is what closes it.
     pub fn go_to(&mut self, path: &site_path::SitePath) -> bool {
-        match view_at(path) {
-            Some(View::Post(post)) => {
-                self.switch_tab(BLOG_TAB);
-                self.selected[BLOG_TAB] = post;
-                self.reveal_blog_selection();
-                self.reader = Some(Reader { post, scroll: 0 });
-                true
-            }
-            Some(View::Tab(tab)) => {
-                self.switch_tab(tab);
-                self.reader = None;
-                true
-            }
-            None => false,
+        let Some(screen) = screen_at(path) else {
+            return false;
+        };
+        match screen {
+            Screen::Tab(tab) => self.switch_tab(tab),
+            Screen::Post(reader) => self.open_post(reader),
         }
+        true
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
@@ -506,7 +559,8 @@ impl App {
         } else {
             self.cols
         };
-        let chrome = view::header_rows(self.tab, cols, rows) + usize::from(self.reader.is_some());
+        let chrome =
+            view::header_rows(self.tab(), cols, rows) + usize::from(self.reader().is_some());
         (rows as usize).saturating_sub(chrome)
     }
 
@@ -611,21 +665,21 @@ impl App {
             self.quit = true;
             return;
         }
-        if self.reader.is_some() {
+        if self.reader().is_some() {
             self.on_reader_key(key);
             return;
         }
         match key {
-            Key::Left | Key::Char('h') => self.switch_tab(self.tab + TAB_COUNT - 1),
-            Key::Right | Key::Char('l') | Key::Tab => self.switch_tab(self.tab + 1),
-            Key::BackTab => self.switch_tab(self.tab + TAB_COUNT - 1),
+            Key::Left | Key::Char('h') => self.switch_tab(self.tab() + TAB_COUNT - 1),
+            Key::Right | Key::Char('l') | Key::Tab => self.switch_tab(self.tab() + 1),
+            Key::BackTab => self.switch_tab(self.tab() + TAB_COUNT - 1),
             Key::Esc => {}
             Key::Char('?') => self.switch_tab(HELP_TAB),
             Key::Char('q') => self.quit = true,
             // On the Timeline the digits belong to the selected card's links,
             // every one of them, as the dialog's numbered buttons once did; the
             // tabs stay a keystroke away on the arrows and Tab.
-            Key::Char(c @ '1'..='9') if self.tab == TIMELINE_TAB => {
+            Key::Char(c @ '1'..='9') if self.tab() == TIMELINE_TAB => {
                 let index = c as usize - '1' as usize;
                 let event = self.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
                 if let Some(link) = data::TIMELINE[event].links.get(index) {
@@ -648,10 +702,10 @@ impl App {
 
     fn on_reader_key(&mut self, key: Key) {
         match key {
-            // `q` closes the reader rather than quitting, matching how it
-            // closes the existing dialog.
+            // `q` closes the reader rather than quitting the app: the way out
+            // of a post is the way out of anything else the app opens.
             Key::Esc | Key::Backspace | Key::Char('q') | Key::Left | Key::Char('h') => {
-                self.reader = None;
+                self.close_reader();
             }
             Key::Char('?') => self.switch_tab(HELP_TAB),
             Key::Up | Key::Char('k') => self.scroll_reader(-1, 1),
@@ -665,13 +719,13 @@ impl App {
                 self.scroll_reader(1, page);
             }
             Key::Home | Key::Char('g') => {
-                if let Some(reader) = &mut self.reader {
+                if let Some(reader) = self.screen.reader_mut() {
                     reader.scroll = 0;
                 }
             }
             Key::End | Key::Char('G') => {
                 let limit = self.max_reader_scroll();
-                if let Some(reader) = &mut self.reader {
+                if let Some(reader) = self.screen.reader_mut() {
                     reader.scroll = limit;
                 }
             }
@@ -681,7 +735,7 @@ impl App {
 
     fn scroll_reader(&mut self, direction: i32, amount: usize) {
         let limit = self.max_reader_scroll();
-        if let Some(reader) = &mut self.reader {
+        if let Some(reader) = self.screen.reader_mut() {
             reader.scroll = if direction < 0 {
                 reader.scroll.saturating_sub(amount)
             } else {
@@ -698,15 +752,36 @@ impl App {
             .max(1)
     }
 
+    /// Shows a tab, whole. A tab is a view in its own right rather than a
+    /// layer under whatever else is up, so this replaces the screen — and an
+    /// open post goes with it. Every way of reaching a tab runs through here,
+    /// so none of them can leave a post's title row and close button stranded
+    /// over another tab, or the URL bar on a post that is no longer on screen.
     fn switch_tab(&mut self, next: usize) {
-        self.tab = next % TAB_COUNT;
-        self.visited |= 1 << self.tab;
+        let next = next % TAB_COUNT;
+        self.screen = Screen::Tab(next);
+        self.visited |= 1 << next;
+    }
+
+    /// Opens a post in the reader, over the Blog tab, with the index behind it
+    /// left on the card the post was opened from — which is what it is
+    /// scrolled to when the reader closes.
+    fn open_post(&mut self, reader: Reader) {
+        self.switch_tab(BLOG_TAB);
+        self.selected[BLOG_TAB] = reader.post;
+        self.reveal_blog_selection();
+        self.screen = Screen::Post(reader);
+    }
+
+    /// Leaves the reader for the index the post was opened from.
+    fn close_reader(&mut self) {
+        self.switch_tab(BLOG_TAB);
     }
 
     /// Moves list selection (Timeline, Blog) or scrolls text panes.
     fn move_selection(&mut self, direction: i32, amount: usize) {
         if let Some(len) = self.list_len() {
-            let selected = self.selected[self.tab];
+            let selected = self.selected[self.tab()];
             self.select(if direction < 0 {
                 selected.saturating_sub(amount)
             } else {
@@ -719,8 +794,8 @@ impl App {
 
     /// Selects a card of the current list tab and brings it into view.
     fn select(&mut self, index: usize) {
-        self.selected[self.tab] = index;
-        if self.tab == BLOG_TAB {
+        self.selected[self.tab()] = index;
+        if self.tab() == BLOG_TAB {
             self.reveal_blog_selection();
         }
     }
@@ -760,7 +835,7 @@ impl App {
 
     /// Item count of the current tab, for the tabs that are lists.
     fn list_len(&self) -> Option<usize> {
-        match self.tab {
+        match self.tab() {
             TIMELINE_TAB => Some(data::TIMELINE.len()),
             BLOG_TAB => Some(posts::POSTS.len()),
             _ => None,
@@ -771,7 +846,7 @@ impl App {
         if let Some(len) = self.list_len() {
             self.select(target.min(len.saturating_sub(1)));
         } else {
-            self.scroll[self.tab] = target.min(self.max_scroll());
+            self.scroll[self.tab()] = target.min(self.max_scroll());
         }
     }
 
@@ -779,13 +854,13 @@ impl App {
     /// the bottom of the viewport, and no further. Past that there is nothing
     /// left to read, and scrolling blank space up the screen is not scrolling.
     fn max_scroll(&self) -> usize {
-        let visible = view::tab_viewport(self.tab, self.viewport());
-        view::tab_line_count(self.tab, self.cols).saturating_sub(visible)
+        let visible = view::tab_viewport(self.tab(), self.viewport());
+        view::tab_line_count(self.tab(), self.cols).saturating_sub(visible)
     }
 
     fn scroll_text(&mut self, direction: i32, amount: usize) {
         let limit = self.max_scroll();
-        let scroll = &mut self.scroll[self.tab];
+        let scroll = &mut self.scroll[self.tab()];
         *scroll = if direction < 0 {
             scroll.saturating_sub(amount)
         } else {
@@ -794,14 +869,14 @@ impl App {
     }
 
     fn open_selected(&mut self) {
-        match self.tab {
+        match self.tab() {
             BLOG_TAB => {
                 let post = self.selected[BLOG_TAB].min(posts::POSTS.len() - 1);
                 if posts::POSTS[post].is_external() {
                     let url = posts::POSTS[post].url();
                     self.actions.push(Action::OpenUrl(url));
                 } else {
-                    self.reader = Some(Reader { post, scroll: 0 });
+                    self.open_post(Reader { post, scroll: 0 });
                 }
             }
             // A timeline card is its own detail view, so the most Enter can ask
@@ -823,9 +898,9 @@ impl App {
                     MouseEv::ScrollUp => -1,
                     _ => 1,
                 };
-                if self.reader.is_some() {
+                if self.reader().is_some() {
                     self.scroll_reader(direction, WHEEL_ROWS);
-                } else if self.tab == BLOG_TAB {
+                } else if self.tab() == BLOG_TAB {
                     // The blog moves its page under the selection rather than
                     // dragging the selection along: rolling the wheel asks to
                     // see further down the index, not to pick another post.
@@ -846,17 +921,14 @@ impl App {
             }
             Some(hit::HitTarget::Tab(index)) => self.switch_tab(index),
             // The same way out `q` and Esc take, for a pointer that has
-            // neither: a phone reads posts with nothing but taps. A dialog's
-            // own close button takes priority over the reader's.
-            Some(hit::HitTarget::Close) => {
-                self.reader = None;
-            }
+            // neither: a phone reads posts with nothing but taps.
+            Some(hit::HitTarget::Close) => self.close_reader(),
             // A pointer names the card it means by landing on it, so there is
             // nothing left for a second click to say. Selecting on the first
             // click and opening only on the second is what left every card on
             // a phone needing two taps.
             Some(hit::HitTarget::Item(index)) => {
-                if matches!(self.tab, TIMELINE_TAB | BLOG_TAB) {
+                if matches!(self.tab(), TIMELINE_TAB | BLOG_TAB) {
                     self.select(index);
                     self.open_selected();
                 }
@@ -868,7 +940,7 @@ impl App {
     /// The furthest the reader scrolls: far enough to bring the last row of
     /// the post to the bottom of the body, and no further.
     fn max_reader_scroll(&self) -> usize {
-        let Some(reader) = &self.reader else {
+        let Some(reader) = self.reader() else {
             return 0;
         };
         let viewport = view::reader_viewport(self.viewport()).max(1);
@@ -881,18 +953,18 @@ impl App {
     /// off screen entirely.
     pub fn clamp_scroll(&mut self) {
         let reader_limit = self.max_reader_scroll();
-        if let Some(reader) = &mut self.reader {
+        if let Some(reader) = self.screen.reader_mut() {
             reader.scroll = reader.scroll.min(reader_limit);
         }
-        if self.tab != TIMELINE_TAB {
+        if self.tab() != TIMELINE_TAB {
             // The Blog index and the About pane both scroll by the row, and
             // the blog's selection moves with its own scroll rather than
             // dragging it, so there is nothing left to anchor here.
-            if self.tab == BLOG_TAB {
+            if self.tab() == BLOG_TAB {
                 let last = posts::POSTS.len().saturating_sub(1);
                 self.selected[BLOG_TAB] = self.selected[BLOG_TAB].min(last);
             }
-            self.scroll[self.tab] = self.scroll[self.tab].min(self.max_scroll());
+            self.scroll[self.tab()] = self.scroll[self.tab()].min(self.max_scroll());
             return;
         }
         let heights: Vec<usize> = data::TIMELINE
@@ -914,18 +986,13 @@ impl App {
     }
 }
 
-/// What a site path opens.
-enum View {
-    Tab(usize),
-    Post(usize),
-}
-
-/// The view a site path names, if the app has one. An unknown post still asks
-/// for the blog, so it lands on the index; a path that is no view at all —
-/// `/`, `/budget` — belongs to the browser, not the app.
-fn view_at(path: &site_path::SitePath) -> Option<View> {
+/// The view a site path names, if the app has one — a post at the top of it,
+/// since a permalink says which post to read and not where in it to start. An
+/// unknown post still asks for the blog, so it lands on the index; a path that
+/// is no view at all — `/`, `/budget` — belongs to the browser, not the app.
+fn screen_at(path: &site_path::SitePath) -> Option<Screen> {
     if let Some(post) = posts::find(path) {
-        return Some(View::Post(post));
+        return Some(Screen::Post(Reader { post, scroll: 0 }));
     }
     TAB_ROUTES
         .iter()
@@ -938,14 +1005,14 @@ fn view_at(path: &site_path::SitePath) -> Option<View> {
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
                 .then_some(BLOG_TAB)
         })
-        .map(View::Tab)
+        .map(Screen::Tab)
 }
 
 /// Whether the app has a view at `path`. The host asks before following a link
 /// or a back button itself rather than handing it to the browser, so the two
 /// never disagree about what this app is responsible for.
 pub fn has_view(path: &site_path::SitePath) -> bool {
-    view_at(path).is_some()
+    screen_at(path).is_some()
 }
 
 /// What the document is called while the shell, rather than a view, is up.
@@ -955,15 +1022,17 @@ pub const SHELL_TITLE: &str = "Developer Sam — Terminal";
 /// titles come from `posts.rs`, which build.rs compiles out of the same
 /// sources the site renders, so the tab and the page cannot disagree.
 pub fn title_for(path: &site_path::SitePath) -> String {
-    if let Some(post) = posts::find(path) {
-        return format!("{} | {}", posts::POSTS[post].title(), posts::blog_title());
-    }
-    match view_at(path) {
-        Some(View::Tab(ABOUT_TAB)) => "About | Developer Sam".to_string(),
-        Some(View::Tab(TIMELINE_TAB)) => "Timeline | Developer Sam".to_string(),
-        Some(View::Tab(HELP_TAB)) => "Help | Developer Sam".to_string(),
+    match screen_at(path) {
+        Some(Screen::Post(reader)) => format!(
+            "{} | {}",
+            posts::POSTS[reader.post].title(),
+            posts::blog_title()
+        ),
+        Some(Screen::Tab(ABOUT_TAB)) => "About | Developer Sam".to_string(),
+        Some(Screen::Tab(TIMELINE_TAB)) => "Timeline | Developer Sam".to_string(),
+        Some(Screen::Tab(HELP_TAB)) => "Help | Developer Sam".to_string(),
         // The blog index, and anything else under it that is no longer a post.
-        Some(_) => posts::blog_title().to_string(),
+        Some(Screen::Tab(_)) => posts::blog_title().to_string(),
         None => SHELL_TITLE.to_string(),
     }
 }
