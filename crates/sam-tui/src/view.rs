@@ -9,7 +9,7 @@ use crate::hit::{HitTarget, UseHit};
 use crate::image::{self, Image};
 use crate::site_path::SitePath;
 use crate::{
-    data, markdown, posts, theme, App, Reader, ABOUT_TAB, BLOG_TAB, HELP_TAB, TAB_COUNT, TAB_NAMES,
+    data, markdown, posts, theme, App, Reader, ABOUT_TAB, BLOG_TAB, HELP_TAB, TAB_NAMES,
     TIMELINE_TAB,
 };
 use crossterm::style::Color;
@@ -288,11 +288,11 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 fn chrome(app: &App, cols: usize, rows: usize, touch: bool) -> Vec<AnyElement<'static>> {
     let title = pane_title(app, cols);
     vec![
-        element_to_any(element! { Header(tab: app.tab, cols: cols, rows: rows, touch: touch) }),
+        element_to_any(element! { Header(tab: app.tab(), cols: cols, rows: rows, touch: touch) }),
         element_to_any(element! {
             Pane(
                 title: title,
-                closable: app.reader.is_some(),
+                closable: app.reader().is_some(),
                 column: column_cols(cols),
             ) {
                 #(content_element(app))
@@ -346,7 +346,7 @@ pub fn touch_element(path: SitePath, cols: u16) -> AnyElement<'static> {
 /// beside the close button, so the row stays exactly one line however narrow the
 /// terminal or long the post.
 fn pane_title(app: &App, cols: usize) -> PaneTitle {
-    let Some(reader) = &app.reader else {
+    let Some(reader) = app.reader() else {
         return PaneTitle::None;
     };
     // What the title has to itself: the column the row is laid out down, less
@@ -793,14 +793,16 @@ fn content_element(app: &App) -> AnyElement<'static> {
 }
 
 fn content_tree(app: &App) -> AnyElement<'static> {
-    match app.tab {
+    // The reader is the one view that is not a tab's own pane: it fills the
+    // Blog tab's, which is why it is asked about before the tabs are.
+    if let Some(reader) = app.reader() {
+        return reader_element(app, reader);
+    }
+    match app.tab() {
         TIMELINE_TAB => timeline_element(app),
         ABOUT_TAB => about_element(app.scroll(ABOUT_TAB), app.cols),
         HELP_TAB => help_element(app.scroll(HELP_TAB), app.cols),
-        BLOG_TAB => match &app.reader {
-            Some(reader) => reader_element(app, reader),
-            None => blog_element(app),
-        },
+        BLOG_TAB => blog_element(app),
         _ => element!(View).into_any(),
     }
 }
@@ -1380,14 +1382,6 @@ fn help_lines(cols: usize) -> Vec<markdown::ContentLine> {
         }
     }
     lines
-}
-
-pub struct AppSnapshot {
-    pub tab: usize,
-    pub scroll: [usize; TAB_COUNT],
-    pub selected: [usize; TAB_COUNT],
-    pub reader: Option<Reader>,
-    pub visited_count: usize,
 }
 
 fn terminal_event_to_crossterm(event: &TerminalEvent) -> Option<crossterm::event::Event> {
