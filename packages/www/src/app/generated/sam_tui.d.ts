@@ -8,9 +8,10 @@ export function drain(): string;
 
 /**
  * Where the current frame drew its artwork, one row per image, as
- * `"x y cols rows top right bottom left url"` in canvas cells. The app owns
- * the alternate screen, so cell (0, 0) is the top left of the viewport and the
- * host can place an `<img>` straight onto it.
+ * `"x y cols rows top right bottom left url"` in canvas cells. Cell (0, 0) is
+ * the top left of the canvas: the viewport, for the app that owns the
+ * alternate screen, and the first row of the page for the touch build, which
+ * the host offsets by however far it has scrolled.
  *
  * The four sides are what the pane's clipping took off: a card scrolled half
  * off the bottom paints only some of its artwork, and the overlay has to crop
@@ -35,14 +36,22 @@ export function navigate(path: string): void;
 export function openLink(url: string): void;
 
 /**
- * Takes the next thing only the browser can do, as
- * `open <url>` or `route push|replace <path>\t<title>`.
+ * Takes the next thing only the browser can do, as `open <url>`,
+ * `navigate <path>`, or `route push|replace <path>\t<title>`.
  */
 export function pollEvent(): string | undefined;
 
 export function resize(cols: number, rows: number): void;
 
 export function start(cols: number, rows: number, path: string, touch: boolean): void;
+
+/**
+ * A tap on the touch page, in the page's own cells: column and row counted
+ * from the top left of what the app drew, not of the viewport. The page has
+ * scrolled under the finger without the app being told — that is the point of
+ * it — so the host adds on how far and reports where the finger really landed.
+ */
+export function tap(col: number, row: number): void;
 
 /**
  * Rows one wheel notch scrolls. A host with no wheel — a phone metering a
@@ -63,6 +72,7 @@ export interface InitOutput {
     readonly pollEvent: (a: number) => void;
     readonly resize: (a: number, b: number) => void;
     readonly start: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly tap: (a: number, b: number) => void;
     readonly wheelRows: () => number;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_export: (a: number, b: number, c: number) => void;

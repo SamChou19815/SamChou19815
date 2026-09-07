@@ -2,11 +2,12 @@
 //! host (xterm.js) pushes raw input and drains raw ANSI output — a true
 //! terminal bridge, with no frame protocol and no key mapping.
 //!
-//! A session is in one of two modes. It opens at the `dev-sam-sh` prompt, where
-//! [`LineEditor`] edits the line and [`Shell`] runs the commands; `dev-sam`
-//! hands the same byte stream to the full-screen iocraft app, and quitting it
-//! hands it back. Both write into the same buffer, so [`sam_drain`] never has
-//! to know which is up.
+//! A session is in one of three modes. It opens at the `dev-sam-sh` prompt,
+//! where [`LineEditor`] edits the line and [`Shell`] runs the commands;
+//! `dev-sam` hands the same byte stream to the full-screen iocraft app, and
+//! quitting it hands it back. `dev-sam --touch` draws the same views as a page
+//! instead — see [`Mode::Page`]. All three write into the same buffer, so
+//! [`sam_drain`] never has to know which is up.
 //!
 //! wasm-bindgen generates the JS glue and the `.d.ts` for these; the names
 //! below are what the host sees:
@@ -18,13 +19,17 @@
 //! - `drain()` — take the pending ANSI output;
 //! - `navigate(path)` — show the view a site path names, for the back button;
 //! - `openLink(url)` — activate a link the terminal printed;
+//! - `tap(col, row)` — a tap on the touch page, in the page's own cells;
 //! - `pollEvent()` — the next thing only the browser can do;
 //! - `wheelRows()` — how far one wheel notch scrolls;
 //! - `imageRegions()` — where this frame drew its artwork.
 
-use crate::shell::{LineEditor, Shell};
+use crate::shell::{Launch, LineEditor, Shell};
+use crate::site_path::SitePath;
 use crate::view;
+use crossterm::cursor::{Hide, MoveTo};
 use crossterm::event::Event;
+use crossterm::terminal::{Clear, ClearType};
 use iocraft::prelude::*;
 use std::cell::RefCell;
 use std::future::Future;
@@ -100,16 +105,26 @@ impl Engine {
 enum Mode {
     Shell,
     App(Engine),
+    /// The touch build, showing the view at this path. There is no engine and
+    /// no frame loop: the view is drawn once, whole, into the terminal the host
+    /// already has, and the host scrolls it from there. Reaching another view
+    /// is a navigation the browser performs ([`crate::HostEvent::Navigate`]),
+    /// so the only thing that ever redraws a page is a change of width.
+    Page(SitePath),
 }
 
 struct Session {
     mode: Mode,
     shell: Shell,
     editor: LineEditor,
-    /// Where both modes write. Taken whole by [`sam_drain`].
+    /// Where every mode writes. Taken whole by [`sam_drain`].
     output: Arc<Mutex<Vec<u8>>>,
     cols: u16,
     rows: u16,
+    /// Whether `dev-sam` was asked for the touch build. The host's device
+    /// settles it when the session opens, and `--touch` at the prompt asks for
+    /// it by hand.
+    touch: bool,
 }
 
 impl Session {
@@ -121,6 +136,7 @@ impl Session {
             output: Arc::new(Mutex::new(Vec::new())),
             cols,
             rows,
+            touch: false,
         }
     }
 
@@ -131,10 +147,63 @@ impl Session {
             .extend_from_slice(text.as_bytes());
     }
 
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        self.output.lock().unwrap().extend_from_slice(bytes);
+    }
+
+    /// Runs `dev-sam`, in whichever build was asked for.
+    fn launch(&mut self) {
+        if self.touch {
+            self.open_page();
+        } else {
+            self.launch_app();
+        }
+    }
+
+    /// Opens the touch build at whatever view the host last asked for, or at
+    /// the app's own first tab when it asked for nothing — the view the
+    /// full-screen app opens on too.
+    fn open_page(&mut self) {
+        let path = crate::take_pending_route()
+            .unwrap_or_else(|| SitePath::new(crate::TAB_ROUTES[crate::ABOUT_TAB]));
+        self.mode = Mode::Page(path);
+        self.paint_page();
+    }
+
+    /// Draws the page into the terminal the host already has, from the top.
+    ///
+    /// The screen and the scrollback above it are wiped first, so the page
+    /// begins at the first row of the buffer and the host can turn a tap
+    /// anywhere in it into a cell of the canvas by adding on how far it has
+    /// scrolled. Nothing else is taken over: no alternate screen, no mouse
+    /// capture, and every row stays where it was written, which is what lets
+    /// the host scroll the page without the app drawing another frame.
+    fn paint_page(&mut self) {
+        let Mode::Page(path) = &self.mode else {
+            return;
+        };
+        let mut element = view::touch_element(path.clone(), self.cols);
+        let canvas = element.render(Some(usize::from(self.cols)));
+        let mut ansi = format!(
+            "{}{}{}{}",
+            MoveTo(0, 0),
+            Clear(ClearType::All),
+            // The scrollback too: it is the page's own coordinate system.
+            Clear(ClearType::Purge),
+            // A page has no cursor to put anywhere, and one left blinking at
+            // the end of the last line reads as a prompt that is not there.
+            Hide,
+        )
+        .into_bytes();
+        // Infallible: a `Vec` never fails to take bytes.
+        let _ = canvas.write_ansi(&mut ansi);
+        self.write_bytes(&ansi);
+    }
+
     /// Boots the full-screen app, which takes the byte stream over from the
     /// shell. Restarting after a quit leaks a fresh tree rather than reviving
     /// the finished one.
-    fn launch(&mut self) {
+    fn launch_app(&mut self) {
         let element: &'static mut _ = Box::leak(Box::new(view::root_element()));
         let future = element
             .fullscreen()
@@ -187,6 +256,16 @@ impl Session {
                 self.settle();
             }
             Mode::Shell => self.edit(),
+            // A page has no state a key could move, and the host it is drawn
+            // for has no keyboard to press one with. Whatever arrived is read
+            // off and dropped rather than left to pile up behind the page.
+            Mode::Page(_) => {
+                while matches!(crossterm::event::poll(Duration::ZERO), Ok(true)) {
+                    if crossterm::event::read().is_err() {
+                        return;
+                    }
+                }
+            }
         }
     }
 
@@ -204,8 +283,9 @@ impl Session {
             };
             let (ansi, launch) = self.editor.handle_key(key, &mut self.shell);
             self.write(&ansi);
-            if launch {
+            if let Some(Launch { touch }) = launch {
                 // Whatever is still queued belongs to the app, not the shell.
+                self.touch = touch;
                 self.launch();
             }
         }
@@ -225,7 +305,44 @@ impl Session {
         crate::request_route(&path);
         match self.mode {
             Mode::App(_) => self.wake(),
-            Mode::Shell => self.launch(),
+            // The touch build normally never gets here — it moves between views
+            // by asking the browser to load one — but a restored history entry
+            // can still name a view, and drawing it is the whole answer.
+            Mode::Page(_) | Mode::Shell => self.launch(),
+        }
+    }
+
+    /// Activates a link the terminal printed. The touch build reaches another
+    /// view by loading it, whether the finger landed on a tab or on a bare URL
+    /// the host's link addon spotted, so this is the same errand a tap makes.
+    fn follow_link(&mut self, url: &str) {
+        if matches!(self.mode, Mode::Page(_)) {
+            if let Some(event) = crate::errand_for(url) {
+                crate::push_host_event(event);
+            }
+            return;
+        }
+        match crate::link_target(url) {
+            crate::LinkTarget::View(path) => self.go_to(path.as_str()),
+            crate::LinkTarget::External(url) => {
+                crate::push_host_event(crate::HostEvent::Open(url));
+            }
+            crate::LinkTarget::Ignore => {}
+        }
+    }
+
+    /// What a tap on the page means, in the page's own cells. Only the touch
+    /// build takes taps: everywhere else a pointer is a mouse, and the host
+    /// reports one as the bytes a terminal expects.
+    fn tap(&self, col: u16, row: u16) {
+        let Mode::Page(path) = &self.mode else {
+            return;
+        };
+        // The regions were recorded by the paint the visitor is looking at;
+        // this rebuilds only the state needed to say what the one under the
+        // finger leads to.
+        if let Some(event) = crate::App::page(path, self.cols).tap(col, row) {
+            crate::push_host_event(event);
         }
     }
 
@@ -246,6 +363,9 @@ pub fn sam_start(cols: u16, rows: u16, path: &str, touch: bool) {
     SESSION.with(|cell| {
         let session = &mut *cell.borrow_mut();
         let session = session.insert(Session::new(cols, rows));
+        // A host with no keyboard gets the touch build, whether it reaches it
+        // through the pre-typed `dev-sam --touch` or straight from a URL.
+        session.touch = touch;
         crossterm::set_size(cols, rows);
         crate::reset_route_sync();
         // A visitor who arrived at a view asked for it by name: open it, with
@@ -270,9 +390,21 @@ pub fn sam_input(bytes: &[u8]) {
 #[wasm_bindgen(js_name = resize)]
 pub fn sam_resize(cols: u16, rows: u16) {
     with_session(|session| {
+        let narrower_or_wider = session.cols != cols;
         session.cols = cols;
         session.rows = rows;
         crossterm::set_size(cols, rows);
+        if matches!(session.mode, Mode::Page(_)) {
+            // A page is exactly as tall as what it holds, so only its width can
+            // change a line of it. Redrawing for every height the browser
+            // reports — and a phone reports a new one each time its address bar
+            // slides away under a scrolling finger — would put the page back at
+            // the top mid-scroll, and cost the render the page exists to avoid.
+            if narrower_or_wider {
+                session.paint_page();
+            }
+            return;
+        }
         crossterm::push_event(Event::Resize(cols, rows));
         session.drive();
     });
@@ -298,15 +430,20 @@ pub fn sam_navigate(path: &str) {
 /// here; everything else comes back as [`crate::HostEvent::Open`].
 #[wasm_bindgen(js_name = openLink)]
 pub fn sam_open_link(url: &str) {
-    with_session(|session| match crate::link_target(url) {
-        crate::LinkTarget::View(path) => session.go_to(path.as_str()),
-        crate::LinkTarget::External(url) => crate::push_host_event(crate::HostEvent::Open(url)),
-        crate::LinkTarget::Ignore => {}
-    });
+    with_session(|session| session.follow_link(url));
 }
 
-/// Takes the next thing only the browser can do, as
-/// `open <url>` or `route push|replace <path>\t<title>`.
+/// A tap on the touch page, in the page's own cells: column and row counted
+/// from the top left of what the app drew, not of the viewport. The page has
+/// scrolled under the finger without the app being told — that is the point of
+/// it — so the host adds on how far and reports where the finger really landed.
+#[wasm_bindgen(js_name = tap)]
+pub fn sam_tap(col: u16, row: u16) {
+    with_session(|session| session.tap(col, row));
+}
+
+/// Takes the next thing only the browser can do, as `open <url>`,
+/// `navigate <path>`, or `route push|replace <path>\t<title>`.
 #[wasm_bindgen(js_name = pollEvent)]
 pub fn sam_poll_event() -> Option<String> {
     crate::poll_host_event().map(|event| event.encode())
@@ -321,9 +458,10 @@ pub fn sam_wheel_rows() -> u16 {
 }
 
 /// Where the current frame drew its artwork, one row per image, as
-/// `"x y cols rows top right bottom left url"` in canvas cells. The app owns
-/// the alternate screen, so cell (0, 0) is the top left of the viewport and the
-/// host can place an `<img>` straight onto it.
+/// `"x y cols rows top right bottom left url"` in canvas cells. Cell (0, 0) is
+/// the top left of the canvas: the viewport, for the app that owns the
+/// alternate screen, and the first row of the page for the touch build, which
+/// the host offsets by however far it has scrolled.
 ///
 /// The four sides are what the pane's clipping took off: a card scrolled half
 /// off the bottom paints only some of its artwork, and the overlay has to crop

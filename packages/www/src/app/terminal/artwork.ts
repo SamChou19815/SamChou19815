@@ -12,8 +12,13 @@
 import type { CellMetrics } from "./screen";
 
 export type Artwork = {
-  /** Places this frame's artwork and retires whatever it did not place. */
-  sync(regions: string[], metrics: CellMetrics | null): void;
+  /**
+   * Places this frame's artwork and retires whatever it did not place.
+   * `scrollRows` is how far the terminal has scrolled past the top of the
+   * canvas — zero for an app that owns the screen, and what the touch build's
+   * page has moved under the finger since it was drawn.
+   */
+  sync(regions: string[], metrics: CellMetrics | null, scrollRows: number): void;
   dispose(): void;
 };
 
@@ -46,12 +51,29 @@ export function mountArtwork(container: HTMLDivElement): Artwork {
       element = document.createElement("img");
       element.src = url;
       element.alt = "";
-      Object.assign(element.style, { position: "absolute", objectFit: "cover" });
+      // The touch build reports every picture on the page at once, most of them
+      // rows below the fold, so the ones that are not on screen wait until they
+      // are scrolled to. An app that owns the screen only ever reports what is
+      // already in view, where this changes nothing.
+      element.loading = "lazy";
+      // Anchored at the layer's origin and moved from there by a transform, so
+      // that scrolling a page of artwork writes a property the browser can
+      // answer without laying the document out again. `left`/`top` cannot be:
+      // every step would dirty the geometry of every picture on the page.
+      Object.assign(element.style, {
+        position: "absolute",
+        left: "0",
+        top: "0",
+        objectFit: "cover",
+      });
       elements.push(element);
       layer.appendChild(element);
     }
     return element;
   };
+
+  /** What was last written to each element, so an unchanged frame writes none. */
+  const placed = new WeakMap<HTMLImageElement, string>();
 
   /** Drops every pooled element this frame did not claim. */
   const retire = (used: Map<string, number>): void => {
@@ -66,7 +88,7 @@ export function mountArtwork(container: HTMLDivElement): Artwork {
   };
 
   return {
-    sync(regions, metrics) {
+    sync(regions, metrics, scrollRows) {
       if (regions.length === 0 && pool.size === 0) {
         return;
       }
@@ -75,8 +97,10 @@ export function mountArtwork(container: HTMLDivElement): Artwork {
       }
       const used = new Map<string, number>();
       for (const region of regions) {
-        // "x y cols rows top right bottom left url" in canvas cells; the app
-        // owns the alternate screen, so cell (0, 0) is the viewport's top left.
+        // "x y cols rows top right bottom left url" in canvas cells. Cell
+        // (0, 0) is the canvas's top left: the viewport's, for the app that
+        // owns the alternate screen, and the first row of the touch build's
+        // page, which the visitor has scrolled `scrollRows` past.
         const [x, y, cols, rows, top, right, bottom, left, ...rest] = region.split(" ");
         const url = rest.join(" ");
         if (url === "") {
@@ -95,15 +119,25 @@ export function mountArtwork(container: HTMLDivElement): Artwork {
           Number(bottom) * metrics.height,
           Number(left) * metrics.width,
         ];
-        Object.assign(claim(url, index).style, {
-          left: `${metrics.offsetLeft + Number(x) * metrics.width}px`,
-          top: `${metrics.offsetTop + Number(y) * metrics.height}px`,
+        const style = {
+          transform: `translate(${metrics.offsetLeft + Number(x) * metrics.width}px, ${
+            metrics.offsetTop + (Number(y) - scrollRows) * metrics.height
+          }px)`,
           width: `${Number(cols) * metrics.width}px`,
           height: `${Number(rows) * metrics.height}px`,
           clipPath: inset.every((side) => side === 0)
             ? "none"
             : `inset(${inset.map((side) => `${side}px`).join(" ")})`,
-        });
+        };
+        const element = claim(url, index);
+        // Only the transform changes while a page is scrolled; writing the size
+        // and the crop again every row would be three more style invalidations
+        // per picture for nothing.
+        const key = `${style.transform}|${style.width}|${style.height}|${style.clipPath}`;
+        if (placed.get(element) !== key) {
+          placed.set(element, key);
+          Object.assign(element.style, style);
+        }
       }
       // A card that scrolled off, a duplicate that is no longer doubled up, or
       // the whole set at once when the app exits and reports no artwork at all.

@@ -212,6 +212,11 @@ pub enum Action {
 pub enum HostEvent {
     /// Open a URL that is not a view of this app.
     Open(String),
+    /// Load one of this app's own views, as the browser loads a page. Only the
+    /// touch build asks for this: it draws one view, whole, and has nowhere to
+    /// put another — so moving between them is a navigation rather than a
+    /// [`HostEvent::Route`] over a view that changed underneath.
+    Navigate(site_path::SitePath),
     /// Put the URL bar and the document title on a view.
     Route {
         replace: bool,
@@ -221,12 +226,14 @@ pub enum HostEvent {
 }
 
 impl HostEvent {
-    /// `open <url>` or `route push|replace <path>\t<title>`. Space-separated
-    /// with a tab before the title, since a title may contain spaces and a
-    /// path never contains a tab.
+    /// `open <url>`, `navigate <path>`, or
+    /// `route push|replace <path>\t<title>`. Space-separated with a tab before
+    /// the title, since a title may contain spaces and a path never contains a
+    /// tab.
     pub fn encode(&self) -> String {
         match self {
             HostEvent::Open(url) => format!("open {url}"),
+            HostEvent::Navigate(path) => format!("navigate {path}"),
             HostEvent::Route {
                 replace,
                 path,
@@ -334,6 +341,11 @@ pub(crate) fn take_pending_quit() -> bool {
     PENDING_QUIT.with(|pending| pending.replace(false))
 }
 
+/// What [`App::selected`] reads while nothing is: an index no list can reach,
+/// so every `index == selected` test a card makes comes out false. Only the
+/// touch build ever sees it — a page drawn once has nothing to move.
+const NO_SELECTION: usize = usize::MAX;
+
 /// Clone is used to snapshot state for pure rendering.
 #[derive(Clone)]
 pub struct App {
@@ -378,6 +390,71 @@ impl App {
             app.go_to(&route);
         }
         app
+    }
+
+    /// The app as the touch build shows it: the view at `path`, and no state
+    /// beyond it. Nothing is selected — a page drawn once has no cursor to
+    /// move — and nothing is scrolled, because the host scrolls the terminal
+    /// rather than asking the app for the next screenful.
+    pub fn page(path: &site_path::SitePath, cols: u16) -> Self {
+        let mut app = App {
+            cols: cols.max(1),
+            // A page has no viewport: it is exactly as tall as what it holds.
+            // The rows are what the scroll math clamps against, and a page has
+            // no scroll to clamp.
+            rows: 1,
+            tab: ABOUT_TAB,
+            visited: 1 << ABOUT_TAB,
+            scroll: [0; TAB_COUNT],
+            selected: [NO_SELECTION; TAB_COUNT],
+            reader: None,
+            quit: false,
+            actions: Vec::new(),
+        };
+        app.go_to(path);
+        app.scroll = [0; TAB_COUNT];
+        app.selected = [NO_SELECTION; TAB_COUNT];
+        app
+    }
+
+    /// The browser errand a tap on cell `(col, row)` of the page becomes, if it
+    /// landed on anything. Everything the full-screen app would have handled
+    /// itself — a tab, a card, the reader's way out — is a navigation here: the
+    /// page holds one view, so reaching another one means loading it.
+    pub fn tap(&self, col: u16, row: u16) -> Option<HostEvent> {
+        match hit::hit_test(col, row)? {
+            hit::HitTarget::Tab(index) => Some(HostEvent::Navigate(site_path::SitePath::new(
+                TAB_ROUTES[index],
+            ))),
+            // Back to the index the post was opened from, which is where Esc
+            // and `q` leave a reader that has a screen to go back to.
+            hit::HitTarget::Close => {
+                Some(HostEvent::Navigate(site_path::SitePath::new(BLOG_ROUTE)))
+            }
+            hit::HitTarget::Link(url) => errand_for(&url),
+            hit::HitTarget::Item(index) => self.item_errand(index),
+        }
+    }
+
+    /// Where tapping a whole card leads: the post it names, or — on the
+    /// timeline, whose cards are their own detail view — the first of its
+    /// links, exactly as Enter opens them.
+    fn item_errand(&self, index: usize) -> Option<HostEvent> {
+        match self.tab {
+            BLOG_TAB => {
+                let post = posts::POSTS.get(index)?;
+                if post.is_external() {
+                    errand_for(&post.url())
+                } else {
+                    Some(HostEvent::Navigate(post.path()))
+                }
+            }
+            TIMELINE_TAB => {
+                let event = data::TIMELINE.get(index)?;
+                errand_for(&event.links.first()?.url.decrypt())
+            }
+            _ => None,
+        }
     }
 
     /// The view the app is on, as a site path — what the URL bar should read.
@@ -901,6 +978,17 @@ pub enum LinkTarget {
     /// and a `javascript:` URL would run in that document — so anything but
     /// http(s) is refused at the source rather than at the host's `window.open`.
     Ignore,
+}
+
+/// [`link_target`] as the touch build acts on it: a view of this app is loaded
+/// as a page, since that build has nowhere to put a second one, and anything
+/// else is still the browser's to open.
+pub(crate) fn errand_for(url: &str) -> Option<HostEvent> {
+    match link_target(url) {
+        LinkTarget::View(path) => Some(HostEvent::Navigate(path)),
+        LinkTarget::External(url) => Some(HostEvent::Open(url)),
+        LinkTarget::Ignore => None,
+    }
 }
 
 /// Where the URL a link carries should lead.
