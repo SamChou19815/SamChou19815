@@ -69,7 +69,7 @@ export function openScreen(container: HTMLDivElement, options: ScreenOptions): S
     // screen; everywhere else this is only the shell's history.
     scrollback: options.touchOnly ? 20000 : 1000,
     cursorBlink: true,
-    fontSize: 14,
+    fontSize: 13,
     convertEol: false,
     drawBoldTextInBrightColors: false,
     fontFamily:
