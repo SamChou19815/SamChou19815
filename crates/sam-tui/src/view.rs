@@ -275,7 +275,7 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             height: terminal_height,
             background_color: theme::SURFACE,
         ) {
-            #(chrome(&app, cols, terminal_height as usize))
+            #(chrome(&app, cols, terminal_height as usize, false))
         }
     }
 }
@@ -283,10 +283,12 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
 /// The header bar and the pane under it: everything the app draws for one
 /// state. What bounds them is the caller's business — a screen, for the app
 /// that owns one, and nothing at all for the page [`TouchRoot`] hands over.
-fn chrome(app: &App, cols: usize, rows: usize) -> Vec<AnyElement<'static>> {
+/// `touch` is which of the two is drawing: the size answers everything else the
+/// header decides, but not what a host with no keyboard has any use for.
+fn chrome(app: &App, cols: usize, rows: usize, touch: bool) -> Vec<AnyElement<'static>> {
     let title = pane_title(app, cols);
     vec![
-        element_to_any(element! { Header(tab: app.tab, cols: cols, rows: rows) }),
+        element_to_any(element! { Header(tab: app.tab, cols: cols, rows: rows, touch: touch) }),
         element_to_any(element! {
             Pane(
                 title: title,
@@ -327,7 +329,7 @@ fn TouchRoot(props: &TouchRootProps, mut hooks: Hooks) -> impl Into<AnyElement<'
             // wordmark or to run short of, and the browser reports a new height
             // every time its address bar slides away under a scrolling finger —
             // which must not be able to change a line of what is drawn.
-            #(chrome(&app, props.cols as usize, PHONE_ROWS))
+            #(chrome(&app, props.cols as usize, PHONE_ROWS, true))
         }
     }
 }
@@ -507,6 +509,8 @@ struct HeaderProps {
     tab: usize,
     cols: usize,
     rows: usize,
+    /// Whether the touch build is drawing this header — see [`chrome`].
+    touch: bool,
 }
 
 /// The wordmark's letters, three cells wide and three rows tall, drawn out of
@@ -551,11 +555,10 @@ fn banner_rows(text: &str) -> Option<[String; 3]> {
 /// rather than the device: the full-screen app is never told which it is on —
 /// the host tells the shell (`ffi::sam_start`), not the app — and a phone held
 /// upright is far narrower than this, while on its side it is wide enough but
-/// only around twenty rows tall. What it costs a visitor there is the wordmark
-/// drawn big and the rows of air the app is inset by ([`header_margin_rows`]) —
-/// a screenful of rows is worth more to a thumb than either. [`TouchRoot`],
-/// which has no screenful to spend, holds the rows here so that only the width
-/// answers.
+/// only around twenty rows tall. What it costs a visitor there is the site's
+/// name over the tabs — a screenful of rows is worth more to a thumb than a
+/// wordmark. [`TouchRoot`], which has no screenful to spend, holds the rows here
+/// so that only the width answers.
 const PHONE_COLS: usize = 60;
 const PHONE_ROWS: usize = 24;
 
@@ -593,9 +596,6 @@ struct HeaderPlan {
     inline_tabs: bool,
     /// The air between the name and the tabs when they do share a row.
     gap: usize,
-    /// The rows of air the app keeps above the header — see
-    /// [`header_margin_rows`].
-    margin: usize,
 }
 
 impl HeaderPlan {
@@ -609,38 +609,49 @@ impl HeaderPlan {
         }
     }
 
-    /// Rows the whole header takes: the margin above the title block, the block
-    /// itself, the tabs' own row if they did not fit beside it, and the rule
-    /// that closes the bar off from the body. [`header_rows`] is what the
-    /// scroll math reads this through, so the two can never disagree about
-    /// where the body starts.
+    /// Rows the whole header takes: the air above the title block, the block
+    /// itself, the tabs' own row if they did not fit beside it, the air under
+    /// them, and the rule that closes the bar off from the body. [`header_rows`]
+    /// is what the scroll math reads this through, so the two can never
+    /// disagree about where the body starts.
     fn rows(&self) -> usize {
-        self.margin + self.title_rows() + usize::from(!self.inline_tabs) + RULE_ROWS
+        HEADER_MARGIN_ROWS + self.title_rows() + usize::from(!self.inline_tabs) + RULE_ROWS
     }
 }
 
 /// The rule under the header, which is one row.
 const RULE_ROWS: usize = 1;
 
-/// The row of air the app keeps above the wordmark. A desktop window can spare
-/// it, and it is what sets the header off from the edge of the glass; a phone
-/// cannot — a screenful there is barely thirty rows. Nothing matches it at the
-/// foot of the screen: the body scrolls, so it runs to the last row the way a
-/// page runs to the bottom of a window, and a row of air under a card cut off
+/// The row of air the app keeps above the header, which is what sets the bar
+/// off from the edge of the glass. A phone used to give it up — a screenful
+/// there is barely thirty rows — but it no longer draws the site's name at all
+/// ([`header_plan`]), so the row the wordmark cost is spent on air instead: a
+/// bar of tabs run flush to the top of the screen reads as the edge of the
+/// glass having cut it off rather than as a bar. Nothing matches it at the foot
+/// of the screen: the body scrolls, so it runs to the last row the way a page
+/// runs to the bottom of a window, and a row of air under a card cut off
 /// mid-way would read as the pane ending there.
-fn header_margin_rows(cols: usize, rows: usize) -> usize {
-    usize::from(!touch_sized(cols, rows))
-}
+const HEADER_MARGIN_ROWS: usize = 1;
 
 /// Picks the richest header that fits, the way the site's nav collapses on
 /// narrow viewports: the wordmark drawn big, then set as plain text, then
 /// dropped; the tabs beside it, then under it; every name, then only the tab
 /// in front. Always fits, so no row of it ever wraps.
-fn header_plan(tab: usize, cols: usize, rows: usize) -> HeaderPlan {
+fn header_plan(tab: usize, cols: usize, rows: usize, touch: bool) -> HeaderPlan {
+    let phone = touch_sized(cols, rows);
     // The header keeps to the app's column, inset like everything in it, so
     // that is what it has to fit in.
     let room = (column_cols(cols) as usize).saturating_sub(2 * crate::CARD_PAD_COLS);
+    // Help is a table of key bindings, and the touch build's host has no keys
+    // to press: it leaves the tab out of the bar and gives the room to the ones
+    // that lead somewhere. This is the one thing the header takes from the
+    // build rather than from the size — a phone turned on its side is as wide
+    // as a laptop and still has no keyboard, and a narrow window on a desktop
+    // has one. It is still named while it is the tab in front, so a visitor who
+    // arrives at `/help` is never left reading a bar that marks none of its
+    // tabs.
     let full: Vec<(usize, &str)> = (0..TAB_NAMES.len())
+        .filter(|index| !touch || *index != HELP_TAB || tab == HELP_TAB)
         .map(|index| (index, TAB_NAMES[index]))
         .collect();
     // When the names do not fit, only the tab in front is named: the arrow
@@ -655,14 +666,20 @@ fn header_plan(tab: usize, cols: usize, rows: usize) -> HeaderPlan {
     };
     let labels = if width(&full) <= room { full } else { compact };
 
+    // A phone is not named at all: the wordmark drawn big is rows it has not
+    // got, and set as plain text it is a whole row spent repeating what the
+    // browser's own tab already says ([`crate::title_for`]) — the tabs alone
+    // tell the visitor where they are. Everything wider takes the wordmark if
+    // it fits, the plain name if only that does, and neither on a terminal too
+    // narrow to spare the room.
     // The wordmark keeps its own rows, so all it has to fit is the width.
-    let banner = (!touch_sized(cols, rows))
+    let banner = (!phone)
         .then(|| banner_rows(TITLE.trim()))
         .flatten()
         .filter(|banner| banner[0].chars().count() <= room);
     let title = match banner {
         Some(banner) => HeaderTitle::Banner(Box::new(banner)),
-        None if TITLE.trim().chars().count() <= room => HeaderTitle::Plain(TITLE.trim()),
+        None if !phone && TITLE.trim().chars().count() <= room => HeaderTitle::Plain(TITLE.trim()),
         None => HeaderTitle::None,
     };
     let title_width = match &title {
@@ -689,7 +706,6 @@ fn header_plan(tab: usize, cols: usize, rows: usize) -> HeaderPlan {
         labels,
         inline_tabs,
         gap,
-        margin: header_margin_rows(cols, rows),
     }
 }
 
@@ -698,13 +714,15 @@ fn header_plan(tab: usize, cols: usize, rows: usize) -> HeaderPlan {
 /// the header names when it is too narrow to name them all, and a shorter name
 /// can be what lets the tabs share the title's row.
 pub fn header_rows(tab: usize, cols: u16, rows: u16) -> usize {
-    header_plan(tab, cols as usize, rows as usize).rows()
+    // Only the app that owns a screen has a body to scroll, and that is never
+    // the touch build: its page is drawn once, whole, and scrolled by the host.
+    header_plan(tab, cols as usize, rows as usize, false).rows()
 }
 
 #[component]
 fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
     let tab = props.tab;
-    let plan = header_plan(tab, props.cols, props.rows);
+    let plan = header_plan(tab, props.cols, props.rows, props.touch);
     let height = plan.rows() as u16;
     let lines: Vec<String> = match &plan.title {
         HeaderTitle::Banner(banner) => banner.to_vec(),
@@ -727,7 +745,6 @@ fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
     };
     let inline = plan.inline_tabs;
     let gap = plan.gap as u16;
-    let margin = plan.margin > 0;
     let labels = plan.labels;
     element! {
         View(
@@ -738,8 +755,8 @@ fn Header(props: &HeaderProps) -> impl Into<AnyElement<'static>> {
             height: height,
             flex_wrap: FlexWrap::NoWrap,
         ) {
-            // The margin above the wordmark, on a screen that can spare it.
-            #(margin.then(|| element! { View(height: 1) }))
+            // The air above the bar's first row, whatever that row carries.
+            View(height: HEADER_MARGIN_ROWS as u16)
             Column(width: column_cols(props.cols)) {
                 View(flex_direction: FlexDirection::Row, width: 100pct, align_items: AlignItems::Center) {
                     View(flex_direction: FlexDirection::Column) {
