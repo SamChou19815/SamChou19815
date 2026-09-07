@@ -9,8 +9,8 @@ use crate::hit::{HitTarget, UseHit};
 use crate::image::{self, Image};
 use crate::site_path::SitePath;
 use crate::{
-    data, markdown, posts, theme, App, Modal, Reader, ABOUT_TAB, BLOG_TAB, HELP_TAB, TAB_COUNT,
-    TAB_NAMES, TIMELINE_TAB,
+    data, markdown, posts, theme, App, Reader, ABOUT_TAB, BLOG_TAB, HELP_TAB, TAB_COUNT, TAB_NAMES,
+    TIMELINE_TAB,
 };
 use crossterm::style::Color;
 use iocraft::components::MixedTextContent;
@@ -99,27 +99,6 @@ pub fn tab_line_count(tab: usize, cols: u16) -> usize {
         HELP_TAB => help_lines(cols as usize).len(),
         _ => 0,
     }
-}
-
-/// Total number of lines a modal's scrollable body can show.
-pub fn modal_line_count(modal: &Modal) -> usize {
-    modal_lines(modal).len()
-}
-
-/// Rows of text the open dialog shows at once: its body, less the hero
-/// artwork and the blank row under it.
-pub fn modal_viewport(modal: &Modal, cols: u16, rows: u16) -> usize {
-    let hero = hero_bounds(cols as usize, rows)
-        .zip(modal_image(modal))
-        .map_or(0, |(bounds, url)| {
-            match image::rows(Some(&SitePath::new(url.decrypt())), bounds) {
-                0 => 0,
-                drawn => drawn + 1,
-            }
-        });
-    usize::from(dialog_body_rows(rows))
-        .saturating_sub(hero)
-        .max(1)
 }
 
 // --- Leaf components that register hit regions --------------------------------
@@ -283,14 +262,8 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let app = (*app.read()).clone();
 
     // Every image and every click region paints itself into an empty registry,
-    // so what the host reads and what a click hits is exactly this frame — and
-    // an open dialog raises the top layer, hiding the card artwork it covers.
-    let dialog_open = app.modal.is_some();
-    hooks.use_frame(if dialog_open {
-        image::LAYER_DIALOG
-    } else {
-        image::LAYER_PANE
-    });
+    // so what the host reads and what a click hits is exactly this frame.
+    hooks.use_frame(image::LAYER_PANE);
     // The URL bar is one more thing the host mirrors from the frame it is
     // about to see, so it is published here with the rest of them.
     crate::publish_route(app.route());
@@ -311,7 +284,6 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             ) {
                 #(content_element(&app))
             }
-            #(app.modal.map(|modal| modal_element(&modal, cols, terminal_height)))
         }
     }
 }
@@ -951,8 +923,8 @@ fn card_tree(
                 selected,
                 element_to_any(element! {
                     View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::Wrap) {
-                        #(event.links.iter().map(|link| element! {
-                            Button(label: format!("{} ", link.name.decrypt().to_uppercase()), url: link.url.decrypt())
+                        #(event.links.iter().enumerate().map(|(index, link)| element! {
+                            Button(label: crate::link_button_label(index, link), url: link.url.decrypt())
                         }))
                     }
                 }),
@@ -1294,48 +1266,7 @@ fn listing(rows: Vec<AnyElement<'static>>) -> AnyElement<'static> {
     })
 }
 
-// --- Modal --------------------------------------------------------------------
-
-fn modal_lines(modal: &Modal) -> Vec<markdown::ContentLine> {
-    let mut lines = Vec::new();
-    let (fields, links): (Vec<String>, &[data::Link]) = {
-        let Modal::Timeline { event, .. } = modal;
-        let event = &data::TIMELINE[*event];
-        (
-            vec![
-                format!("time: {}", event.time),
-                format!("category: {}", event.category.label()),
-            ],
-            event.links,
-        )
-    };
-    let had_fields = !fields.is_empty();
-    for field in fields {
-        lines.push(markdown::ContentLine {
-            contents: vec![colored(field, theme::TEXT)],
-            link: None,
-        });
-    }
-    // Only separate the fields from what follows when there were any; a short
-    // screen cannot spare a blank row that divides nothing.
-    if had_fields {
-        lines.push(markdown::ContentLine {
-            contents: Vec::new(),
-            link: None,
-        });
-    }
-    lines.push(markdown::ContentLine {
-        contents: vec![bold_colored("links (press 1-9)", theme::ACCENT_TEXT)],
-        link: None,
-    });
-    for link in links {
-        lines.push(markdown::bullet_link(
-            &link.name.decrypt(),
-            &link.url.decrypt(),
-        ));
-    }
-    lines
-}
+// --- Help ----------------------------------------------------------------------
 
 /// The Help tab: every key the app listens for, one line each. The key column
 /// only earns its keep when the description still fits beside it; below that,
@@ -1348,12 +1279,14 @@ fn help_lines(cols: usize) -> Vec<markdown::ContentLine> {
         let stacked = cols < 56;
         for (keys, description) in [
             ("←/→ or h/l", "switch between tabs"),
-            ("1 … 4", "jump to a tab"),
+            (
+                "1 … 9",
+                "open a link of the selected card (timeline) · jump to a tab elsewhere",
+            ),
             ("↑/↓ or j/k", "move selection / scroll"),
-            ("Enter", "read a post / open details"),
-            ("1 … 9", "open a button of the open dialog"),
+            ("Enter", "read a post / open a card's link"),
             ("g / G", "jump to top / bottom"),
-            ("Esc", "close the reader or a dialog"),
+            ("Esc", "close the reader"),
             ("?", "open this tab"),
             ("q / Ctrl+C", "quit"),
             ("mouse", "click tabs, cards and buttons · wheel scrolls"),
@@ -1381,166 +1314,11 @@ fn help_lines(cols: usize) -> Vec<markdown::ContentLine> {
     lines
 }
 
-/// Rows inside the dialog's scrolling body: the dialog is 80% of the screen,
-/// less its border, title row and padding.
-fn dialog_body_rows(rows: u16) -> u16 {
-    (u32::from(rows) * 4 / 5).saturating_sub(5) as u16
-}
-
-/// The hero's cell box, shrunk to whatever the dialog can spare in both
-/// directions. Six rows are held back for the fields and links so the artwork
-/// can never crowd them out. `None` when what is left is too short to read as
-/// a picture.
-fn hero_bounds(cols: usize, rows: u16) -> Option<(u16, u16)> {
-    let max_rows = dialog_body_rows(rows).saturating_sub(6).min(image::HERO.1);
-    // Below six rows the artwork reads as a smear rather than a picture, so a
-    // short dialog spends its rows on the fields instead.
-    (max_rows >= 6).then(|| image::fit_width(dialog_content_width(cols), (image::HERO.0, max_rows)))
-}
-
-/// The cells inside the dialog's border and its body's padding — all a hero
-/// has to fill, the dialog being a fraction of a screen that is itself
-/// narrower than [`image::HERO`] on a phone.
-fn dialog_content_width(cols: usize) -> usize {
-    let percent = if cols < NARROW_DIALOG_COLS { 96 } else { 80 };
-    (cols * percent / 100).saturating_sub(4)
-}
-
-/// Narrower than this and the dialog has no room to spare for a margin.
-const NARROW_DIALOG_COLS: usize = 60;
-
-/// The artwork the open dialog leads with, if any.
-fn modal_image(modal: &Modal) -> Option<EncryptedString> {
-    let Modal::Timeline { event, .. } = modal;
-    data::TIMELINE[*event].image
-}
-
-fn modal_element(modal: &Modal, cols: usize, rows: u16) -> AnyElement<'static> {
-    element_to_any(modal_tree(modal, cols, rows))
-}
-
-fn modal_tree(modal: &Modal, cols: usize, rows: u16) -> impl Into<AnyElement<'static>> {
-    let Modal::Timeline { event, scroll } = modal;
-    let title = format!(" {} ", data::TIMELINE[*event].title);
-    let scroll = *scroll;
-    // The hero is fixed above the scrolling body rather than part of it, so
-    // `modal_line_count` keeps counting only text and every line stays
-    // reachable however tall the artwork is.
-    let hero = hero_bounds(cols, rows)
-        .zip(modal_image(modal))
-        .map(|(bounds, url)| {
-            element_to_any(element! {
-                View(width: 100pct, justify_content: JustifyContent::Center, padding_bottom: 1) {
-                    Image(url: SitePath::new(url.decrypt()), bounds: bounds, layer: image::LAYER_DIALOG)
-                }
-            })
-        });
-    let lines = modal_lines(modal);
-    let rows: Vec<AnyElement<'static>> = lines.iter().skip(scroll).map(line_element).collect();
-    element! {
-        ModalOverlay {
-            Dialog(title: title, narrow: cols < NARROW_DIALOG_COLS) {
-                #(hero)
-                #(rows)
-            }
-        }
-    }
-}
-
-#[derive(Props, Default)]
-struct ModalOverlayProps {
-    children: Vec<AnyElement<'static>>,
-}
-
-/// The whole screen, under the open dialog and centering it. It is the last
-/// thing the tree paints, so its region covers every other one — the cards, the
-/// tabs, the reader's close button — and a click anywhere it is still showing
-/// means the one thing it can mean with a dialog up: dismiss it. The dialog
-/// paints inside it and takes back the cells it covers.
-#[component]
-fn ModalOverlay(props: &mut ModalOverlayProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    hooks.use_hit_region(Some(HitTarget::Dismiss));
-    element! {
-        View(
-            position: Position::Absolute,
-            inset: 0,
-            width: 100pct,
-            height: 100pct,
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-        ) {
-            #(props.children.drain(..))
-        }
-    }
-}
-
-#[derive(Props, Default)]
-struct DialogProps {
-    title: String,
-    narrow: bool,
-    children: Vec<AnyElement<'static>>,
-}
-
-/// The dialog's own box. It registers itself as a click region that does
-/// nothing: a click anywhere on the dialog is not a click on the pane it
-/// covers, so it must neither select the card underneath nor — as a click on
-/// the [`ModalOverlay`] around it does — dismiss it. Its own contents paint
-/// after it and answer first, so its links still open.
-#[component]
-fn Dialog(props: &mut DialogProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    hooks.use_hit_region(Some(HitTarget::Dialog));
-    element! {
-        View(
-            width: Percent(if props.narrow { 96.0 } else { 80.0 }),
-            height: 80pct,
-            border_style: BorderStyle::Single,
-            border_color: theme::BORDER_SUBTLE,
-            background_color: theme::SURFACE,
-            flex_direction: FlexDirection::Column,
-            overflow: Overflow::Hidden,
-        ) {
-            View(
-                flex_direction: FlexDirection::Row,
-                width: 100pct,
-                padding_left: 1,
-                padding_right: 1,
-            ) {
-                View(flex_grow: 1.0_f32, overflow: Overflow::Hidden) {
-                    Text(content: props.title.clone(), color: theme::SELECT_FG, weight: Weight::Bold)
-                }
-                CloseButton
-            }
-            DialogBody {
-                #(props.children.drain(..))
-            }
-        }
-    }
-}
-
-#[derive(Props, Default)]
-struct DialogBodyProps {
-    children: Vec<AnyElement<'static>>,
-}
-
-/// The dialog's scrolling body, split out for the same reason [`PaneBody`] is:
-/// its lines run past the bottom edge, out under the dialog — where a click
-/// means "dismiss", not "open the link that is scrolled out of sight".
-#[component]
-fn DialogBody(props: &mut DialogBodyProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    hooks.use_hit_clip();
-    element! {
-        View(flex_direction: FlexDirection::Column, width: 100pct, padding: 1, overflow: Overflow::Hidden) {
-            #(props.children.drain(..))
-        }
-    }
-}
-
 pub struct AppSnapshot {
     pub tab: usize,
     pub scroll: [usize; TAB_COUNT],
     pub selected: [usize; TAB_COUNT],
     pub reader: Option<Reader>,
-    pub modal: Option<Modal>,
     pub visited_count: usize,
 }
 
