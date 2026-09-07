@@ -93,7 +93,9 @@ pub fn rows(path: Option<&crate::site_path::SitePath>, bounds: (u16, u16)) -> us
 
 /// A drawn image's cell rectangle, in canvas coordinates. The app runs in the
 /// alternate screen, so canvas row 0 is viewport row 0 and the host needs no
-/// offset to place an `<img>` over it.
+/// offset to place an `<img>` over it — except in the touch build, where the
+/// canvas is the whole page and row 0 is the row the host has scrolled away
+/// from.
 ///
 /// `visible_*` is the part that survived the pane's clipping. A card scrolled
 /// half off the bottom paints only part of its box, and the overlay has to crop

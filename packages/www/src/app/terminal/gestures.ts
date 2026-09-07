@@ -1,19 +1,21 @@
 /**
- * Touch, translated into the mouse reports a terminal understands.
+ * Touch, told apart into the two things a finger can mean.
  *
- * Neither half of a gesture survives the trip to the backend otherwise.
+ * Neither half of a gesture survives on its own. xterm's viewport is a
+ * synthetic scrollbar over a canvas rather than a scrolling box, so a phone has
+ * nothing to drag; and xterm only reports a click when the browser synthesizes
+ * the mouse events for one, which a phone does late, grudgingly, and not at all
+ * if the finger drifted — which is what made taps need a second go. So the whole
+ * gesture is claimed at touchstart, and both halves are reported from here.
  *
- * Scrolling: a phone has no wheel, and there is nothing for the browser's own
- * scrolling to move either — the app owns the alternate screen, so every row on
- * it comes from the backend, which scrolls only when a wheel tells it to. A drag
- * is metered out as wheel notches, one per `wheelRows` rows — the distance the
- * backend moves for one, which is what keeps the content under the finger.
- *
- * Tapping: xterm only reports a click when the browser synthesizes the mouse
- * events for one, and a phone does that late, grudgingly, and not at all if the
- * finger drifted — which is what made taps need a second go. So the tap is
- * reported straight from the gesture instead, and the whole gesture is claimed
- * at touchstart so no synthesized click doubles it.
+ * Dragging is metered into steps of [`GestureOptions.drag`]`.rows` and handed
+ * over a batch at a time, which is what keeps the content under the finger.
+ * How far a step is depends on what is being moved: the full-screen app owns
+ * the alternate screen and every row on it comes from the backend, which
+ * scrolls only when a wheel tells it to, so a step there is one wheel notch.
+ * The touch build has drawn its whole view into the terminal's own scrollback,
+ * where moving is the emulator's business and not the backend's — a step is one
+ * row, and no drag ever reaches the backend at all.
  */
 
 import type { Screen } from "./screen";
@@ -26,10 +28,22 @@ const TAP_TIME = 700;
 type Gesture = { x: number; y: number; dragY: number; at: number; tap: boolean };
 
 export type GestureOptions = {
-  /** Rows one wheel notch scrolls, as the backend reports it. */
-  wheelRows: number;
-  /** Hands raw input bytes to the backend. */
-  send: (bytes: string) => void;
+  /** What a drag moves, and the least it can move at a time. */
+  drag: {
+    /** Rows one step covers. */
+    rows: number;
+    /** Moves the content by `steps` steps; positive is further down. */
+    scroll: (steps: number) => void;
+  };
+  /** Where a tap landed, in 1-based viewport cells. */
+  onTap: (col: number, row: number) => void;
+  /**
+   * Whether claiming a gesture should take focus too. The click that would
+   * otherwise have carried it is one of the events claiming suppresses, so a
+   * terminal with a keyboard behind it has to take focus here — and one on a
+   * phone, where focusing summons nothing, has no reason to.
+   */
+  focus: boolean;
 };
 
 /** Binds touch handling to the container; returns the unbind. */
@@ -54,12 +68,13 @@ export function bindGestures(
       at: event.timeStamp,
       tap: true,
     };
-    // The gesture is the app's from here: no synthesized mouse events for it,
-    // no rubber-banding the page behind it, and no pull-to-refresh from a drag
-    // that starts at the top. Focus comes with it, since the click that used to
-    // carry it is one of the events just suppressed.
+    // The gesture is ours from here: no synthesized mouse events for it, no
+    // rubber-banding the page behind it, and no pull-to-refresh from a drag
+    // that starts at the top.
     event.preventDefault();
-    screen.terminal.focus();
+    if (options.focus) {
+      screen.terminal.focus();
+    }
   };
 
   const onMove = (event: TouchEvent): void => {
@@ -75,19 +90,15 @@ export function bindGestures(
     if (metrics == null) {
       return;
     }
-    const notchHeight = metrics.height * options.wheelRows;
+    const stepHeight = metrics.height * options.drag.rows;
     event.preventDefault();
-    const notches = Math.trunc((gesture.dragY - y) / notchHeight);
-    if (notches === 0) {
+    const steps = Math.trunc((gesture.dragY - y) / stepHeight);
+    if (steps === 0) {
       return;
     }
-    // Keep the remainder, so a slow drag still accumulates into a notch.
-    gesture.dragY -= notches * notchHeight;
-    // SGR wheel reports, the same ones xterm sends for a real wheel: button 64
-    // is a notch up, 65 down. A wheel carries a position too, which the app
-    // ignores, so the top left cell stands in for the finger.
-    const report = notches > 0 ? "\x1b[<65;1;1M" : "\x1b[<64;1;1M";
-    options.send(report.repeat(Math.abs(notches)));
+    // Keep the remainder, so a slow drag still accumulates into a step.
+    gesture.dragY -= steps * stepHeight;
+    options.drag.scroll(steps);
   };
 
   const onEnd = (event: TouchEvent): void => {
@@ -102,11 +113,7 @@ export function bindGestures(
     if (cell == null) {
       return;
     }
-    // An SGR press and release of the left button, the pair xterm sends for a
-    // real click. The app acts on the press; the release keeps the backend's
-    // button state honest.
-    const { col, row } = cell;
-    options.send(`\x1b[<0;${col};${row}M\x1b[<0;${col};${row}m`);
+    options.onTap(cell.col, cell.row);
   };
 
   const onCancel = (): void => {

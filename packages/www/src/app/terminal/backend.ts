@@ -28,7 +28,7 @@ export function currentPath(): string {
 }
 
 /**
- * Acts on one line from `pollEvent`: `open <url>`, or
+ * Acts on one line from `pollEvent`: `open <url>`, `navigate <path>`, or
  * `route push|replace <path>\t<title>`. These are the things the backend cannot
  * do for itself, and nothing it can.
  *
@@ -46,6 +46,19 @@ export function applyHostEvent(event: string): void {
     const url = rest.join(" ");
     if (/^https?:\/\//i.test(url)) {
       window.open(url, "_blank", "noopener");
+    }
+    return;
+  }
+  if (kind === "navigate") {
+    // The touch build's way between its own views. It draws one of them, whole,
+    // for the browser to scroll — so there is nowhere to put a second, and
+    // reaching one means loading it, in this same tab.
+    const path = rest.join(" ");
+    // Rooted paths only — the backend sends nothing else, and this is the guard
+    // where it lands — and never the page already open: tapping the tab you are
+    // on is a way of asking for nothing, not for a reload.
+    if (path.startsWith("/") && path !== currentPath()) {
+      window.location.assign(path);
     }
     return;
   }

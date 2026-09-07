@@ -12,6 +12,10 @@ pub const COMMANDS: &[&str] = &[
     "cat", "cd", "clear", "dev-sam", "echo", "help", "history", "ls", "pwd", "whoami",
 ];
 
+/// The flag that asks `dev-sam` for the touch build. The host pre-types it on a
+/// phone, where it is the only way the app is ever run.
+pub const TOUCH_FLAG: &str = "--touch";
+
 pub struct Shell {
     /// `[]` = `/home/sam`
     cwd_segments: Vec<String>,
@@ -21,7 +25,16 @@ pub struct Shell {
 pub enum CommandRunOutcome {
     RenderText(String),
     Clear,
-    LaunchApp,
+    LaunchApp(Launch),
+}
+
+/// How `dev-sam` was asked to run.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Launch {
+    /// `--touch`: the build for a host that has no keyboard and scrolls the
+    /// terminal itself. It draws the same view, but whole, into the scrollback
+    /// rather than taking the screen over — see [`crate::view::touch_element`].
+    pub touch: bool,
 }
 
 impl Default for Shell {
@@ -53,7 +66,9 @@ impl Shell {
         let args: Vec<&str> = words.collect();
         match command {
             "clear" => CommandRunOutcome::Clear,
-            "dev-sam" => CommandRunOutcome::LaunchApp,
+            "dev-sam" => CommandRunOutcome::LaunchApp(Launch {
+                touch: args.contains(&TOUCH_FLAG),
+            }),
             "help" => CommandRunOutcome::RenderText(self.help()),
             "ls" => CommandRunOutcome::RenderText(self.ls(&args)),
             "cat" => CommandRunOutcome::RenderText(self.cat(&args)),
@@ -338,7 +353,8 @@ impl LineEditor {
 
     pub fn opening_screen(
         &mut self,
-        // `touch` drops the keyboard hint, which a phone cannot act on.
+        // `touch` drops the keyboard hint, which a phone cannot act on, and
+        // pre-types the flag that asks for the build a phone can read.
         touch: bool,
     ) -> String {
         let mut out = "dev-sam-sh 1.0 — developer sam's terminal"
@@ -354,8 +370,13 @@ impl LineEditor {
             out.push_str("\r\n");
         }
         out.push_str("\r\n");
-        // Pre-typed so a visitor only has to press Enter.
-        self.set_line("dev-sam".to_string());
+        // Pre-typed so a visitor only has to press Enter — and on a phone,
+        // where nothing can press it, so the host has something to submit.
+        self.set_line(if touch {
+            format!("dev-sam {TOUCH_FLAG}")
+        } else {
+            "dev-sam".to_string()
+        });
         out.push_str(&self.render_prompt_row());
         out
     }
@@ -369,19 +390,20 @@ impl LineEditor {
         )
     }
 
-    /// Feeds one key. Returns the ANSI to write and whether the app should boot.
-    pub fn handle_key(&mut self, key: KeyEvent, shell: &mut Shell) -> (String, bool) {
+    /// Feeds one key. Returns the ANSI to write and how the app should boot, if
+    /// this key is what ran it.
+    pub fn handle_key(&mut self, key: KeyEvent, shell: &mut Shell) -> (String, Option<Launch>) {
         // A key reports twice where the keyboard enhancement flags are
         // supported; act on the press, as the app does.
         if key.kind == KeyEventKind::Release {
-            return (String::new(), false);
+            return (String::new(), None);
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
-            return (self.handle_control_key(key.code), false);
+            return (self.handle_control_key(key.code), None);
         }
         match key.code {
             KeyCode::Enter => return self.on_command_submit(shell),
-            KeyCode::Tab => return (self.complete(shell), false),
+            KeyCode::Tab => return (self.complete(shell), None),
             KeyCode::Up => self.step_history(shell, HistoryStep::Older),
             KeyCode::Down => self.step_history(shell, HistoryStep::Newer),
             KeyCode::Left => {
@@ -411,9 +433,9 @@ impl LineEditor {
                 self.line.insert(self.cursor, character);
                 self.cursor += character.len_utf8();
             }
-            _ => return (String::new(), false),
+            _ => return (String::new(), None),
         }
-        (self.render_prompt_row(), false)
+        (self.render_prompt_row(), None)
     }
 
     fn handle_control_key(&mut self, code: KeyCode) -> String {
@@ -448,13 +470,13 @@ impl LineEditor {
         }
     }
 
-    fn on_command_submit(&mut self, shell: &mut Shell) -> (String, bool) {
+    fn on_command_submit(&mut self, shell: &mut Shell) -> (String, Option<Launch>) {
         let line = std::mem::take(&mut self.line);
         self.cursor = 0;
         let outcome = shell.execute(&line);
         self.history_index = shell.history().len();
         match outcome {
-            CommandRunOutcome::LaunchApp => ("\r\n".to_string(), true),
+            CommandRunOutcome::LaunchApp(launch) => ("\r\n".to_string(), Some(launch)),
             CommandRunOutcome::Clear => (
                 format!(
                     "{}{}{}",
@@ -462,13 +484,13 @@ impl LineEditor {
                     MoveTo(0, 0),
                     render_prompt()
                 ),
-                false,
+                None,
             ),
             CommandRunOutcome::RenderText(text) => {
                 // The shell writes bare newlines; a terminal in raw mode needs
                 // the carriage return too.
                 let body = text.trim_end_matches('\n').replace('\n', "\r\n");
-                (format!("\r\n{body}\r\n{}", render_prompt()), false)
+                (format!("\r\n{body}\r\n{}", render_prompt()), None)
             }
         }
     }

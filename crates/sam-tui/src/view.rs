@@ -268,7 +268,6 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     // about to see, so it is published here with the rest of them.
     crate::publish_route(app.route());
     let cols = terminal_width as usize;
-    let pane_title = pane_title(&app, cols);
     element! {
         View(
             flex_direction: FlexDirection::Column,
@@ -276,16 +275,66 @@ fn Root(mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
             height: terminal_height,
             background_color: theme::SURFACE,
         ) {
-            Header(tab: app.tab, cols: cols, rows: terminal_height as usize)
+            #(chrome(&app, cols, terminal_height as usize))
+        }
+    }
+}
+
+/// The header bar and the pane under it: everything the app draws for one
+/// state. What bounds them is the caller's business — a screen, for the app
+/// that owns one, and nothing at all for the page [`TouchRoot`] hands over.
+fn chrome(app: &App, cols: usize, rows: usize) -> Vec<AnyElement<'static>> {
+    let title = pane_title(app, cols);
+    vec![
+        element_to_any(element! { Header(tab: app.tab, cols: cols, rows: rows) }),
+        element_to_any(element! {
             Pane(
-                title: pane_title,
+                title: title,
                 closable: app.reader.is_some(),
                 column: column_cols(cols),
             ) {
-                #(content_element(&app))
+                #(content_element(app))
             }
+        }),
+    ]
+}
+
+#[derive(Props, Default)]
+struct TouchRootProps {
+    path: SitePath,
+    cols: u16,
+}
+
+/// The same app, drawn for a host that scrolls the terminal itself: one view,
+/// whole, with no height of its own. Everything a screenful would have clipped
+/// is simply drawn, so the visitor's finger moves the terminal's own scrollback
+/// rather than asking the app for the next screenful — and there is no next
+/// frame to ask for, because a page has no state to change.
+#[component]
+fn TouchRoot(props: &TouchRootProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    hooks.use_frame(image::LAYER_PANE);
+    let app = App::page(&props.path, props.cols);
+    crate::publish_route(app.route());
+    element! {
+        View(
+            flex_direction: FlexDirection::Column,
+            width: props.cols,
+            background_color: theme::SURFACE,
+        ) {
+            // The header is planned against the fewest rows that are not a
+            // phone's, so that width alone decides how the site is named
+            // ([`touch_sized`]). A page has no screenful of rows to spend on a
+            // wordmark or to run short of, and the browser reports a new height
+            // every time its address bar slides away under a scrolling finger —
+            // which must not be able to change a line of what is drawn.
+            #(chrome(&app, props.cols as usize, PHONE_ROWS))
         }
     }
+}
+
+/// The view at `path` as one page, for the touch build to render once.
+pub fn touch_element(path: SitePath, cols: u16) -> AnyElement<'static> {
+    element!(TouchRoot(path: path, cols: cols)).into_any()
 }
 
 /// What the pane's title row names, if anything. Only the reader names itself,
@@ -498,13 +547,15 @@ fn banner_rows(text: &str) -> Option<[String; 3]> {
     Some(rows)
 }
 
-/// The size at which the app takes itself to be on a phone. The host knows it
-/// is a touch device but only tells the shell (`ffi::sam_start`), not the app,
-/// so size is the only signal the app has: a phone held upright is far narrower
-/// than this, and on its side it is wide enough but only around twenty rows
-/// tall. What it costs a visitor there is the wordmark drawn big and the rows
-/// of air the app is inset by ([`margin_rows`]) — a screenful of rows is worth
-/// more to a thumb than either.
+/// The size at which the app takes itself to be on a phone. Size is the signal
+/// rather than the device: the full-screen app is never told which it is on —
+/// the host tells the shell (`ffi::sam_start`), not the app — and a phone held
+/// upright is far narrower than this, while on its side it is wide enough but
+/// only around twenty rows tall. What it costs a visitor there is the wordmark
+/// drawn big and the rows of air the app is inset by ([`header_margin_rows`]) —
+/// a screenful of rows is worth more to a thumb than either. [`TouchRoot`],
+/// which has no screenful to spend, holds the rows here so that only the width
+/// answers.
 const PHONE_COLS: usize = 60;
 const PHONE_ROWS: usize = 24;
 

@@ -12,10 +12,17 @@ import { openScreen } from "./screen";
 //
 // So the browser's side of this is only what a terminal emulator does, split
 // three ways: `screen` is the emulator and its geometry, `artwork` is the
-// full-resolution overlay the backend cannot place itself, and `gestures` turns
-// touch into the mouse reports xterm would send for a real one. `backend` is the
-// bridge, including the browser errands the backend asks for through
-// `pollEvent` — the URL bar, the document title, opening a tab.
+// full-resolution overlay the backend cannot place itself, and `gestures` tells
+// a tap from a drag. `backend` is the bridge, including the browser errands the
+// backend asks for through `pollEvent` — the URL bar, the document title,
+// opening a tab, loading a page.
+//
+// A phone gets a different backend build (`dev-sam --touch`), and it is the one
+// thing here that changes what this file does. That build draws a whole view
+// into the terminal's own scrollback instead of owning the screen, so a drag
+// scrolls the emulator rather than asking the backend for the next screenful —
+// no frame per row, and in exchange a tap that has to be counted from the top
+// of the page rather than the top of the viewport.
 //
 // Everything else is the backend's: the shell prompt, the blog's titles, where
 // a link leads. This file just wires the two together and pumps.
@@ -47,6 +54,16 @@ function run(container: HTMLDivElement): { dispose(): void } {
   });
   const artwork = mountArtwork(container);
 
+  // The last frame's artwork, kept because it outlives the frame that reported
+  // it: the touch build draws its page once and the visitor then scrolls it,
+  // which moves every picture on it without the backend drawing anything.
+  let regions: string[] = [];
+  const place = (): void => artwork.sync(regions, screen.metrics(), screen.scrollRows());
+  const openPage = (): void => {
+    screen.terminal.scrollToTop();
+    place();
+  };
+
   /** Drains everything the backend produced, plus the errands it asked for. */
   const pump = (): void => {
     if (backend == null) {
@@ -54,13 +71,22 @@ function run(container: HTMLDivElement): { dispose(): void } {
     }
     const output = backend.drain();
     if (output !== "") {
-      screen.terminal.write(output);
+      // xterm parses a write on its own schedule, and leaves the viewport at
+      // the bottom of whatever it was given. That is what a terminal does and
+      // what the shell wants; a page is read from the top, so the touch build
+      // asks for it back — once the write it is about has actually landed,
+      // which is also when its artwork can be placed against the real buffer.
+      screen.terminal.write(output, touchOnly ? openPage : undefined);
     }
-    artwork.sync(backend.imageRegions(), screen.metrics());
+    regions = backend.imageRegions();
+    place();
     for (let event = backend.pollEvent(); event != null; event = backend.pollEvent()) {
       applyHostEvent(event);
     }
   };
+
+  // Scrolling is the one thing that moves the picture without moving the app.
+  const scroll = screen.terminal.onScroll(place);
 
   /** Hands raw input bytes to the backend and shows what came back. */
   const send = (bytes: string): void => {
@@ -83,8 +109,13 @@ function run(container: HTMLDivElement): { dispose(): void } {
   };
   window.addEventListener("popstate", onPopState);
 
+  // Focus is what a keyboard needs, so it is only worth taking where there is
+  // one: the touch build reads its page with taps, and focusing would summon
+  // nothing but a scroll to wherever the cursor was left.
   const refocus = (): void => screen.terminal.focus();
-  container.addEventListener("click", refocus);
+  if (!touchOnly) {
+    container.addEventListener("click", refocus);
+  }
 
   const resizeObserver = new ResizeObserver(() => {
     const { cols, rows } = screen.fit();
@@ -105,19 +136,58 @@ function run(container: HTMLDivElement): { dispose(): void } {
     if (disposed) {
       return;
     }
-    unbindGestures = bindGestures(container, screen, { wheelRows: backend.wheelRows(), send });
+    const app = backend;
+    unbindGestures = bindGestures(container, screen, {
+      drag: touchOnly
+        ? {
+            // The page is already in the emulator's scrollback, so moving it is
+            // the emulator's own business — by the row, and without the backend
+            // hearing about it at all.
+            rows: 1,
+            // The artwork follows through `onScroll`, which xterm fires from
+            // inside this call — so placing it here as well would only be doing
+            // the same work twice per row.
+            scroll: (steps) => screen.terminal.scrollLines(steps),
+          }
+        : {
+            // The backend owns every row of the alternate screen and moves them
+            // only for a wheel, so a step is the notch it answers.
+            rows: app.wheelRows(),
+            // SGR wheel reports, the same ones xterm sends for a real wheel:
+            // button 64 is a notch up, 65 down. A wheel carries a position too,
+            // which the app ignores, so the top left cell stands in for the
+            // finger.
+            scroll: (steps) =>
+              send((steps > 0 ? "\x1b[<65;1;1M" : "\x1b[<64;1;1M").repeat(Math.abs(steps))),
+          },
+      onTap: touchOnly
+        ? (col, row) => {
+            // The page has scrolled since it was drawn, so the cell under the
+            // finger is that far down the canvas — and the backend counts from
+            // zero, as a mouse report does once crossterm has parsed it.
+            app.tap(col - 1, screen.scrollRows() + row - 1);
+            pump();
+          }
+        : // An SGR press and release of the left button, the pair xterm sends
+          // for a real click. The app acts on the press; the release keeps the
+          // backend's button state honest.
+          (col, row) => send(`\x1b[<0;${col};${row}M\x1b[<0;${col};${row}m`),
+      focus: !touchOnly,
+    });
     // A visitor who arrived at a view asked for it by name, and gets it with no
     // banner and nothing to press; everyone else lands at the shell, with
     // `dev-sam` already typed at the prompt.
     const { cols, rows } = screen.fit();
-    backend.start(cols, rows, currentPath(), touchOnly);
+    app.start(cols, rows, currentPath(), touchOnly);
     if (touchOnly) {
       // Nothing on a phone can press that Enter — the keyboard is off — so the
-      // prompt runs the pre-typed command itself.
+      // prompt runs the pre-typed command itself, `--touch` and all.
       send("\r");
     }
     pump();
-    screen.terminal.focus();
+    if (!touchOnly) {
+      screen.terminal.focus();
+    }
   };
   void boot();
 
@@ -128,6 +198,7 @@ function run(container: HTMLDivElement): { dispose(): void } {
       container.removeEventListener("click", refocus);
       window.removeEventListener("popstate", onPopState);
       resizeObserver.disconnect();
+      scroll.dispose();
       input.dispose();
       artwork.dispose();
       screen.dispose();
@@ -148,13 +219,13 @@ export default function TerminalApp(): React.JSX.Element {
 
   return (
     // No padding: a character grid already leaves a remainder of its own, and
-    // `screen.fit` centers the grid so that remainder falls evenly on all four
-    // sides rather than piling up at the right and the bottom.
+    // `screen.fit` centers the grid so that remainder falls evenly on either
+    // side rather than piling up at the right and the bottom.
     <div className="fixed inset-0 overflow-hidden bg-[#f7f7f7]">
       <div
         ref={containerRef}
         className="relative h-full w-full"
-        aria-label="Developer Sam's portfolio as a full-screen terminal app"
+        aria-label="Developer Sam's portfolio as a terminal app"
         role="application"
       />
     </div>
