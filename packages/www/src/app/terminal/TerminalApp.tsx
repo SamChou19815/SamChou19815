@@ -180,8 +180,7 @@ function run(container: HTMLDivElement): { dispose(): void } {
     const { cols, rows } = screen.fit();
     app.start(cols, rows, currentPath(), touchOnly);
     if (touchOnly) {
-      // Nothing on a phone can press that Enter — the keyboard is off — so the
-      // prompt runs the pre-typed command itself, `--touch` and all.
+      // Autoload the dev-sam app on touch-only devices
       send("\r");
     }
     pump();
@@ -218,16 +217,8 @@ export default function TerminalApp(): React.JSX.Element {
   }, []);
 
   return (
-    // No padding: a character grid already leaves a remainder of its own, and
-    // `screen.fit` centers the grid so that remainder falls evenly on either
-    // side rather than piling up at the right and the bottom.
     <div className="fixed inset-0 overflow-hidden bg-[#f7f7f7]">
-      <div
-        ref={containerRef}
-        className="relative h-full w-full"
-        aria-label="Developer Sam's portfolio as a terminal app"
-        role="application"
-      />
+      <div ref={containerRef} className="relative h-full w-full" role="application" />
     </div>
   );
 }
