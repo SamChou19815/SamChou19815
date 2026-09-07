@@ -13,13 +13,7 @@
 //! priorities would have had to state twice —
 //!
 //! - a card's link is a *descendant* of the card, so it paints after it and a
-//!   click on the link opens it rather than selecting the card;
-//! - the open dialog is the root's last child, so it paints over the pane, the
-//!   header and the reader's close button, and none of them answer while it is
-//!   up — including the screen around it, which is a region of its own
-//!   ([`HitTarget::Dismiss`]) rather than the absence of one;
-//! - the dialog's body lines paint after the dialog's own frame, so a link in
-//!   an open dialog still opens.
+//!   click on the link opens it rather than selecting the card.
 //!
 //! What that asks of the tree in return is that an interactive child paint
 //! inside the box of whatever contains it. Flex layout gives exactly that: a
@@ -109,13 +103,6 @@ pub enum HitTarget {
     /// The reader's close button, in the pane's title row. Keys close the
     /// reader too, but a pointer had no way out of a post before this.
     Close,
-    /// The open dialog's own frame. It swallows the click instead of acting on
-    /// it: a click that lands on the dialog is not a click on the pane behind
-    /// it, and so must neither dismiss the dialog nor reach what it covers.
-    Dialog,
-    /// The screen around an open dialog, which the dialog itself paints over.
-    /// A click out there is the pointer's way of asking for the dialog to go.
-    Dismiss,
 }
 
 thread_local! {

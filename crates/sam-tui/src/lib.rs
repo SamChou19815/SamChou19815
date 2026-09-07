@@ -147,11 +147,17 @@ pub fn card_height(event: &data::TimelineEvent, cols: u16) -> usize {
     1 + 1 + 1 + body + 1
 }
 
-/// The button row as it is rendered, for width math.
+/// The button row as it is rendered, for width math: each button is numbered
+/// after the digit that opens it on the Timeline tab.
+pub(crate) fn link_button_label(index: usize, link: &data::Link) -> String {
+    format!("{} {} ", index + 1, link.name.decrypt().to_uppercase())
+}
+
 fn link_row_label(links: &[data::Link]) -> String {
     links
         .iter()
-        .map(|link| format!(" {} ", link.name.decrypt().to_uppercase()))
+        .enumerate()
+        .map(|(index, link)| link_button_label(index, link))
         .collect()
 }
 
@@ -250,11 +256,6 @@ pub fn reset_route_sync() {
     CURRENT_ROUTE.with(|route| *route.borrow_mut() = None);
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub enum Modal {
-    Timeline { event: usize, scroll: usize },
-}
-
 /// An open post, filling the content pane. The header and status bar stay put,
 /// so the reader is a mode of the Blog tab rather than a dialog over it.
 #[derive(Clone, PartialEq, Eq)]
@@ -348,7 +349,6 @@ pub struct App {
     selected: [usize; TAB_COUNT],
     /// The post open in the Blog tab's reader, if any.
     pub reader: Option<Reader>,
-    pub modal: Option<Modal>,
     pub quit: bool,
     actions: Vec<Action>,
 }
@@ -369,7 +369,6 @@ impl App {
             scroll: [0; TAB_COUNT],
             selected: [0; TAB_COUNT],
             reader: None,
-            modal: None,
             quit: false,
             actions: Vec::new(),
         };
@@ -535,10 +534,6 @@ impl App {
             self.quit = true;
             return;
         }
-        if self.modal.is_some() {
-            self.on_modal_key(key);
-            return;
-        }
         if self.reader.is_some() {
             self.on_reader_key(key);
             return;
@@ -550,6 +545,16 @@ impl App {
             Key::Esc => {}
             Key::Char('?') => self.switch_tab(HELP_TAB),
             Key::Char('q') => self.quit = true,
+            // On the Timeline the digits belong to the selected card's links,
+            // every one of them, as the dialog's numbered buttons once did; the
+            // tabs stay a keystroke away on the arrows and Tab.
+            Key::Char(c @ '1'..='9') if self.tab == TIMELINE_TAB => {
+                let index = c as usize - '1' as usize;
+                let event = self.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
+                if let Some(link) = data::TIMELINE[event].links.get(index) {
+                    self.actions.push(Action::OpenUrl(link.url.decrypt()));
+                }
+            }
             Key::Char(c @ '1'..='4') => self.switch_tab(c as usize - '1' as usize),
             Key::Up => self.move_selection(-1, 1),
             Key::Char('k') if !mods.ctrl => self.move_selection(-1, 1),
@@ -614,42 +619,6 @@ impl App {
         view::reader_viewport(self.viewport())
             .saturating_sub(2)
             .max(1)
-    }
-
-    fn on_modal_key(&mut self, key: Key) {
-        // Digits activate the modal's buttons directly (1-9).
-        if let Key::Char(digit @ '1'..='9') = key {
-            let index = digit as usize - '1' as usize;
-            let links: &[data::Link] = match &self.modal {
-                Some(Modal::Timeline { event, .. }) => data::TIMELINE[*event].links,
-                _ => &[],
-            };
-            if let Some(link) = links.get(index) {
-                self.actions.push(Action::OpenUrl(link.url.decrypt()));
-            }
-            return;
-        }
-        match key {
-            Key::Esc | Key::Backspace | Key::Char('q') | Key::Char(' ') => self.modal = None,
-            Key::Up | Key::Char('k') => self.scroll_modal(-1),
-            Key::Down | Key::Char('j') => self.scroll_modal(1),
-            Key::PageUp => self.scroll_modal(-10),
-            Key::PageDown => self.scroll_modal(10),
-            Key::Home | Key::Char('g') => {
-                if let Some(modal) = &mut self.modal {
-                    *modal_scroll(modal) = 0;
-                }
-            }
-            Key::End | Key::Char('G') => {
-                if let Some(modal) = self.modal.clone() {
-                    let limit = self.max_modal_scroll(&modal);
-                    if let Some(scroll) = self.modal.as_mut().map(modal_scroll) {
-                        *scroll = limit;
-                    }
-                }
-            }
-            _ => {}
-        }
     }
 
     fn switch_tab(&mut self, next: usize) {
@@ -737,12 +706,6 @@ impl App {
         view::tab_line_count(self.tab, self.cols).saturating_sub(visible)
     }
 
-    /// The same for the open dialog's body.
-    fn max_modal_scroll(&self, modal: &Modal) -> usize {
-        view::modal_line_count(modal)
-            .saturating_sub(view::modal_viewport(modal, self.cols, self.rows))
-    }
-
     fn scroll_text(&mut self, direction: i32, amount: usize) {
         let limit = self.max_scroll();
         let scroll = &mut self.scroll[self.tab];
@@ -753,26 +716,8 @@ impl App {
         };
     }
 
-    fn scroll_modal(&mut self, direction: i32) {
-        let Some(modal) = self.modal.clone() else {
-            return;
-        };
-        let limit = self.max_modal_scroll(&modal);
-        if let Some(scroll) = self.modal.as_mut().map(modal_scroll) {
-            *scroll = if direction < 0 {
-                scroll.saturating_sub(1)
-            } else {
-                (*scroll + 1).min(limit)
-            };
-        }
-    }
-
     fn open_selected(&mut self) {
         match self.tab {
-            TIMELINE_TAB => {
-                let event = self.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
-                self.modal = Some(Modal::Timeline { event, scroll: 0 });
-            }
             BLOG_TAB => {
                 let post = self.selected[BLOG_TAB].min(posts::POSTS.len() - 1);
                 if posts::POSTS[post].is_external() {
@@ -780,6 +725,14 @@ impl App {
                     self.actions.push(Action::OpenUrl(url));
                 } else {
                     self.reader = Some(Reader { post, scroll: 0 });
+                }
+            }
+            // A timeline card is its own detail view, so the most Enter can ask
+            // of one is what its buttons are for: open the first link.
+            TIMELINE_TAB => {
+                let event = self.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
+                if let Some(link) = data::TIMELINE[event].links.first() {
+                    self.actions.push(Action::OpenUrl(link.url.decrypt()));
                 }
             }
             _ => {}
@@ -793,9 +746,7 @@ impl App {
                     MouseEv::ScrollUp => -1,
                     _ => 1,
                 };
-                if self.modal.is_some() {
-                    self.scroll_modal(direction);
-                } else if self.reader.is_some() {
+                if self.reader.is_some() {
                     self.scroll_reader(direction, WHEEL_ROWS);
                 } else if self.tab == BLOG_TAB {
                     // The blog moves its page under the selection rather than
@@ -821,9 +772,7 @@ impl App {
             // neither: a phone reads posts with nothing but taps. A dialog's
             // own close button takes priority over the reader's.
             Some(hit::HitTarget::Close) => {
-                if self.modal.take().is_none() {
-                    self.reader = None;
-                }
+                self.reader = None;
             }
             // A pointer names the card it means by landing on it, so there is
             // nothing left for a second click to say. Selecting on the first
@@ -835,13 +784,6 @@ impl App {
                     self.open_selected();
                 }
             }
-            // A click that lands on the open dialog itself, on anything but one
-            // of its links: it is already where the reader wants to be.
-            Some(hit::HitTarget::Dialog) => {}
-            // The screen around an open dialog, which is a region of its own —
-            // so this is a click that asked for the dialog to go, not one that
-            // happened to hit nothing while a dialog was up.
-            Some(hit::HitTarget::Dismiss) => self.modal = None,
             None => {}
         }
     }
@@ -861,12 +803,6 @@ impl App {
     /// be left pointing past it — and the list pane's selection can be left
     /// off screen entirely.
     pub fn clamp_scroll(&mut self) {
-        if let Some(modal) = self.modal.clone() {
-            let limit = self.max_modal_scroll(&modal);
-            if let Some(scroll) = self.modal.as_mut().map(modal_scroll) {
-                *scroll = (*scroll).min(limit);
-            }
-        }
         let reader_limit = self.max_reader_scroll();
         if let Some(reader) = &mut self.reader {
             reader.scroll = reader.scroll.min(reader_limit);
@@ -1007,9 +943,4 @@ fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
 
 fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
     starts_with_ignore_case(text, prefix).then(|| &text[prefix.len()..])
-}
-
-fn modal_scroll(modal: &mut Modal) -> &mut usize {
-    let Modal::Timeline { scroll, .. } = modal;
-    scroll
 }
