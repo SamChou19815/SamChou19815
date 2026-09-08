@@ -2,75 +2,34 @@
 //! homepage's Prism light token colors.
 
 use crate::data;
-use crate::markdown::ContentLine;
+use crate::style::{link, Line, Span, TextStyle};
 use crate::theme;
-use iocraft::components::MixedTextContent;
-use iocraft::prelude::TextDecoration;
 
 const KEYWORDS: &[&str] = &["import", "from", "class", "function", "let", "val"];
 
-// Token colors mirror the homepage's Prism dark theme (see `theme.rs`).
-fn keyword_color() -> crossterm::style::Color {
-    theme::KEYWORD
+fn styled(text: &str, color: theme::Color) -> Span {
+    Span::styled(text, TextStyle::new().color(color))
 }
 
-/// Class and type names — `.token.property` on the homepage.
-fn type_color() -> crossterm::style::Color {
-    theme::PROPERTY
+fn styled_italic(text: &str, color: theme::Color) -> Span {
+    Span::styled(text, TextStyle::new().color(color).italic())
 }
 
-fn string_color() -> crossterm::style::Color {
-    theme::STRING
-}
-
-fn number_color() -> crossterm::style::Color {
-    theme::NUMBER
-}
-
-/// Identifiers directly followed by `(`: function and method calls.
-fn function_color() -> crossterm::style::Color {
-    theme::FUNCTION
-}
-
-/// Comments are italic on the homepage.
-fn comment_color() -> crossterm::style::Color {
-    theme::COMMENT
-}
-
-/// Plain code text.
-fn plain_color() -> crossterm::style::Color {
-    theme::PLAIN
-}
-
-fn styled(text: &str, color: crossterm::style::Color) -> MixedTextContent {
-    MixedTextContent::new(text).color(color)
-}
-
-fn styled_italic(text: &str, color: crossterm::style::Color) -> MixedTextContent {
-    styled(text, color).italic()
-}
-
-pub fn doc_comment_lines() -> Vec<ContentLine> {
-    let plain = |text: &str| ContentLine {
-        contents: vec![styled(text, comment_color())],
-        link: None,
-    };
+pub fn doc_comment_lines() -> Vec<Line> {
+    let plain = |text: &str| vec![styled(text, comment_color())];
     let mut lines = vec![plain("/**"), plain(&format!(" * {}", data::COPYRIGHT))];
-    for link in data::ABOUT_DOC_LINKS {
-        let url = link.url.decrypt();
-        lines.push(ContentLine {
-            contents: vec![
-                styled(&format!(" * @{} ", link.name), comment_color()),
-                styled(&url, comment_color()).decoration(TextDecoration::Underline),
-            ],
-            link: Some(url),
-        });
+    for entry in data::ABOUT_DOC_LINKS {
+        let url = entry.url.decrypt();
+        lines.push(vec![
+            styled(&format!(" * @{} ", entry.name), comment_color()),
+            link(url.clone(), comment_color(), &url),
+        ]);
     }
     lines.push(plain(" */"));
     lines
 }
 
-pub fn program_lines() -> Vec<Vec<MixedTextContent>> {
+pub fn program_lines() -> Vec<Line> {
     let mut result = Vec::new();
     let mut in_comment = false;
     let program = data::ABOUT_PROGRAM.decrypt();
@@ -82,8 +41,8 @@ pub fn program_lines() -> Vec<Vec<MixedTextContent>> {
     result
 }
 
-fn highlight_line(source: &str, mut in_comment: bool) -> (Vec<MixedTextContent>, bool) {
-    let mut spans: Vec<MixedTextContent> = Vec::new();
+fn highlight_line(source: &str, mut in_comment: bool) -> (Vec<Span>, bool) {
+    let mut spans: Vec<Span> = Vec::new();
     let mut rest = source;
     while !rest.is_empty() {
         if in_comment {
@@ -136,4 +95,32 @@ fn highlight_line(source: &str, mut in_comment: bool) -> (Vec<MixedTextContent>,
         }
     }
     (spans, in_comment)
+}
+
+fn keyword_color() -> theme::Color {
+    theme::KEYWORD
+}
+
+fn type_color() -> theme::Color {
+    theme::PROPERTY
+}
+
+fn string_color() -> theme::Color {
+    theme::STRING
+}
+
+fn number_color() -> theme::Color {
+    theme::NUMBER
+}
+
+fn function_color() -> theme::Color {
+    theme::FUNCTION
+}
+
+fn comment_color() -> theme::Color {
+    theme::COMMENT
+}
+
+fn plain_color() -> theme::Color {
+    theme::PLAIN
 }

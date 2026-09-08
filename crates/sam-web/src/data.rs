@@ -8,7 +8,7 @@
 
 use crate::crypt::EncryptedString;
 use crate::encrypted_str;
-use crossterm::style::Color;
+use crate::theme::Color;
 
 pub const COPYRIGHT: EncryptedString = encrypted_str!("Copyright (C) 2015-2026 Developer Sam.");
 
@@ -45,35 +45,15 @@ impl Category {
         }
     }
 
-    /// The color this category is painted with across the whole TUI
+    /// The color this category is painted with across the whole site
     /// (tailwind 600-series: readable on the white homepage cards).
     pub fn color(self) -> Color {
         match self {
-            Category::Work => Color::Rgb {
-                r: 37,
-                g: 99,
-                b: 235,
-            }, // blue-600
-            Category::Education => Color::Rgb {
-                r: 22,
-                g: 163,
-                b: 74,
-            }, // green-600
-            Category::Language => Color::Rgb {
-                r: 147,
-                g: 51,
-                b: 234,
-            }, // purple-600
-            Category::Project => Color::Rgb {
-                r: 217,
-                g: 119,
-                b: 6,
-            }, // amber-600
-            Category::Milestone => Color::Rgb {
-                r: 8,
-                g: 145,
-                b: 178,
-            }, // cyan-600
+            Category::Work => Color::rgb(37, 99, 235),      // blue-600
+            Category::Education => Color::rgb(22, 163, 74), // green-600
+            Category::Language => Color::rgb(147, 51, 234), // purple-600
+            Category::Project => Color::rgb(217, 119, 6),   // amber-600
+            Category::Milestone => Color::rgb(8, 145, 178), // cyan-600
         }
     }
 }

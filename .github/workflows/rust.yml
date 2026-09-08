@@ -17,8 +17,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: cargo-build-debug
-      - name: Prepare patched deps
-        run: ./scripts/prepare-patched-deps.sh
       - name: Format Check
         run: cargo fmt --all -- --check
       - name: Lint

@@ -7,7 +7,7 @@ const path = require("node:path");
  * The post's frontmatter: a `---` fenced block of `key: "value"` lines at the
  * very top of the file. Only `title` lives there, so a hand-rolled reader is
  * enough and the site keeps no YAML dependency.
- * `crates/sam-tui/build.rs` parses the same block for the TUI.
+ * `crates/sam-web/build.rs` parses the same block for the wasm site.
  */
 function parseFrontmatter(/** @type {string} */ source, /** @type {string} */ fullPath) {
   const lines = source.split("\n");
