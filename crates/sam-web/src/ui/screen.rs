@@ -7,6 +7,12 @@
 //! fitting, the wrapping, the truncation and the breakpoints. What a narrow
 //! screen loses is decided by CSS at the width the view is actually drawn at,
 //! never by this code counting anything.
+//!
+//! The views read the app through a [`Model`]: one memo per thing a view can
+//! depend on, read where it is used. A tab's label subscribes to which tab is
+//! in front, a card to which card is selected, the pane's body to which view
+//! is up — so a keystroke redraws the runs that show what it changed and
+//! nothing else, and a post is parsed once, when it is opened.
 
 use crate::crypt::EncryptedString;
 use crate::data;
@@ -17,54 +23,57 @@ use crate::posts;
 use crate::site_path::SitePath;
 use crate::style::Line;
 use crate::theme;
-use crate::{App, ABOUT_TAB, BLOG_TAB, HELP_TAB, TAB_NAMES, TIMELINE_TAB};
+use crate::{ABOUT_TAB, BLOG_TAB, HELP_TAB, TAB_NAMES, TIMELINE_TAB};
+use leptos::attr::custom::custom_attribute;
+use leptos::html;
 use leptos::prelude::*;
 
-use super::styled_line;
+use super::{hanging_line, styled_line, Activate, Model};
 
 /// The site's name as it is spelled over the tabs. Encrypted like the rest of
 /// the content, so the binary never spells it out even though the wordmark
 /// paints it a cell at a time.
 const TITLE: EncryptedString = encrypted_str!("DEV SAM");
 
-/// The column everything the app draws is laid out down: the reading measure,
-/// centered. Its parent holds it two cells off the screen edges, so it is as
-/// wide as fits and never wider than eighty-eight characters — the measure
-/// that keeps prose trackable on a maximized window.
-const COLUMN: &str = "mx-auto w-full max-w-88";
+// Colors in classes are the ones in [`theme`]: `#2563eb` ACCENT_TEXT,
+// `#3b82f6` ACCENT, `#dbeafe` SELECT_BG, `#1e3a8a` SELECT_FG, `#f7f7f7`
+// SURFACE, `#d1d5db` BORDER_SUBTLE, `#1c1e21` TEXT, `#4b5563` MUTED, `#374151`
+// SUBTLE.
+//
+// The two list tabs are what the platform already knows how to use: a
+// listbox whose options are the cards ([`timeline_tree`], [`blog_tree`]). The
+// selected card carries `aria-selected`, and the `aria-selected:` /
+// `group-aria-selected:` variants paint the rest; it is also the one card
+// focusable with `tabindex` (a roving tabindex), and an effect focuses it as
+// the selection moves ([`focus_follows_selection`]) — so the browser scrolls
+// it into view by itself, announces it to a screen reader, and moving the
+// selection rewrites the two cards' attributes and no other DOM.
 
-/// The air the body keeps off the left and right edges of the screen.
-const BODY: &str = "px-2";
-
-/// The air a card keeps inside its own edges. A card is only tinted when it is
-/// the selected one, and this is what holds that tint off its marker and its
-/// category tag instead of running it flush to both.
-const CARD_PAD: &str = "px-1";
-
-/// A row of air: a box one row of the type tall, with nothing in it. Vertical
-/// measures are rows for the same reason horizontal ones are characters: they
-/// are the units the type itself sets.
-const AIR_ROW: &str = "h-row shrink-0";
-
-/// The gutter a timeline card's body is held off the rail by.
-const GUTTER: &str = "pl-3";
-
-/// Color classes for boxes, lifted straight from [`theme`]. Text colors stay
-/// inline styles — they are picked per run as the view is built — but these
-/// belong to boxes, and a box's class can name its color.
-const RULE_BORDER: &str = "border-[#d1d5db]"; // theme::BORDER_SUBTLE
-const ACCENT_TEXT_CLASS: &str = "text-[#2563eb]"; // theme::ACCENT_TEXT
-const RAIL_CLASS: &str = "bg-[#2563eb]"; // theme::ACCENT_TEXT
-const SELECT_BG_CLASS: &str = "bg-[#dbeafe]"; // theme::SELECT_BG
-const SURFACE_CLASS: &str = "bg-[#f7f7f7]"; // theme::SURFACE
-
-fn click(
-    target: HitTarget,
-    on_activate: impl Fn(&HitTarget) + Copy + 'static,
-) -> impl Fn(web_sys::MouseEvent) {
+fn click(target: HitTarget, on_activate: impl Activate) -> impl Fn(web_sys::MouseEvent) {
     move |event: web_sys::MouseEvent| {
         event.stop_propagation();
         on_activate(&target);
+    }
+}
+
+/// The pointer moving over a card, as the hover that selects it — but only
+/// when the pointer itself moved. Browsers report the pane sliding under a
+/// resting pointer as movement too, after a scroll, and a keystroke that just
+/// scrolled the selection into view must not have it snatched back by
+/// whichever card came to rest under the pointer. A pointer that has not moved
+/// is still where it was ([`Model::pointer`]), which is what tells the two
+/// apart.
+fn hover(model: Model, index: usize, on_activate: impl Activate) -> impl Fn(web_sys::MouseEvent) {
+    move |event: web_sys::MouseEvent| {
+        let at = (event.screen_x(), event.screen_y());
+        if model
+            .pointer
+            .try_update_value(|last| std::mem::replace(last, at))
+            == Some(at)
+        {
+            return;
+        }
+        on_activate(&HitTarget::Hover(index));
     }
 }
 
@@ -72,45 +81,48 @@ fn style_of(color: theme::Color) -> String {
     format!("color:{};", color.css())
 }
 
-/// The header bar and the pane under it: everything the app draws for one
-/// state. `touch` is the build that hands a whole view to the browser to
-/// scroll, rather than keeping the header fixed over a pane of its own.
-pub fn chrome(
-    app: &App,
-    touch: bool,
-    scrolls: bool,
-    on_activate: impl Fn(&HitTarget) + Copy + 'static,
-) -> Vec<AnyView> {
-    vec![
-        header(app, touch, on_activate).into_any(),
-        pane(app, scrolls, on_activate).into_any(),
-    ]
+/// Whether the card at `index` is the selected one, as a memo of its own: the
+/// list's selection is one signal every card derives from, but a card's memo
+/// only notifies when its own answer changes — so moving the selection
+/// redraws the card it left and the card it landed on, and no other.
+fn is_selected(selected: Memo<usize>, index: usize) -> Memo<bool> {
+    Memo::new(move |_| selected.get() == index)
 }
 
-/// The full-screen app: the header fixed at the top of the screen, the pane
-/// filling what is left.
-pub fn screen(
-    app: &App,
-    touch: bool,
-    on_activate: impl Fn(&HitTarget) + Copy + 'static,
-) -> AnyView {
-    let children = chrome(app, touch, true, on_activate);
-    view! { <div class="flex h-full w-full flex-col">{children}</div> }.into_any()
+/// What a screen reader calls each list, encrypted like the rest of the
+/// content.
+const TIMELINE_LIST_LABEL: EncryptedString = encrypted_str!("Timeline");
+const BLOG_LIST_LABEL: EncryptedString = encrypted_str!("Blog posts");
+
+/// Keeps DOM focus on the selected card: the selected option is the one card
+/// focusable with `tabindex` (the rest are -1, a roving tabindex), and this
+/// effect focuses it as the selection moves. The browser then does what it
+/// does for any focus change — scrolls the freshly focused element into view,
+/// the least it can — which is how the arrow keys slide the pane by a card
+/// rather than by a screenful, and a screen reader announces the option the
+/// selection landed on. The first run is the list mounting, under a scroll
+/// position the pane is about to be put back to, so that run focuses without
+/// scrolling; every later one is a selection move, which is what scrolls.
+fn focus_follows_selection(selected: Memo<usize>, cards: &[NodeRef<html::Li>]) {
+    let cards = cards.to_vec();
+    Effect::new(move |previous: Option<()>| {
+        let index = selected.get();
+        if let Some(option) = cards.get(index).and_then(|card| card.get()) {
+            let mut scroll = web_sys::FocusOptions::new();
+            scroll.set_prevent_scroll(previous.is_none());
+            let _ = option.focus_with_options(&scroll);
+        }
+    });
 }
 
-/// The view at `path` as one page, for the touch build to scroll: the same
-/// chrome, with the scroll box around all of it, so the header slides away
-/// under a scrolling finger.
-pub fn page(path: &SitePath, on_activate: impl Fn(&HitTarget) + Copy + 'static) -> AnyView {
-    let app = App::page(path);
-    crate::publish_route(app.route());
-    let children = chrome(&app, true, false, on_activate);
+/// The app: the header fixed at the top of the screen, the pane filling what
+/// is left. `touch` is a host with no keys to press, which leaves the Help
+/// tab out of the bar.
+pub(crate) fn screen(model: Model, touch: bool, on_activate: impl Activate) -> AnyView {
     view! {
-        // The session's own screen is a fixed box, so the scroll box pinned to
-        // it with `h-full w-full` is the one that overflows: the whole page,
-        // header and all, slides under a scrolling finger.
-        <div class=format!("{} h-full w-full", super::SCROLL) data-pane="">
-            {children}
+        <div class="flex h-full w-full flex-col">
+            {header(model, touch, on_activate)}
+            {pane(model, on_activate)}
         </div>
     }
     .into_any()
@@ -179,7 +191,7 @@ fn wordmark() -> AnyView {
         })
         .into_iter()
         .collect();
-    view! { <div class=ACCENT_TEXT_CLASS>{rows}</div> }.into_any()
+    view! { <div class="text-[#2563eb]">{rows}</div> }.into_any()
 }
 
 /// The header: the name over (or beside) the tabs, and the bar's rule under
@@ -187,48 +199,49 @@ fn wordmark() -> AnyView {
 /// wordmark gives way to tabs alone, when the tabs stop fitting beside it —
 /// is a container query against the session itself, so the bar refits the way
 /// the site's nav does on the web, with no measuring code anywhere.
-fn header(app: &App, touch: bool, on_activate: impl Fn(&HitTarget) + Copy + 'static) -> AnyView {
-    let tab = app.tab();
-    // Help is a table of key bindings, and the touch build's host has no keys
-    // to press: it leaves the tab out of the bar and gives the room to the
-    // ones that lead somewhere. It is still named while it is the tab in
-    // front, so a visitor who arrives at `/help` is never left reading a bar
-    // that marks none of its tabs.
-    let labels: Vec<usize> = (0..TAB_NAMES.len())
-        .filter(|index| !touch || *index == tab || *index != HELP_TAB)
-        .collect();
-    let tabs: Vec<AnyView> = labels
-        .iter()
+fn header(model: Model, touch: bool, on_activate: impl Activate) -> AnyView {
+    let tabs: Vec<AnyView> = (0..TAB_NAMES.len())
         .map(|index| {
-            let selected = *index == tab;
-            let color = if selected {
-                theme::SELECT_FG
-            } else {
-                theme::SUBTLE
+            let selected = move || model.tab.get() == index;
+            let style = move || {
+                style_of(if selected() {
+                    theme::SELECT_FG
+                } else {
+                    theme::SUBTLE
+                })
             };
-            // Past thirty-six characters the bar keeps only the tab in front;
-            // the arrow keys and the number keys still reach the rest.
-            let mut class = String::from("cursor-pointer");
-            if selected {
-                class.push_str(" font-bold");
-            } else {
-                class.push_str(" hidden @min-[36ch]:inline");
-            }
-            let label = TAB_NAMES[*index].decrypt();
+            let class = move || {
+                if selected() {
+                    "cursor-pointer font-bold"
+                // Help is a table of key bindings, and a host with no keys to
+                // press leaves the tab out of the bar, giving the room to the
+                // ones that lead somewhere. It is still named while it is the
+                // tab in front, so a visitor who arrives at `/help` is never
+                // left reading a bar that marks none of its tabs.
+                } else if touch && index == HELP_TAB {
+                    "hidden"
+                // Past thirty-six characters the bar keeps only the tab in
+                // front; the arrow keys and the number keys still reach the
+                // rest.
+                } else {
+                    "cursor-pointer hidden @min-[36ch]:inline"
+                }
+            };
+            let label = TAB_NAMES[index].decrypt();
             view! {
                 <span
                     class=class
-                    style=style_of(color)
-                    on:click=click(HitTarget::Tab(*index), on_activate)
+                    style=style
+                    on:click=click(HitTarget::Tab(index), on_activate)
                 >{label}</span>
             }
             .into_any()
         })
         .collect();
     view! {
-        <header class=format!("shrink-0 border-b {RULE_BORDER}")>
-            <div class=BODY>
-                <div class=format!("{COLUMN} {CARD_PAD} pt-row")>
+        <header class="shrink-0 border-b border-[#d1d5db]">
+            <div class="px-2">
+                <div class="mx-auto w-full max-w-88 px-1 pt-row">
                     <div class="flex flex-wrap items-center">
                         // The name gives way below sixty characters — or on a
                         // screen too short to spend three rows on a wordmark —
@@ -247,7 +260,7 @@ fn header(app: &App, touch: bool, on_activate: impl Fn(&HitTarget) + Copy + 'sta
                     // the wordmark it is half a painted cell and half this
                     // row; the tabs and a plain row of type sit on it
                     // directly, the way a nav sits on the line under it.
-                    <div class=AIR_ROW></div>
+                    <div class="h-row shrink-0"></div>
                 </div>
             </div>
         </header>
@@ -259,89 +272,72 @@ fn header(app: &App, touch: bool, on_activate: impl Fn(&HitTarget) + Copy + 'sta
 
 /// The pane: everything under the header's rule. It draws no frame of its own
 /// — the rule is the one edge the app's chrome has, and the body hangs off it
-/// as a page hangs off a nav bar. In the full-screen app the pane is the box
-/// the browser scrolls; on the touch page the browser scrolls the whole page,
-/// and the pane is just the body.
-fn pane(app: &App, scrolls: bool, on_activate: impl Fn(&HitTarget) + Copy + 'static) -> AnyView {
-    let title = app.reader().map(|post| title_row(post, on_activate));
-    let body: Vec<AnyView> = match app.reader() {
-        Some(post) => reader_pane(post, scrolls, on_activate),
-        None => vec![tab_pane(app, scrolls, on_activate)],
+/// as a page hangs off a nav bar. The pane is the box the browser scrolls,
+/// built once per run of the app: only its body changes hands as the views
+/// do, so the box keeps its place across a keystroke that changes nothing
+/// about which view is up.
+fn pane(model: Model, on_activate: impl Activate) -> AnyView {
+    // The reader is the one view that is not a tab's own pane — it fills the
+    // Blog tab's — so it is asked about before the tabs are.
+    let body = move || match model.reader.get() {
+        Some(post) => reader_pane(post, on_activate),
+        None => match model.tab.get() {
+            TIMELINE_TAB => timeline_tree(model, on_activate),
+            BLOG_TAB => blog_tree(model, on_activate),
+            ABOUT_TAB => code_listing(about_lines(), on_activate),
+            HELP_TAB => help_listing(),
+            _ => view! { <div></div> }.into_any(),
+        },
     };
     view! {
         <main class="flex min-h-0 w-full flex-1 flex-col">
-            {title}
-            {body}
-        </main>
-    }
-    .into_any()
-}
-
-/// The reader's close button, padded either side so the target is three cells
-/// wide rather than one — it is aimed at with a fingertip.
-const CLOSE_LABEL: &str = " x ";
-
-/// What the pane holds for the tab in front. The reader is the one view that
-/// is not a tab's own pane — it fills the Blog tab's — so it is asked about
-/// before the tabs are.
-fn tab_pane(
-    app: &App,
-    scrolls: bool,
-    on_activate: impl Fn(&HitTarget) + Copy + 'static,
-) -> AnyView {
-    let body = match app.tab() {
-        TIMELINE_TAB => timeline_tree(app, on_activate),
-        BLOG_TAB => blog_tree(app, on_activate),
-        ABOUT_TAB => code_listing(about_lines(), on_activate),
-        HELP_TAB => help_listing(),
-        _ => view! { <div></div> }.into_any(),
-    };
-    if scrolls {
-        view! {
             // The wrapper holds the body's margin off the screen edges; the
             // scroll box inside it is pinned to the room that is left with
             // `h-full` — the wrapper's own height is definite (it is a
             // `flex-1 min-h-0` child of the pane), so this box is the one that
             // overflows, and the one that scrolls.
-            <div class=format!("min-h-0 w-full flex-1 {BODY}")>
-                <div class=format!("{} h-full", super::SCROLL) data-pane="">
-                    <div class=COLUMN>{body}</div>
+            <div class="min-h-0 w-full flex-1 px-2">
+                <div class=format!("{} h-full", super::SCROLL) node_ref=model.pane>
+                    <div class="mx-auto w-full max-w-88">{body}</div>
                 </div>
             </div>
-        }
-        .into_any()
-    } else {
-        view! {
-            <div class="w-full">
-                <div class=BODY>
-                    <div class=COLUMN>{body}</div>
-                </div>
-            </div>
-        }
-        .into_any()
+        </main>
     }
+    .into_any()
 }
 
-/// The pane's title row. Only the reader names itself, centered over the pane:
-/// a tab is already named — and marked as the one in front — by the header a
-/// row above. A spacer as wide as the close button balances the row, so the
-/// title is centered over the pane, not over the room the button leaves.
-fn title_row(post: usize, on_activate: impl Fn(&HitTarget) + Copy + 'static) -> AnyView {
+fn post_header(post: usize, on_activate: impl Activate) -> AnyView {
     let title = posts::POSTS[post].title().decrypt();
+    let date = posts::POSTS[post].formatted_date();
+    // The post's heading, as a role rather than a tag: the site's own
+    // stylesheet sets `h1` for its prose pages, and the terminal sets every
+    // letter of its own type itself. A heading without a level reads as
+    // level two, and Leptos has no typed `aria-level`, so the one attribute
+    // goes on through the custom-attribute hatch.
+    let heading = view! {
+        <div
+            role="heading"
+            class="min-w-0 break-words text-[1.6em] leading-[1.25] font-bold text-[#2563eb]"
+        >
+            {title}
+        </div>
+    }
+    .add_any_attr(custom_attribute("aria-level", "1"));
     view! {
-        <div class=BODY>
-            <div class=format!("{COLUMN} {CARD_PAD}")>
-                <div class="grid w-full grid-cols-[3ch_1fr_3ch] items-center whitespace-pre">
-                    <span></span>
-                    <span class=format!("min-w-0 truncate text-center font-bold {ACCENT_TEXT_CLASS}")>
-                        {format!(" {title} ")}
-                    </span>
-                    <span
-                        class=format!("cursor-pointer text-center font-bold {ACCENT_TEXT_CLASS}")
-                        on:click=click(HitTarget::Close, on_activate)
-                    >{CLOSE_LABEL}</span>
-                </div>
+        <div class="w-full">
+            <div class="h-row shrink-0"></div>
+            <div class="grid w-full grid-cols-[1fr_3ch] items-start">
+                {heading}
+                // `leading-[2]` is one line of the title, so the x is centered on it.
+                <span
+                    class="cursor-pointer whitespace-pre text-center font-bold leading-[2] text-[#2563eb]"
+                    on:click=click(HitTarget::Close, on_activate)
+                >" x "</span>
             </div>
+            <div class="min-h-row whitespace-pre pt-[0.5lh]">
+                <span style=style_of(theme::MUTED)>{date}</span>
+            </div>
+            <div class="h-row shrink-0"></div>
         </div>
     }
     .into_any()
@@ -352,62 +348,49 @@ fn title_row(post: usize, on_activate: impl Fn(&HitTarget) + Copy + 'static) -> 
 /// The timeline: a column of cards down the middle of the pane, a rail run
 /// down the gutter of each one. The column is the reading measure rather than
 /// the whole screen, so a wrapped description keeps a line length the eye can
-/// track however wide the window is opened.
-fn timeline_tree(app: &App, on_activate: impl Fn(&HitTarget) + Copy + 'static) -> AnyView {
-    let selected = app.selected(TIMELINE_TAB);
+/// track however wide the window is opened. To the platform it is a listbox
+/// and its options, so the arrows, the focus and a screen reader all work on
+/// it the way they work on any list.
+fn timeline_tree(model: Model, on_activate: impl Activate) -> AnyView {
+    let options: Vec<NodeRef<html::Li>> =
+        (0..data::TIMELINE.len()).map(|_| NodeRef::new()).collect();
+    focus_follows_selection(model.timeline_selected, &options);
     let cards: Vec<AnyView> = data::TIMELINE
         .iter()
         .enumerate()
-        .map(|(index, event)| card_tree(event, index, index == selected, on_activate))
+        .map(|(index, event)| card_tree(event, index, model, options[index], on_activate))
         .collect();
-    view! { <div>{cards}</div> }.into_any()
+    view! {
+        <ul role="listbox" aria-orientation="vertical" aria-label=TIMELINE_LIST_LABEL.decrypt()>
+            {cards}
+        </ul>
+    }
+    .into_any()
 }
-
-/// The largest a card's thumbnail is drawn at. Where it lands inside that is
-/// the picture's own business: the browser has the file and knows its shape.
-const THUMB_MAX_W: &str = "max-w-[min(100%,32ch)]";
-const THUMB_MAX_H: &str = "max-h-[8lh]";
-
-/// The same, for a post's artwork.
-const HERO_MAX_H: &str = "max-h-[16lh]";
 
 /// One of a card's link buttons, numbered after the digit that opens it on the
 /// Timeline tab.
 fn link_button_label(index: usize, link: &data::Link) -> String {
-    format!("{} {} ", index + 1, link.name.decrypt().to_uppercase())
+    format!("{} {}", index + 1, link.name.decrypt().to_uppercase())
 }
 
-/// One card of the timeline. The rail is a painted line down the gutter, one
-/// unbroken line from the top of the card to the bottom; the marker's own box
-/// is painted over it, which is what breaks the rail around the marker
-/// exactly as the design has always drawn it.
+/// One card of the timeline: an option of the tab's listbox. The rail is a
+/// painted line down the gutter, one unbroken line from the top of the card
+/// to the bottom; the marker's own box is painted over it, which is what
+/// breaks the rail around the marker exactly as the design has always drawn
+/// it.
 fn card_tree(
-    event: &data::TimelineEvent,
+    event: &'static data::TimelineEvent,
     index: usize,
-    selected: bool,
-    on_activate: impl Fn(&HitTarget) + Copy + 'static,
+    model: Model,
+    option: NodeRef<html::Li>,
+    on_activate: impl Activate,
 ) -> AnyView {
-    let pick = |plain: theme::Color| {
-        if selected {
-            theme::SELECT_FG
-        } else {
-            plain
-        }
-    };
-    let title_style = style_of(pick(theme::TEXT));
-    let time_style = style_of(pick(theme::MUTED));
-    let tag_style = style_of(pick(event.category.color()));
-    let marker_box = if selected {
-        SELECT_BG_CLASS
-    } else {
-        SURFACE_CLASS
-    };
-    let marker = if selected { "▸  " } else { "●  " };
-    let mut card_class = format!("relative w-full {CARD_PAD}");
-    if selected {
-        card_class.push(' ');
-        card_class.push_str(SELECT_BG_CLASS);
-    }
+    let selected = is_selected(model.timeline_selected, index);
+    // The tag is set in its category's color, which is the one color here the
+    // palette picks per card: it is handed to CSS as a variable, so the
+    // selected look can still take it over.
+    let tag_style = format!("--tag:{};", event.category.color().css());
 
     // What the card carries under its time: the artwork first, as the homepage
     // card leads with its media, then the description and the links. Each is
@@ -420,9 +403,9 @@ fn card_tree(
         sections.push(
             view! {
                 <div class="mt-row">
-                    <div class=GUTTER>
+                    <div class="pl-3">
                         <img
-                            class=format!("block h-auto max-w-full w-auto {THUMB_MAX_W} {THUMB_MAX_H}")
+                            class="block h-auto max-w-full w-auto max-w-[min(100%,32ch)] max-h-[8lh]"
                             src=url.to_string()
                             alt=""
                         />
@@ -433,12 +416,13 @@ fn card_tree(
         );
     }
     if let Some(detail) = event.detail {
-        let detail_style = style_of(pick(theme::SUBTLE));
         sections.push(
             view! {
                 <div class="mt-row">
-                    <div class=format!("whitespace-pre-wrap {GUTTER}")>
-                        <span style=detail_style>{detail.decrypt()}</span>
+                    <div class="whitespace-pre-wrap pl-3">
+                        <span class="text-[#374151] group-aria-selected:text-[#1e3a8a]">
+                            {detail.decrypt()}
+                        </span>
                     </div>
                 </div>
             }
@@ -454,7 +438,7 @@ fn card_tree(
                 let label = link_button_label(link_index, link);
                 view! {
                     <span
-                        class=format!("cursor-pointer font-bold {ACCENT_TEXT_CLASS}")
+                        class="cursor-pointer border border-[#2563eb] px-1 font-bold text-[#2563eb] hover:bg-[#2563eb] hover:text-[#f7f7f7]"
                         on:click=click(HitTarget::Link(link.url.decrypt()), on_activate)
                     >{label}</span>
                 }
@@ -464,9 +448,7 @@ fn card_tree(
         sections.push(
             view! {
                 <div class="mt-row">
-                    // `whitespace-pre` keeps the air at the end of each label:
-                    // it is the space between one button and the next.
-                    <div class=format!("flex w-full flex-wrap whitespace-pre {GUTTER}")>{buttons}</div>
+                    <div class="flex w-full flex-wrap gap-x-1 gap-y-row whitespace-pre pl-3">{buttons}</div>
                 </div>
             }
             .into_any(),
@@ -475,41 +457,53 @@ fn card_tree(
 
     let tag = format!("[{}]", event.category.label());
     view! {
-        <div
-            class=card_class
-            data-card=index.to_string()
-            data-selected=selected.then_some("")
+        <li
+            role="option"
+            class="group relative w-full px-1 aria-selected:bg-[#dbeafe] outline-hidden"
+            aria-selected=move || if selected.get() { "true" } else { "false" }
+            aria-setsize=data::TIMELINE.len()
+            aria-posinset=index + 1
+            tabindex=move || if selected.get() { 0 } else { -1 }
+            node_ref=option
             on:click=click(HitTarget::Item(index), on_activate)
+            on:mousemove=hover(model, index, on_activate)
         >
-            <div class=format!("pointer-events-none absolute inset-y-0 left-[calc(1.5ch_-_0.5px)] w-px {RAIL_CLASS}")></div>
+            <div class="pointer-events-none absolute inset-y-0 left-[calc(1.5ch_-_0.5px)] w-px bg-[#2563eb]"></div>
             // The row of air above the title: what separates one card from the
             // last. On the selected card it is tinted with the rest, so the
             // highlight opens a row above the title rather than cutting flush
             // against it.
-            <div class=AIR_ROW></div>
+            <div class="h-row shrink-0"></div>
             // The title row: the marker holds the gutter, the category tag
             // holds the right edge, and the title takes whatever is left — cut
             // where it runs out, as the homepage card header does.
             <div class="flex w-full whitespace-pre">
-                <div class=format!("w-3 shrink-0 {marker_box}")>
-                    <span class=format!("font-bold {ACCENT_TEXT_CLASS}")>{marker}</span>
+                // The marker's box is painted over the rail, in whichever
+                // color the card is: that is what breaks the rail around it.
+                <div class="w-3 shrink-0 bg-[#f7f7f7] font-bold text-[#2563eb] group-aria-selected:bg-[#dbeafe]">
+                    <span class="group-aria-selected:hidden">"●  "</span>
+                    <span class="hidden group-aria-selected:inline">"▸  "</span>
                 </div>
                 <div class="min-w-0 flex-1">
-                    <span class="block truncate font-bold" style=title_style>
+                    <span class="block truncate font-bold text-[#1c1e21] group-aria-selected:text-[#1e3a8a]">
                         {event.title.decrypt()}
                     </span>
                 </div>
-                <span class="shrink-0" style=tag_style>{tag}</span>
+                <span class="shrink-0 text-(--tag) group-aria-selected:text-[#1e3a8a]" style=tag_style>
+                    {tag}
+                </span>
             </div>
             <div class="flex w-full whitespace-pre">
                 <div class="w-3 shrink-0"></div>
-                <span style=time_style>{event.time.decrypt()}</span>
+                <span class="text-[#4b5563] group-aria-selected:text-[#1e3a8a]">
+                    {event.time.decrypt()}
+                </span>
             </div>
             {sections}
             // The row of air that closes the card, so the tint under a
             // selected one ends a row past its last line rather than on it.
-            <div class=AIR_ROW></div>
-        </div>
+            <div class="h-row shrink-0"></div>
+        </li>
     }
     .into_any()
 }
@@ -518,134 +512,100 @@ fn card_tree(
 
 /// The blog index: a centered column of cards, each carrying a post's title
 /// and its date and nothing else, as `/blog` reads on the web. The whole card
-/// is one click target, so clicking anywhere on it opens the post.
-fn blog_tree(app: &App, on_activate: impl Fn(&HitTarget) + Copy + 'static) -> AnyView {
-    let selected = app.selected(BLOG_TAB);
+/// is one click target, so clicking anywhere on it opens the post; the
+/// pointer moving onto one selects it, as the arrow keys would. To the
+/// platform it is a listbox and its options, like the timeline.
+fn blog_tree(model: Model, on_activate: impl Activate) -> AnyView {
+    let options: Vec<NodeRef<html::Li>> = (0..posts::POSTS.len()).map(|_| NodeRef::new()).collect();
+    focus_follows_selection(model.blog_selected, &options);
     let cards: Vec<AnyView> = posts::POSTS
         .iter()
         .enumerate()
-        .map(|(index, post)| post_card_tree(post, index, index == selected, on_activate))
+        .map(|(index, post)| post_card_tree(post, index, model, options[index], on_activate))
         .collect();
-    view! { <div>{cards}</div> }.into_any()
+    view! {
+        <ul role="listbox" aria-orientation="vertical" aria-label=BLOG_LIST_LABEL.decrypt()>
+            {cards}
+        </ul>
+    }
+    .into_any()
 }
 
 /// A blog card: a hairline box carrying the title as its heading and the date
 /// under it. A post that lives elsewhere is marked with the same `↗` the web
-/// index appends to its title.
+/// index appends to its title. The option is the card whole — the box a
+/// screen reader names and focus lands on — and the hairline frame inside it
+/// is the part the pointer acts on.
 fn post_card_tree(
-    post: &posts::Post,
+    post: &'static posts::Post,
     index: usize,
-    selected: bool,
-    on_activate: impl Fn(&HitTarget) + Copy + 'static,
+    model: Model,
+    option: NodeRef<html::Li>,
+    on_activate: impl Activate,
 ) -> AnyView {
-    // The title is the card's link on the web, and reads as one here.
-    let title_style = style_of(if selected {
-        theme::SELECT_FG
-    } else {
-        theme::ACCENT_TEXT
-    });
-    let date_style = style_of(if selected {
-        theme::SELECT_FG
-    } else {
-        theme::MUTED
-    });
-    // A cell for the frame, and a cell of air inside it: the card keeps its
-    // text off its own border.
-    let mut frame_class = String::from("w-full border px-2 py-row ");
-    frame_class.push_str(if selected {
-        "border-[#3b82f6]"
-    } else {
-        RULE_BORDER
-    });
-    frame_class.push(' ');
-    frame_class.push_str(if selected {
-        SELECT_BG_CLASS
-    } else {
-        SURFACE_CLASS
-    });
+    let selected = is_selected(model.blog_selected, index);
     let title = if post.is_external() {
         format!("{} ↗", post.title())
     } else {
         post.title().to_string()
     };
     view! {
-        <div
-            class="w-full"
-            data-card=index.to_string()
-            data-selected=selected.then_some("")
-            on:click=click(HitTarget::Item(index), on_activate)
+        <li
+            role="option"
+            class="group w-full outline-hidden"
+            aria-selected=move || if selected.get() { "true" } else { "false" }
+            aria-setsize=posts::POSTS.len()
+            aria-posinset=index + 1
+            tabindex=move || if selected.get() { 0 } else { -1 }
+            node_ref=option
         >
             // The row of air above every card: the gap between the web's
             // cards, and what keeps the first one off the pane's title row.
-            <div class=AIR_ROW></div>
-            <div class=frame_class>
+            <div class="h-row shrink-0"></div>
+            // A cell for the frame, and a cell of air inside it: the card
+            // keeps its text off its own border. The frame is the card as far
+            // as the pointer is concerned: what it hovers to select, and what
+            // it clicks to open.
+            <div
+                class="w-full cursor-pointer border border-[#d1d5db] bg-[#f7f7f7] px-2 py-row group-aria-selected:border-[#3b82f6] group-aria-selected:bg-[#dbeafe]"
+                on:click=click(HitTarget::Item(index), on_activate)
+                on:mousemove=hover(model, index, on_activate)
+            >
+                // The title is the card's link on the web, and reads as one here.
                 <div class="min-h-row">
-                    <span class="block truncate font-bold" style=title_style>{title}</span>
+                    <span class="block truncate font-bold text-[#2563eb] group-aria-selected:text-[#1e3a8a]">
+                        {title}
+                    </span>
                 </div>
                 <div class="min-h-row whitespace-pre">
-                    <span style=date_style>{post.formatted_date()}</span>
+                    <span class="text-[#4b5563] group-aria-selected:text-[#1e3a8a]">
+                        {post.formatted_date()}
+                    </span>
                 </div>
             </div>
-        </div>
+        </li>
     }
     .into_any()
 }
 
 // --- The reader -----------------------------------------------------------------
 
-/// The reader: the post's date pinned over the scrolling body, as the web's
-/// post header carries it, with a row of air under the date.
-fn reader_pane(
-    post: usize,
-    scrolls: bool,
-    on_activate: impl Fn(&HitTarget) + Copy + 'static,
-) -> Vec<AnyView> {
-    let date = posts::POSTS[post].formatted_date();
-    let date_row = view! {
-        <div class="w-full shrink-0">
-            <div class=BODY>
-                <div class=COLUMN>
-                    <div class="min-h-row whitespace-pre">
-                        <span style=style_of(theme::MUTED)>{date}</span>
-                    </div>
-                    <div class=AIR_ROW></div>
-                </div>
-            </div>
-        </div>
-    };
-    let blocks: Vec<AnyView> = markdown::post_blocks(&posts::POSTS[post].body().decrypt())
-        .into_iter()
-        .map(|block| block_view(block, on_activate))
-        .collect();
-    let scroller = if scrolls {
-        view! {
-            // Pinned with `h-full` for the same reason as the tabs' pane: the
-            // wrapper is a `flex-1 min-h-0` child of the pane, so its height
-            // is definite and this box is the one that overflows.
-            <div class=format!("min-h-0 w-full flex-1 {BODY}")>
-                <div class=format!("{} h-full", super::SCROLL) data-pane="">
-                    <div class=COLUMN>{blocks}</div>
-                </div>
-            </div>
-        }
-        .into_any()
-    } else {
-        view! {
-            <div class="w-full">
-                <div class=BODY>
-                    <div class=COLUMN>{blocks}</div>
-                </div>
-            </div>
-        }
-        .into_any()
-    };
-    vec![date_row.into_any(), scroller]
+/// A post, parsed and laid out once — here, when it is opened; a keystroke
+/// that only scrolls it never comes back this way.
+fn reader_pane(post: usize, on_activate: impl Activate) -> AnyView {
+    let mut blocks = vec![post_header(post, on_activate)];
+    blocks.extend(
+        markdown::post_blocks(&posts::POSTS[post].body().decrypt())
+            .into_iter()
+            .map(|block| block_view(block, on_activate)),
+    );
+    view! { <div>{blocks}</div> }.into_any()
 }
 
 /// One block of a post, as the browser lays it out: paragraphs and headings
 /// wrap at the measure they land at, quotes hang off a bar, code keeps its
 /// lines and scrolls when it has to.
-fn block_view(block: Block, on_activate: impl Fn(&HitTarget) + Copy + 'static) -> AnyView {
+fn block_view(block: Block, on_activate: impl Activate) -> AnyView {
     match block {
         Block::Line(line) => styled_line(&line, true, on_activate),
         Block::Bullet(line) => {
@@ -713,7 +673,7 @@ fn block_view(block: Block, on_activate: impl Fn(&HitTarget) + Copy + 'static) -
         }
         Block::Image { url } => view! {
             <img
-                class=format!("block h-auto max-w-full w-auto {HERO_MAX_H}")
+                class="block h-auto max-w-full w-auto max-h-[16lh]"
                 src=url.to_string()
                 alt=""
             />
@@ -731,20 +691,43 @@ fn about_lines() -> Vec<Line> {
     lines
 }
 
+/// samlang's indent width: a wrapped line continues one level in from its own.
+const INDENT: usize = 2;
+
+/// Where the rest of a line lands when it wraps: past the line's own indent —
+/// and, on a line of a block comment, past its ` * ` gutter — then one level
+/// in, so the continuation is indented under the line it belongs to rather
+/// than lined up with the one below it.
+fn hang_of(line: &Line) -> usize {
+    let text: String = line.iter().map(|span| span.text.as_str()).collect();
+    let indent = text.len() - text.trim_start().len();
+    let gutter = if text[indent..].starts_with("* ") {
+        2
+    } else {
+        0
+    };
+    indent + gutter + INDENT
+}
+
 /// The About tab: the doc comment and the program, set exactly as they are
 /// written. The listing keeps to its own width and sits centered over the
-/// measure, however wide the screen is; the lines never wrap — an indent
-/// surviving is worth more than a line that fits — so it scrolls when the
-/// screen is narrower than it, the way a code block on the web does.
-fn code_listing(lines: Vec<Line>, on_activate: impl Fn(&HitTarget) + Copy + 'static) -> AnyView {
+/// measure, however wide the screen is. A line wider than the screen — the
+/// longer URLs of the doc comment, on a phone — wraps under its own indent
+/// ([`hanging_line`]) rather than off the edge: the indents survive, which is
+/// what makes the code legible, and nothing scrolls sideways behind a
+/// scrollbar a phone never shows.
+fn code_listing(lines: Vec<Line>, on_activate: impl Activate) -> AnyView {
     let rows: Vec<AnyView> = lines
         .iter()
-        .map(|line| styled_line(line, false, on_activate))
+        .map(|line| hanging_line(line, hang_of(line), on_activate))
         .collect();
+    // `w-fit` under `max-w-full`: the listing is as wide as its longest line
+    // where there is room for it, and the measure where there is not — the
+    // rows wrap inside whichever it is.
     view! {
-        <div class="mx-auto w-fit max-w-full overflow-x-auto">
-            <div class=AIR_ROW></div>
-            <div class="whitespace-pre">{rows}</div>
+        <div class="mx-auto w-fit max-w-full">
+            <div class="h-row shrink-0"></div>
+            <div>{rows}</div>
         </div>
     }
     .into_any()
@@ -814,7 +797,7 @@ fn help_listing() -> AnyView {
     .collect();
     view! {
         <div>
-            <div class=AIR_ROW></div>
+            <div class="h-row shrink-0"></div>
             {rows}
         </div>
     }

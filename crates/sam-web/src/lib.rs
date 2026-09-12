@@ -5,14 +5,20 @@
 //! selected, and whether a post is open. It holds no scroll position of its own
 //! — the pane under the header is an ordinary scrolling box, so the browser
 //! remembers where the visitor is and the app only ever asks it to move
-//! ([`HostEvent::Scroll`]). What renders is a pure function of the state; every
+//! ([`Errand::Scroll`]). What renders is a function of the state; every
 //! measure of the layout is CSS, in `ch` and `lh`, that the browser resolves
 //! against the real viewport.
 //!
-//! Routing: the app owns a set of site paths ([`TAB_ROUTES`] and permalinks),
-//! publishes the one it is on so the URL bar can follow, and accepts a path
-//! from the host (a URL entered, a link followed, the back button) through
-//! [`request_route`].
+//! Every input is a method call ([`App::handle_key`], [`App::activate`],
+//! [`App::go_to`]) that changes the state and leaves behind whatever it needs
+//! the browser to do ([`App::take_errands`]). The app owns no queue anyone
+//! polls and reads no mailbox anyone fills: the front-end calls it, then acts
+//! on what it handed back.
+//!
+//! Routing: the app owns a set of site paths ([`TAB_ROUTES`] and permalinks)
+//! and reports the one it is on ([`App::route`]); the front-end keeps the URL
+//! bar on it, and brings a path in (a URL entered, a link followed, the back
+//! button) through [`App::go_to`].
 
 pub mod crypt;
 pub mod data;
@@ -98,45 +104,18 @@ pub enum Scroll {
     Bottom,
 }
 
-/// Something only the browser can do. The app hands these to the host one at a
-/// time; the front-end applies them as they arrive.
+/// Something only the browser can do, left behind by the input that asked for
+/// it and taken with [`App::take_errands`]. Bringing the selected card into
+/// view is not one of these: the selected card is the focused one, and the
+/// browser scrolls a freshly focused element into view on its own.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum HostEvent {
-    /// Open a URL that is not a view of this app.
+pub enum Errand {
+    /// Open a URL that is not a view of this app, in a new tab.
     Open(String),
-    /// Load one of this app's own views, as the browser loads a page. Only the
-    /// touch build asks for this: it draws one view, whole, and has nowhere to
-    /// put another — so moving between them is a navigation rather than a
-    /// [`HostEvent::Route`] over a view that changed underneath.
-    Navigate(SitePath),
-    /// Put the URL bar and the document title on a view.
-    Route {
-        replace: bool,
-        path: SitePath,
-        title: String,
-    },
     /// Move the pane the app is showing.
     Scroll(Scroll),
-    /// Bring the selected card into view, and no further: arrowing down a list
-    /// slides the pane by a card, not by a screenful.
-    Reveal,
-}
-
-/// Queues work for the host.
-pub fn push_host_event(event: HostEvent) {
-    HOST_EVENTS.with(|queue| queue.borrow_mut().push_back(event));
-}
-
-/// Takes the next thing the host has to do, if any.
-pub fn poll_host_event() -> Option<HostEvent> {
-    HOST_EVENTS.with(|queue| queue.borrow_mut().pop_front())
-}
-
-/// Forgets that this run ever synced a route, so the next one replaces rather
-/// than pushes. Called when a session boots.
-pub fn reset_route_sync() {
-    ROUTE_SYNCED.with(|synced| synced.set(false));
-    CURRENT_ROUTE.with(|route| *route.borrow_mut() = None);
+    /// Leave the app: `q`, Ctrl+C, Ctrl+D.
+    Quit,
 }
 
 /// The one view the app is showing: a tab, or a post open in the reader — never
@@ -178,80 +157,6 @@ impl Screen {
     }
 }
 
-thread_local! {
-    /// Work for the host, taken one event at a time by the front-end.
-    static HOST_EVENTS: std::cell::RefCell<std::collections::VecDeque<HostEvent>> =
-        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
-    /// Whether this run has put the URL bar on a view yet. The first one
-    /// replaces, so booting from `/` leaves no shell entry behind for the back
-    /// button; every later one pushes.
-    static ROUTE_SYNCED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// A view the host has asked for — a URL entered, a link followed, or the
-    /// back button. Applied by the next [`App`] to look, which is either the
-    /// one being built ([`App::new`]) or the one handling the next event.
-    static PENDING_ROUTE: std::cell::RefCell<Option<SitePath>> =
-        const { std::cell::RefCell::new(None) };
-    /// Set when the host has decided the visitor has left the app — the back
-    /// button landing somewhere the app has no view for. Applied by the next
-    /// frame, so the app exits through its own path.
-    static PENDING_QUIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The view the app is on, republished every frame for the host to read.
-    /// `None` until the first one is drawn.
-    static CURRENT_ROUTE: std::cell::RefCell<Option<SitePath>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Asks the app to show the view at `path`. Takes effect on the next frame.
-pub fn request_route(path: &SitePath) {
-    PENDING_ROUTE.with(|pending| *pending.borrow_mut() = Some(path.clone()));
-}
-
-/// Records the view a frame is about to draw, queueing a [`HostEvent::Route`]
-/// whenever it changes so the URL bar and the document title follow the app.
-pub fn publish_route(route: SitePath) {
-    let changed = CURRENT_ROUTE.with(|current| {
-        let mut current = current.borrow_mut();
-        if current.as_ref() == Some(&route) {
-            return false;
-        }
-        *current = Some(route.clone());
-        true
-    });
-    if !changed {
-        return;
-    }
-    let replace = !ROUTE_SYNCED.with(|synced| synced.replace(true));
-    let title = title_for(&route);
-    push_host_event(HostEvent::Route {
-        replace,
-        path: route,
-        title,
-    });
-}
-
-/// Takes whatever view the host last asked for, leaving nothing behind: a
-/// request is applied once, by the first frame to look.
-pub(crate) fn take_pending_route() -> Option<SitePath> {
-    PENDING_ROUTE.with(|pending| pending.borrow_mut().take())
-}
-
-/// Asks the app to exit. Takes effect on the next frame.
-pub fn request_quit() {
-    PENDING_QUIT.with(|pending| pending.set(true));
-}
-
-/// Takes the host's exit request, leaving nothing behind.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-pub(crate) fn take_pending_quit() -> bool {
-    PENDING_QUIT.with(|pending| pending.replace(false))
-}
-
-/// What [`App::selected`] reads while nothing is: an index no list can reach,
-/// so every `index == selected` test a card makes comes out false. Only the
-/// touch build ever sees it — a page drawn once has nothing to move.
-const NO_SELECTION: usize = usize::MAX;
-
-/// Clone is used to snapshot state for pure rendering.
 #[derive(Clone)]
 pub struct App {
     /// The view on screen. Everything that changes what the app is showing goes
@@ -263,8 +168,9 @@ pub struct App {
     /// across a post being opened and closed, so a tab is returned to where it
     /// was left.
     selected: [usize; TAB_COUNT],
-    pub quit: bool,
-    actions: Vec<Action>,
+    /// What the inputs since the last [`App::take_errands`] asked of the
+    /// browser, in order.
+    errands: Vec<Errand>,
 }
 
 impl Default for App {
@@ -274,60 +180,27 @@ impl Default for App {
 }
 
 impl App {
+    /// The app on its first tab. A deep link is followed with [`App::go_to`]
+    /// before the first frame, so what it draws is already the right view.
     pub fn new() -> Self {
-        let mut app = App {
+        App {
             screen: Screen::Tab(ABOUT_TAB),
             selected: [0; TAB_COUNT],
-            quit: false,
-            actions: Vec::new(),
-        };
-        // A URL entered before the app booted names the view it opens on, so
-        // the first frame a deep link draws is already the right one.
-        if let Some(route) = take_pending_route() {
-            app.go_to(&route);
-        }
-        app
-    }
-
-    /// The app as the touch build shows it: the view at `path`, and no state
-    /// beyond it. Nothing is selected — a page drawn once has no cursor to move.
-    pub fn page(path: &SitePath) -> Self {
-        let mut app = App {
-            screen: Screen::Tab(ABOUT_TAB),
-            selected: [NO_SELECTION; TAB_COUNT],
-            quit: false,
-            actions: Vec::new(),
-        };
-        app.go_to(path);
-        app.selected = [NO_SELECTION; TAB_COUNT];
-        app
-    }
-
-    /// The browser errand a tap on the page becomes. Everything the full-screen
-    /// app would have handled itself — a tab, a card, the reader's way out — is
-    /// a navigation here: the page holds one view, so reaching another one means
-    /// loading it.
-    pub fn tap(&self, target: &hit::HitTarget) -> Option<HostEvent> {
-        match target {
-            hit::HitTarget::Tab(index) => Some(HostEvent::Navigate(SitePath::new(
-                TAB_ROUTES[*index].decrypt(),
-            ))),
-            // Back to the index the post was opened from, which is where Esc
-            // and `q` leave a reader that has a screen to go back to.
-            hit::HitTarget::Close => Some(HostEvent::Navigate(SitePath::new(BLOG_ROUTE.decrypt()))),
-            hit::HitTarget::Link(url) => errand_for(url),
-            hit::HitTarget::Item(index) => self.item_errand(*index),
+            errands: Vec::new(),
         }
     }
 
-    /// What a click on a region of the current frame does in the full-screen
-    /// app: a pointer names the card it means by landing on it, so selecting
-    /// and opening are one act.
+    /// Takes what the browser has to do for the inputs handled so far, leaving
+    /// nothing behind.
+    pub fn take_errands(&mut self) -> Vec<Errand> {
+        std::mem::take(&mut self.errands)
+    }
+
+    /// What a click on a region of the current frame does: a pointer names the
+    /// card it means by landing on it, so selecting and opening are one act.
     pub fn activate(&mut self, target: &hit::HitTarget) {
         match target {
-            hit::HitTarget::Link(url) => {
-                self.actions.push(Action::OpenUrl(url.clone()));
-            }
+            hit::HitTarget::Link(url) => self.open_link(url),
             hit::HitTarget::Tab(index) => self.switch_tab(*index),
             // The same way out `q` and Esc take, for a pointer that has
             // neither: a phone reads posts with nothing but taps.
@@ -338,27 +211,39 @@ impl App {
                     self.open_selected();
                 }
             }
+            hit::HitTarget::Hover(index) => {
+                self.hover(*index);
+            }
         }
     }
 
-    /// Where tapping a whole card leads: the post it names, or — on the
-    /// timeline, whose cards are their own detail view — the first of its links,
-    /// exactly as Enter opens them.
-    fn item_errand(&self, index: usize) -> Option<HostEvent> {
-        match self.tab() {
-            BLOG_TAB => {
-                let post = posts::POSTS.get(index)?;
-                if post.is_external() {
-                    errand_for(&post.url())
-                } else {
-                    Some(HostEvent::Navigate(post.path()))
-                }
+    /// A pointer moving onto a card of a list tab: the card is selected, as
+    /// the arrow keys would select it, and that is all — the pointer is
+    /// already on the card, so there is nothing to bring into view. Reports
+    /// whether the selection moved, so the front-end redraws only when it did
+    /// and not on every twitch of the pointer over the card it is on.
+    pub fn hover(&mut self, index: usize) -> bool {
+        let tab = self.tab();
+        if self.reader().is_some() || !matches!(tab, TIMELINE_TAB | BLOG_TAB) {
+            return false;
+        }
+        if self.selected[tab] == index {
+            return false;
+        }
+        self.selected[tab] = index;
+        true
+    }
+
+    /// Follows a link: to the view of this app it names, without the browser
+    /// hearing of it, or out to the web in a new tab — and nowhere at all for
+    /// a URL that is neither ([`LinkTarget::Ignore`]).
+    fn open_link(&mut self, url: &str) {
+        match link_target(url) {
+            LinkTarget::View(path) => {
+                self.go_to(&path);
             }
-            TIMELINE_TAB => {
-                let event = data::TIMELINE.get(index)?;
-                errand_for(&event.links.first()?.url.decrypt())
-            }
-            _ => None,
+            LinkTarget::External(url) => self.errands.push(Errand::Open(url)),
+            LinkTarget::Ignore => {}
         }
     }
 
@@ -396,39 +281,10 @@ impl App {
         self.selected[tab]
     }
 
-    /// Holds the selection to the cards the pane is actually showing, which the
-    /// front-end reports as the visitor scrolls. Without it the selection stays
-    /// where the scrolling started and the next arrow press snaps the pane back
-    /// to it — the jump that makes wheel scrolling feel broken.
-    pub fn selection_in_view(&mut self, first: usize, last: usize) {
-        let tab = self.tab();
-        if self.reader().is_some() || !matches!(tab, TIMELINE_TAB | BLOG_TAB) {
-            return;
-        }
-        if self.selected[tab] != NO_SELECTION && first <= last {
-            self.selected[tab] = self.selected[tab].clamp(first, last);
-        }
-    }
-
-    /// Drains the side effects the latest input produced. A link naming a view
-    /// of this app is followed here rather than handed to the browser, so the
-    /// two never disagree about what this app is responsible for.
-    pub fn take_actions(&mut self) {
-        for Action::OpenUrl(url) in std::mem::take(&mut self.actions) {
-            match link_target(&url) {
-                LinkTarget::View(path) => {
-                    self.go_to(&path);
-                }
-                LinkTarget::External(url) => push_host_event(HostEvent::Open(url)),
-                LinkTarget::Ignore => {}
-            }
-        }
-    }
-
     /// Feeds one keystroke into the state machine.
     pub fn handle_key(&mut self, key: Key, mods: Mods) {
         if mods.ctrl && matches!(key, Key::Char('c') | Key::Char('d')) {
-            self.quit = true;
+            self.errands.push(Errand::Quit);
             return;
         }
         if self.reader().is_some() {
@@ -441,7 +297,7 @@ impl App {
             Key::BackTab => self.switch_tab(self.tab() + TAB_COUNT - 1),
             Key::Esc => {}
             Key::Char('?') => self.switch_tab(HELP_TAB),
-            Key::Char('q') => self.quit = true,
+            Key::Char('q') => self.errands.push(Errand::Quit),
             // On the Timeline the digits belong to the selected card's links,
             // every one of them; the tabs stay a keystroke away on the arrows
             // and Tab.
@@ -449,14 +305,14 @@ impl App {
                 let index = c as usize - '1' as usize;
                 let event = self.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
                 if let Some(link) = data::TIMELINE[event].links.get(index) {
-                    self.actions.push(Action::OpenUrl(link.url.decrypt()));
+                    self.open_link(&link.url.decrypt());
                 }
             }
             Key::Char(c @ '1'..='4') => self.switch_tab(c as usize - '1' as usize),
             Key::Up | Key::Char('k') => self.step(-1),
             Key::Down | Key::Char('j') => self.step(1),
-            Key::PageUp => scroll(Scroll::Pages(-1)),
-            Key::PageDown => scroll(Scroll::Pages(1)),
+            Key::PageUp => self.scroll(Scroll::Pages(-1)),
+            Key::PageDown => self.scroll(Scroll::Pages(1)),
             Key::Home | Key::Char('g') => self.jump_to_edge(0),
             Key::End | Key::Char('G') => self.jump_to_edge(usize::MAX),
             Key::Enter => self.open_selected(),
@@ -472,14 +328,19 @@ impl App {
                 self.close_reader();
             }
             Key::Char('?') => self.switch_tab(HELP_TAB),
-            Key::Up | Key::Char('k') => scroll(Scroll::Rows(-1)),
-            Key::Down | Key::Char('j') => scroll(Scroll::Rows(1)),
-            Key::PageUp => scroll(Scroll::Pages(-1)),
-            Key::PageDown => scroll(Scroll::Pages(1)),
-            Key::Home | Key::Char('g') => scroll(Scroll::Top),
-            Key::End | Key::Char('G') => scroll(Scroll::Bottom),
+            Key::Up | Key::Char('k') => self.scroll(Scroll::Rows(-1)),
+            Key::Down | Key::Char('j') => self.scroll(Scroll::Rows(1)),
+            Key::PageUp => self.scroll(Scroll::Pages(-1)),
+            Key::PageDown => self.scroll(Scroll::Pages(1)),
+            Key::Home | Key::Char('g') => self.scroll(Scroll::Top),
+            Key::End | Key::Char('G') => self.scroll(Scroll::Bottom),
             _ => {}
         }
+    }
+
+    /// Asks the browser to move the pane.
+    fn scroll(&mut self, by: Scroll) {
+        self.errands.push(Errand::Scroll(by));
     }
 
     /// Shows a tab, whole. A tab is a view in its own right rather than a layer
@@ -498,17 +359,18 @@ impl App {
         self.screen = Screen::Post(post);
     }
 
-    /// Leaves the reader for the index the post was opened from.
+    /// Leaves the reader for the Blog tab, on the card the post was opened
+    /// from: the index stayed on it ([`App::open_post`]), and the card comes
+    /// back focused, the pane around it where the tab was left.
     fn close_reader(&mut self) {
         self.switch_tab(BLOG_TAB);
-        push_host_event(HostEvent::Reveal);
     }
 
     /// One step of the arrow keys: the next card on a list tab, the next row on
     /// a tab that is only text.
     fn step(&mut self, direction: i32) {
         let Some(len) = self.list_len() else {
-            scroll(Scroll::Rows(direction));
+            self.scroll(Scroll::Rows(direction));
             return;
         };
         let selected = self.selected[self.tab()];
@@ -519,11 +381,11 @@ impl App {
         });
     }
 
-    /// Selects a card of the current list tab and asks for it to be brought
-    /// into view.
+    /// Selects a card of the current list tab. Bringing it into view is not
+    /// asked of the browser here: the view keeps focus on the selected card,
+    /// and the browser scrolls a freshly focused element into view by itself.
     fn select(&mut self, index: usize) {
         self.selected[self.tab()] = index;
-        push_host_event(HostEvent::Reveal);
     }
 
     /// Item count of the current tab, for the tabs that are lists.
@@ -538,7 +400,7 @@ impl App {
     fn jump_to_edge(&mut self, target: usize) {
         match self.list_len() {
             Some(len) => self.select(target.min(len.saturating_sub(1))),
-            None => scroll(if target == 0 {
+            None => self.scroll(if target == 0 {
                 Scroll::Top
             } else {
                 Scroll::Bottom
@@ -551,8 +413,7 @@ impl App {
             BLOG_TAB => {
                 let post = self.selected[BLOG_TAB].min(posts::POSTS.len() - 1);
                 if posts::POSTS[post].is_external() {
-                    let url = posts::POSTS[post].url();
-                    self.actions.push(Action::OpenUrl(url));
+                    self.open_link(&posts::POSTS[post].url());
                 } else {
                     self.open_post(post);
                 }
@@ -562,17 +423,12 @@ impl App {
             TIMELINE_TAB => {
                 let event = self.selected[TIMELINE_TAB].min(data::TIMELINE.len() - 1);
                 if let Some(link) = data::TIMELINE[event].links.first() {
-                    self.actions.push(Action::OpenUrl(link.url.decrypt()));
+                    self.open_link(&link.url.decrypt());
                 }
             }
             _ => {}
         }
     }
-}
-
-/// Asks the host to move the pane.
-fn scroll(by: Scroll) {
-    push_host_event(HostEvent::Scroll(by));
 }
 
 /// The view a site path names, if the app has one — a post at the top of it,
@@ -597,8 +453,8 @@ fn screen_at(path: &SitePath) -> Option<Screen> {
         .map(Screen::Tab)
 }
 
-/// Whether the app has a view at `path`. The host asks before following a link
-/// or a back button itself rather than handing it to the browser, so the two
+/// Whether the app has a view at `path`. The front-end asks before following
+/// a back button itself rather than handing it to the browser, so the two
 /// never disagree about what this app is responsible for.
 pub fn has_view(path: &SitePath) -> bool {
     screen_at(path).is_some()
@@ -625,33 +481,16 @@ pub fn title_for(path: &SitePath) -> String {
     }
 }
 
-/// A side effect requested by the app (opening a link).
-#[derive(Clone, PartialEq, Eq)]
-pub enum Action {
-    OpenUrl(String),
-}
-
 /// Where activating a link should lead.
 pub enum LinkTarget {
     /// A view of this app: follow it here, without touching the browser.
     View(SitePath),
-    /// Somewhere else on the web: the host opens it in a new tab.
+    /// Somewhere else on the web: the browser opens it in a new tab.
     External(String),
     /// Neither, so nothing happens. The page renders whatever bytes reach it,
     /// and a `javascript:` URL would run in that document — so anything but
-    /// http(s) is refused at the source rather than at the host's `window.open`.
+    /// http(s) is refused at the source rather than at `window.open`.
     Ignore,
-}
-
-/// [`link_target`] as the touch build acts on it: a view of this app is loaded
-/// as a page, since that build has nowhere to put a second one, and anything
-/// else is still the browser's to open.
-pub(crate) fn errand_for(url: &str) -> Option<HostEvent> {
-    match link_target(url) {
-        LinkTarget::View(path) => Some(HostEvent::Navigate(path)),
-        LinkTarget::External(url) => Some(HostEvent::Open(url)),
-        LinkTarget::Ignore => None,
-    }
 }
 
 /// Where the URL a link carries should lead.

@@ -4,10 +4,10 @@ import { useEffect, useRef } from "react";
 import init, { start } from "../app/generated/sam_web";
 
 /**
- * Phones and tablets, where the keyboard is an overlay that eats half the
- * viewport. A laptop with a touchscreen is not one of these: it has a real
- * keyboard, so the session there takes the screen over instead of drawing a
- * scrollable page.
+ * Phones and tablets: no keyboard to type `dev-sam` at the prompt with, so
+ * the app runs itself, and no keys to press, so the Help tab stays out of the
+ * bar. A laptop with a touchscreen is not one of these: it has a real
+ * keyboard, and gets the prompt.
  */
 function isTouchOnlyDevice(): boolean {
   return window.matchMedia("(hover: none) and (pointer: coarse)").matches;

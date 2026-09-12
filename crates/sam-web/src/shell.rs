@@ -42,10 +42,6 @@ const COMMANDS: [EncryptedString; 10] = [
     CMD_WHOAMI,
 ];
 
-/// The flag that asks `dev-sam` for the touch build. The host pre-types it on a
-/// phone, where it is the only way the app is ever run.
-const TOUCH_FLAG: EncryptedString = encrypted_str!("--touch");
-
 #[derive(Clone)]
 pub struct Shell {
     /// `[]` = `/home/sam`
@@ -56,16 +52,7 @@ pub struct Shell {
 pub enum CommandRunOutcome {
     RenderText(Vec<Line>),
     Clear,
-    LaunchApp(Launch),
-}
-
-/// How `dev-sam` was asked to run.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct Launch {
-    /// `--touch`: the build for a host that has no keyboard and scrolls the
-    /// page itself. It draws the same view, whole, for the page to scroll —
-    /// see [`crate::view`].
-    pub touch: bool,
+    LaunchApp,
 }
 
 impl Default for Shell {
@@ -86,6 +73,24 @@ impl Shell {
         &self.history
     }
 
+    /// `sam@developersam:~/projects$ `
+    pub fn prompt_spans(&self) -> Vec<Span> {
+        let mut cwd = String::from("~");
+        for segment in &self.cwd_segments {
+            cwd.push('/');
+            cwd.push_str(segment);
+        }
+        vec![
+            bold_colored(
+                encrypted_str!("sam@developersam").decrypt(),
+                theme::PROMPT_USER,
+            ),
+            colored(":", theme::MUTED),
+            colored(cwd, theme::ACCENT_TEXT),
+            colored("$ ", theme::MUTED),
+        ]
+    }
+
     pub fn execute(&mut self, line: &str) -> CommandRunOutcome {
         let line = line.trim();
         if line.is_empty() {
@@ -98,9 +103,7 @@ impl Shell {
         if command == CMD_CLEAR.decrypt() {
             CommandRunOutcome::Clear
         } else if command == CMD_DEV_SAM.decrypt() {
-            CommandRunOutcome::LaunchApp(Launch {
-                touch: args.iter().any(|arg| *arg == TOUCH_FLAG.decrypt()),
-            })
+            CommandRunOutcome::LaunchApp
         } else if command == CMD_HELP.decrypt() {
             CommandRunOutcome::RenderText(self.help())
         } else if command == CMD_LS.decrypt() {
@@ -213,12 +216,18 @@ impl Shell {
         };
         match fs_entries(&target) {
             Some(items) => {
+                let width = items
+                    .iter()
+                    .map(|(name, _)| name.chars().count())
+                    .max()
+                    .unwrap_or(0)
+                    + 2;
                 let mut contents = Vec::new();
                 for (name, directory) in items {
                     if directory {
-                        contents.push(bold_colored(format!("{name:<16}"), theme::ACCENT_TEXT));
+                        contents.push(bold_colored(format!("{name:<width$}"), theme::ACCENT_TEXT));
                     } else {
-                        contents.push(colored(format!("{name:<16}"), theme::TEXT));
+                        contents.push(colored(format!("{name:<width$}"), theme::TEXT));
                     }
                 }
                 // The listing ends where its last padded column ends.
@@ -416,6 +425,8 @@ fn one(span: Span) -> Line {
 /// cursor so the front-end can paint the block cursor over the character it
 /// sits on (or an empty cell at the end of the line).
 pub struct PromptRow {
+    /// Snapshotted with the row: a `cd` moves the shell's prompt on before the row is frozen.
+    pub prompt: Vec<Span>,
     pub before_cursor: Vec<Span>,
     /// The character under the cursor, if any.
     pub at_cursor: Option<char>,
@@ -433,17 +444,17 @@ impl PromptRow {
 }
 
 pub enum EditOutcome {
-    /// The key changed nothing on screen.
+    /// Nothing to print. The line may well have changed — a typed character,
+    /// a moved cursor — but the prompt row is drawn from the editor as it
+    /// stands, so there is nothing to hand over.
     None,
-    /// The prompt row's contents moved or changed.
-    Redraw,
     /// Lines to append, then a fresh prompt row.
     Output(Vec<Line>),
     /// Wipe the screen; the prompt (and whatever was being typed, for Ctrl+L)
     /// starts over at the top.
     ClearScreen,
     /// The submitted line ran `dev-sam`.
-    Launch(Launch),
+    Launch,
     /// Tab completion printed its candidates, then the prompt.
     Completion(Vec<String>),
     /// Ctrl+C: the current prompt row freezes with a `^C` echoed at the
@@ -480,33 +491,26 @@ impl LineEditor {
         }
     }
 
-    /// The screen the session opens on, plus the line pre-typed at the prompt.
-    /// `touch` drops the keyboard hint, which a phone cannot act on, and
-    /// pre-types the flag that asks for the build a phone can read.
-    pub fn opening_screen(&mut self, touch: bool) -> (Vec<Line>, String) {
-        let mut out = vec![one(colored(
-            encrypted_str!("dev-sam-sh 1.0 — developer sam's terminal").decrypt(),
-            theme::MUTED,
-        ))];
-        if !touch {
-            out.push(one(colored(
+    /// The screen the session opens on, with `dev-sam` pre-typed at the
+    /// prompt: one Enter away from the app.
+    pub fn opening_screen(&mut self) -> Vec<Line> {
+        let out = vec![
+            one(colored(
+                encrypted_str!("dev-sam-sh 1.0 — developer sam's terminal").decrypt(),
+                theme::MUTED,
+            )),
+            one(colored(
                 encrypted_str!("type help for commands, or run dev-sam").decrypt(),
                 theme::MUTED,
-            )));
-        }
-        out.push(Line::new());
-        let line = if touch {
-            format!("{CMD_DEV_SAM} {TOUCH_FLAG}")
-        } else {
-            CMD_DEV_SAM.decrypt()
-        };
-        self.set_line(line.clone());
-        (out, line)
+            )),
+            Line::new(),
+        ];
+        self.set_line(CMD_DEV_SAM.decrypt());
+        out
     }
 
-    /// The message printed when the app has exited, and the cleared line.
-    pub fn after_dev_sam_app_exit(&mut self) -> Vec<Line> {
-        self.set_line(String::new());
+    /// The message printed when the app has exited, over a fresh prompt.
+    pub fn after_dev_sam_app_exit() -> Vec<Line> {
         vec![one(colored(
             encrypted_str!("dev-sam exited — type dev-sam to run it again, or help").decrypt(),
             theme::MUTED,
@@ -523,49 +527,49 @@ impl LineEditor {
             Key::Tab => self.complete(shell),
             Key::Up => {
                 self.step_history(shell, false);
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             Key::Down => {
                 self.step_history(shell, true);
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             Key::Left => {
                 if let Some((offset, _)) = self.line[..self.cursor].char_indices().next_back() {
                     self.cursor = offset;
                 }
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             Key::Right => {
                 if let Some(character) = self.line[self.cursor..].chars().next() {
                     self.cursor += character.len_utf8();
                 }
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             Key::Home => {
                 self.cursor = 0;
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             Key::End => {
                 self.cursor = self.line.len();
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             Key::Backspace => {
                 if let Some((offset, _)) = self.line[..self.cursor].char_indices().next_back() {
                     self.line.remove(offset);
                     self.cursor = offset;
                 }
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             Key::Delete => {
                 if self.cursor < self.line.len() {
                     self.line.remove(self.cursor);
                 }
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             Key::Char(character) => {
                 self.line.insert(self.cursor, character);
                 self.cursor += character.len_utf8();
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             _ => EditOutcome::None,
         }
@@ -581,16 +585,16 @@ impl LineEditor {
             Key::Char('l') => EditOutcome::ClearScreen,
             Key::Char('a') => {
                 self.cursor = 0;
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             Key::Char('e') => {
                 self.cursor = self.line.len();
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             Key::Char('u') => {
                 self.line.drain(..self.cursor);
                 self.cursor = 0;
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             _ => EditOutcome::None,
         }
@@ -602,7 +606,7 @@ impl LineEditor {
         let outcome = shell.execute(&line);
         self.history_index = shell.history().len();
         match outcome {
-            CommandRunOutcome::LaunchApp(launch) => EditOutcome::Launch(launch),
+            CommandRunOutcome::LaunchApp => EditOutcome::Launch,
             CommandRunOutcome::Clear => EditOutcome::ClearScreen,
             CommandRunOutcome::RenderText(lines) => EditOutcome::Output(lines),
         }
@@ -618,7 +622,7 @@ impl LineEditor {
                 let start = self.line.rfind(' ').map_or(0, |position| position + 1);
                 let suffix = if only.ends_with('/') { "" } else { " " };
                 self.set_line(format!("{}{only}{suffix}", &self.line[..start]));
-                EditOutcome::Redraw
+                EditOutcome::None
             }
             many => EditOutcome::Completion(many.to_vec()),
         }
@@ -640,31 +644,19 @@ impl LineEditor {
         self.line = line;
     }
 
-    /// The prompt row as it is rendered right now.
-    pub fn prompt_row(&self) -> PromptRow {
+    /// The prompt row as it is rendered right now, at `shell`'s prompt.
+    pub fn prompt_row(&self, shell: &Shell) -> PromptRow {
         let before = self.line[..self.cursor].to_string();
         let mut chars = self.line[self.cursor..].chars();
         let at_cursor = chars.next();
         let after: String = chars.collect();
         PromptRow {
+            prompt: shell.prompt_spans(),
             before_cursor: vec![Span::new(before)],
             at_cursor,
             after_cursor: vec![Span::new(after)],
         }
     }
-}
-
-/// The prompt's own styled text: `sam@developersam:~$ `.
-pub fn prompt_spans() -> Vec<Span> {
-    vec![
-        bold_colored(
-            encrypted_str!("sam@developersam").decrypt(),
-            theme::PROMPT_USER,
-        ),
-        colored(":", theme::MUTED),
-        colored("~", theme::ACCENT_TEXT),
-        colored("$ ", theme::MUTED),
-    ]
 }
 
 // The virtual file system's names. Encrypted like the site's content in
