@@ -514,7 +514,7 @@ fn Session(path: SitePath, touch_device: bool) -> impl IntoView {
     let launch = move |launch: Launch| {
         if launch.touch {
             let path = crate::take_pending_route()
-                .unwrap_or_else(|| SitePath::new(TAB_ROUTES[crate::ABOUT_TAB]));
+                .unwrap_or_else(|| SitePath::new(TAB_ROUTES[crate::ABOUT_TAB].decrypt()));
             reset_route_sync();
             mode.set(Mode::Page(path));
         } else {

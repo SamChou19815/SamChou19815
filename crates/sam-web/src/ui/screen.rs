@@ -8,7 +8,9 @@
 //! screen loses is decided by CSS at the width the view is actually drawn at,
 //! never by this code counting anything.
 
+use crate::crypt::EncryptedString;
 use crate::data;
+use crate::encrypted_str;
 use crate::hit::HitTarget;
 use crate::markdown::{self, Block};
 use crate::posts;
@@ -20,8 +22,10 @@ use leptos::prelude::*;
 
 use super::styled_line;
 
-/// The site's name as it is spelled over the tabs.
-const TITLE: &str = "DEV SAM";
+/// The site's name as it is spelled over the tabs. Encrypted like the rest of
+/// the content, so the binary never spells it out even though the wordmark
+/// paints it a cell at a time.
+const TITLE: EncryptedString = encrypted_str!("DEV SAM");
 
 /// The column everything the app draws is laid out down: the reading measure,
 /// centered. Its parent holds it two cells off the screen edges, so it is as
@@ -168,7 +172,7 @@ fn block_cell(character: char) -> AnyView {
 
 /// The wordmark, three rows tall, in the accent the tabs are named in.
 fn wordmark() -> AnyView {
-    let rows: Vec<AnyView> = banner_rows(TITLE)
+    let rows: Vec<AnyView> = banner_rows(&TITLE.decrypt())
         .map(|row| {
             let cells: Vec<AnyView> = row.chars().map(block_cell).collect();
             view! { <div class="flex">{cells}</div> }.into_any()
@@ -210,7 +214,7 @@ fn header(app: &App, touch: bool, on_activate: impl Fn(&HitTarget) + Copy + 'sta
             } else {
                 class.push_str(" hidden @min-[36ch]:inline");
             }
-            let label = TAB_NAMES[*index];
+            let label = TAB_NAMES[*index].decrypt();
             view! {
                 <span
                     class=class
@@ -752,21 +756,38 @@ fn code_listing(lines: Vec<Line>, on_activate: impl Fn(&HitTarget) + Copy + 'sta
 /// the width the tab is drawn at.
 fn help_listing() -> AnyView {
     let rows: Vec<AnyView> = [
-        ("←/→ or h/l", "switch between tabs"),
         (
-            "1 … 9",
-            "open a link of the selected card (timeline) · jump to a tab elsewhere",
+            encrypted_str!("←/→ or h/l"),
+            encrypted_str!("switch between tabs"),
         ),
-        ("↑/↓ or j/k", "move selection / scroll"),
-        ("Enter", "read a post / open a card's link"),
-        ("g / G", "jump to top / bottom"),
-        ("Esc", "close the reader"),
-        ("?", "open this tab"),
-        ("q / Ctrl+C", "quit"),
-        ("mouse", "click tabs, cards and links · the pane scrolls"),
+        (
+            encrypted_str!("1 … 9"),
+            encrypted_str!("open a link of the selected card (timeline) · jump to a tab elsewhere"),
+        ),
+        (
+            encrypted_str!("↑/↓ or j/k"),
+            encrypted_str!("move selection / scroll"),
+        ),
+        (
+            encrypted_str!("Enter"),
+            encrypted_str!("read a post / open a card's link"),
+        ),
+        (
+            encrypted_str!("g / G"),
+            encrypted_str!("jump to top / bottom"),
+        ),
+        (encrypted_str!("Esc"), encrypted_str!("close the reader")),
+        (encrypted_str!("?"), encrypted_str!("open this tab")),
+        (encrypted_str!("q / Ctrl+C"), encrypted_str!("quit")),
+        (
+            encrypted_str!("mouse"),
+            encrypted_str!("click tabs, cards and links · the pane scrolls"),
+        ),
     ]
     .iter()
     .map(|(keys, description)| {
+        let keys = keys.decrypt();
+        let description = description.decrypt();
         let keys_style = style_of(theme::ACCENT_TEXT);
         let description_style = style_of(theme::SUBTLE);
         let keys_wide = format!("  {keys:<14}");
@@ -776,7 +797,7 @@ fn help_listing() -> AnyView {
             <div>
                 <div class="min-h-row whitespace-pre-wrap break-words @max-[56ch]:hidden">
                     <span class="font-bold" style=keys_style.clone()>{keys_wide}</span>
-                    <span style=description_style.clone()>{*description}</span>
+                    <span style=description_style.clone()>{description}</span>
                 </div>
                 <div class="@min-[56ch]:hidden">
                     <div class="min-h-row whitespace-pre-wrap">
