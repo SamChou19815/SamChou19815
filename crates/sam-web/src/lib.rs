@@ -32,7 +32,14 @@ pub mod ui;
 
 pub use site_path::SitePath;
 
-pub const TAB_NAMES: [&str; 4] = ["About", "Timeline", "Blog", "Help"];
+/// The tabs' names, encrypted like every other string so the binary spells out
+/// none of the site's structure — read one back with `.decrypt()`.
+pub const TAB_NAMES: [crypt::EncryptedString; 4] = [
+    encrypted_str!("About"),
+    encrypted_str!("Timeline"),
+    encrypted_str!("Blog"),
+    encrypted_str!("Help"),
+];
 pub const TAB_COUNT: usize = 4;
 pub const ABOUT_TAB: usize = 0;
 pub const TIMELINE_TAB: usize = 1;
@@ -42,10 +49,15 @@ pub const HELP_TAB: usize = 3;
 /// The site path each tab is served at. The web front-end keeps the URL bar on
 /// whatever the app is showing, so every view the app can be in has to be a
 /// place the site can be entered at — see [`App::route`] and [`App::go_to`].
-pub const TAB_ROUTES: [&str; TAB_COUNT] = ["/about", "/timeline", "/blog", "/help"];
+pub const TAB_ROUTES: [crypt::EncryptedString; TAB_COUNT] = [
+    encrypted_str!("/about"),
+    encrypted_str!("/timeline"),
+    encrypted_str!("/blog"),
+    encrypted_str!("/help"),
+];
 
 /// Where the blog index lives, and the prefix every post's permalink shares.
-pub const BLOG_ROUTE: &str = "/blog";
+pub const BLOG_ROUTE: crypt::EncryptedString = encrypted_str!("/blog");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -160,7 +172,7 @@ impl Screen {
     /// its own permalink; a tab is the path it is served at.
     pub fn route(&self) -> SitePath {
         match self {
-            Screen::Tab(tab) => SitePath::new(TAB_ROUTES[*tab]),
+            Screen::Tab(tab) => SitePath::new(TAB_ROUTES[*tab].decrypt()),
             Screen::Post(post) => posts::POSTS[*post].path(),
         }
     }
@@ -297,12 +309,12 @@ impl App {
     /// loading it.
     pub fn tap(&self, target: &hit::HitTarget) -> Option<HostEvent> {
         match target {
-            hit::HitTarget::Tab(index) => {
-                Some(HostEvent::Navigate(SitePath::new(TAB_ROUTES[*index])))
-            }
+            hit::HitTarget::Tab(index) => Some(HostEvent::Navigate(SitePath::new(
+                TAB_ROUTES[*index].decrypt(),
+            ))),
             // Back to the index the post was opened from, which is where Esc
             // and `q` leave a reader that has a screen to go back to.
-            hit::HitTarget::Close => Some(HostEvent::Navigate(SitePath::new(BLOG_ROUTE))),
+            hit::HitTarget::Close => Some(HostEvent::Navigate(SitePath::new(BLOG_ROUTE.decrypt()))),
             hit::HitTarget::Link(url) => errand_for(url),
             hit::HitTarget::Item(index) => self.item_errand(*index),
         }
@@ -573,12 +585,12 @@ fn screen_at(path: &SitePath) -> Option<Screen> {
     }
     TAB_ROUTES
         .iter()
-        .position(|route| *route == path.as_str())
+        .position(|route| route.decrypt() == path.as_str())
         // Anything else under the blog — a post that has since been unpublished,
         // say — still asked for the blog, so the index is where it lands.
         .or_else(|| {
             path.as_str()
-                .strip_prefix(BLOG_ROUTE)
+                .strip_prefix(BLOG_ROUTE.decrypt().as_str())
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
                 .then_some(BLOG_TAB)
         })

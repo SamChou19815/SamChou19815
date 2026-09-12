@@ -1,11 +1,22 @@
 //! Syntax highlighting for the samlang program on the About tab, using the
 //! homepage's Prism light token colors.
 
+use crate::crypt::EncryptedString;
 use crate::data;
+use crate::encrypted_str;
 use crate::style::{link, Line, Span, TextStyle};
 use crate::theme;
 
-const KEYWORDS: &[&str] = &["import", "from", "class", "function", "let", "val"];
+/// The language's keywords, encrypted like the program they color so the binary
+/// spells out none of them; matched by decrypting.
+const KEYWORDS: [EncryptedString; 6] = [
+    encrypted_str!("import"),
+    encrypted_str!("from"),
+    encrypted_str!("class"),
+    encrypted_str!("function"),
+    encrypted_str!("let"),
+    encrypted_str!("val"),
+];
 
 fn styled(text: &str, color: theme::Color) -> Span {
     Span::styled(text, TextStyle::new().color(color))
@@ -78,7 +89,7 @@ fn highlight_line(source: &str, mut in_comment: bool) -> (Vec<Span>, bool) {
             } else {
                 let word = &rest[..word_length];
                 let is_call = rest[word_length..].trim_start().starts_with('(');
-                let color = if KEYWORDS.contains(&word) {
+                let color = if KEYWORDS.iter().any(|keyword| keyword.decrypt() == word) {
                     keyword_color()
                 } else if word.chars().all(|c| c.is_ascii_digit()) {
                     number_color()

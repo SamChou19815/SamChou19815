@@ -13,13 +13,38 @@ use crate::style::{bold_colored, colored, Line, Span, TextStyle};
 use crate::theme;
 use crate::{Key, Mods};
 
-pub const COMMANDS: &[&str] = &[
-    "cat", "cd", "clear", "dev-sam", "echo", "help", "history", "ls", "pwd", "whoami",
+// The command vocabulary, encrypted like the rest of the site's content so the
+// binary spells out none of it — no `strings` pass reveals the shell's verbs.
+// A match arm cannot be an [`EncryptedString`], so dispatch and completion
+// compare the typed word against these decrypted.
+const CMD_CAT: EncryptedString = encrypted_str!("cat");
+const CMD_CD: EncryptedString = encrypted_str!("cd");
+const CMD_CLEAR: EncryptedString = encrypted_str!("clear");
+const CMD_DEV_SAM: EncryptedString = encrypted_str!("dev-sam");
+const CMD_ECHO: EncryptedString = encrypted_str!("echo");
+const CMD_HELP: EncryptedString = encrypted_str!("help");
+const CMD_HISTORY: EncryptedString = encrypted_str!("history");
+const CMD_LS: EncryptedString = encrypted_str!("ls");
+const CMD_PWD: EncryptedString = encrypted_str!("pwd");
+const CMD_WHOAMI: EncryptedString = encrypted_str!("whoami");
+
+/// Every command name, in the order `help` prints and completion offers.
+const COMMANDS: [EncryptedString; 10] = [
+    CMD_CAT,
+    CMD_CD,
+    CMD_CLEAR,
+    CMD_DEV_SAM,
+    CMD_ECHO,
+    CMD_HELP,
+    CMD_HISTORY,
+    CMD_LS,
+    CMD_PWD,
+    CMD_WHOAMI,
 ];
 
 /// The flag that asks `dev-sam` for the touch build. The host pre-types it on a
 /// phone, where it is the only way the app is ever run.
-pub const TOUCH_FLAG: &str = "--touch";
+const TOUCH_FLAG: EncryptedString = encrypted_str!("--touch");
 
 #[derive(Clone)]
 pub struct Shell {
@@ -70,20 +95,30 @@ impl Shell {
         let mut words = line.split_whitespace();
         let command = words.next().unwrap_or_default();
         let args: Vec<&str> = words.collect();
-        match command {
-            "clear" => CommandRunOutcome::Clear,
-            "dev-sam" => CommandRunOutcome::LaunchApp(Launch {
-                touch: args.contains(&TOUCH_FLAG),
-            }),
-            "help" => CommandRunOutcome::RenderText(self.help()),
-            "ls" => CommandRunOutcome::RenderText(self.ls(&args)),
-            "cat" => CommandRunOutcome::RenderText(self.cat(&args)),
-            "cd" => CommandRunOutcome::RenderText(self.cd(&args)),
-            "pwd" => CommandRunOutcome::RenderText(self.pwd()),
-            "echo" => CommandRunOutcome::RenderText(vec![line_of(args.join(" "))]),
-            "whoami" => CommandRunOutcome::RenderText(vec![line_of("sam")]),
-            "history" => CommandRunOutcome::RenderText(self.print_history()),
-            _ => CommandRunOutcome::RenderText(self.render_unknown_command(command)),
+        if command == CMD_CLEAR.decrypt() {
+            CommandRunOutcome::Clear
+        } else if command == CMD_DEV_SAM.decrypt() {
+            CommandRunOutcome::LaunchApp(Launch {
+                touch: args.iter().any(|arg| *arg == TOUCH_FLAG.decrypt()),
+            })
+        } else if command == CMD_HELP.decrypt() {
+            CommandRunOutcome::RenderText(self.help())
+        } else if command == CMD_LS.decrypt() {
+            CommandRunOutcome::RenderText(self.ls(&args))
+        } else if command == CMD_CAT.decrypt() {
+            CommandRunOutcome::RenderText(self.cat(&args))
+        } else if command == CMD_CD.decrypt() {
+            CommandRunOutcome::RenderText(self.cd(&args))
+        } else if command == CMD_PWD.decrypt() {
+            CommandRunOutcome::RenderText(self.pwd())
+        } else if command == CMD_ECHO.decrypt() {
+            CommandRunOutcome::RenderText(vec![line_of(args.join(" "))])
+        } else if command == CMD_WHOAMI.decrypt() {
+            CommandRunOutcome::RenderText(vec![line_of(encrypted_str!("sam").decrypt())])
+        } else if command == CMD_HISTORY.decrypt() {
+            CommandRunOutcome::RenderText(self.print_history())
+        } else {
+            CommandRunOutcome::RenderText(self.render_unknown_command(command))
         }
     }
 
@@ -100,10 +135,13 @@ impl Shell {
         if before.trim().is_empty() {
             COMMANDS
                 .iter()
+                .map(EncryptedString::decrypt)
                 .filter(|candidate| candidate.starts_with(word))
-                .map(|candidate| (*candidate).to_string())
                 .collect()
-        } else if matches!(first, "ls" | "cd" | "cat") {
+        } else if [CMD_LS, CMD_CD, CMD_CAT]
+            .iter()
+            .any(|command| command.decrypt() == first)
+        {
             self.complete_path(word)
         } else {
             Vec::new()
@@ -112,23 +150,50 @@ impl Shell {
 
     fn help(&self) -> Vec<Line> {
         let mut out = Vec::new();
-        // The one line that names a file reads the name from the file system,
-        // so the binary names none.
-        let cat_hint = format!("print a file (try cat {ABOUT_TXT})");
+        // The names and blurbs are decrypted here, never spelled in the binary;
+        // the one line that names a file reads it from the file system too.
+        let cat_hint = format!(
+            "{} {ABOUT_TXT})",
+            encrypted_str!("print a file (try").decrypt()
+        );
         for (name, description) in [
             (
-                "dev-sam",
-                "launch the developer sam app (q exits back here)",
+                format!("{CMD_DEV_SAM}"),
+                encrypted_str!("launch the developer sam app (q exits back here)").decrypt(),
             ),
-            ("ls [dir]", "list the file system"),
-            ("cat <file>", cat_hint.as_str()),
-            ("cd <dir>", "change directory"),
-            ("pwd", "print working directory"),
-            ("echo <text>", "print text"),
-            ("whoami", "print the user"),
-            ("history", "command history (also ↑/↓)"),
-            ("clear", "clear the screen (Ctrl+L)"),
-            ("help", "this message"),
+            (
+                format!("{CMD_LS} [dir]"),
+                encrypted_str!("list the file system").decrypt(),
+            ),
+            (format!("{CMD_CAT} <file>"), cat_hint),
+            (
+                format!("{CMD_CD} <dir>"),
+                encrypted_str!("change directory").decrypt(),
+            ),
+            (
+                format!("{CMD_PWD}"),
+                encrypted_str!("print working directory").decrypt(),
+            ),
+            (
+                format!("{CMD_ECHO} <text>"),
+                encrypted_str!("print text").decrypt(),
+            ),
+            (
+                format!("{CMD_WHOAMI}"),
+                encrypted_str!("print the user").decrypt(),
+            ),
+            (
+                format!("{CMD_HISTORY}"),
+                encrypted_str!("command history (also ↑/↓)").decrypt(),
+            ),
+            (
+                format!("{CMD_CLEAR}"),
+                encrypted_str!("clear the screen (Ctrl+L)").decrypt(),
+            ),
+            (
+                format!("{CMD_HELP}"),
+                encrypted_str!("this message").decrypt(),
+            ),
         ] {
             out.push(vec![
                 bold_colored(format!("  {name:<12}"), theme::ACCENT_TEXT),
@@ -164,7 +229,11 @@ impl Shell {
                 vec![contents]
             }
             None => vec![one(colored(
-                format!("ls: no such directory: {}", args[0]),
+                format!(
+                    "{}: {}",
+                    encrypted_str!("ls: no such directory").decrypt(),
+                    args[0]
+                ),
                 theme::FUNCTION,
             ))],
         }
@@ -172,7 +241,10 @@ impl Shell {
 
     fn cat(&self, args: &[&str]) -> Vec<Line> {
         let Some(arg) = args.first() else {
-            return vec![one(colored("usage: cat <file>", theme::FUNCTION))];
+            return vec![one(colored(
+                encrypted_str!("usage: cat <file>").decrypt(),
+                theme::FUNCTION,
+            ))];
         };
         let path = match self.resolve_path(arg) {
             Ok(path) => path,
@@ -181,7 +253,7 @@ impl Shell {
         match read_file(&path) {
             Some(content) => content,
             None => vec![one(colored(
-                format!("cat: no such file: {arg}"),
+                format!("{}: {arg}", encrypted_str!("cat: no such file").decrypt()),
                 theme::FUNCTION,
             ))],
         }
@@ -197,7 +269,11 @@ impl Shell {
         };
         if fs_entries(&path).is_none() {
             return vec![one(colored(
-                format!("cd: not a directory: {}", args[0]),
+                format!(
+                    "{}: {}",
+                    encrypted_str!("cd: not a directory").decrypt(),
+                    args[0]
+                ),
                 theme::FUNCTION,
             ))];
         }
@@ -228,11 +304,14 @@ impl Shell {
 
     fn render_unknown_command(&self, command: &str) -> Vec<Line> {
         let mut out = vec![one(colored(
-            format!("dev-sam-sh: command not found: {command}"),
+            format!(
+                "{}: {command}",
+                encrypted_str!("dev-sam-sh: command not found").decrypt()
+            ),
             theme::FUNCTION,
         ))];
 
-        fn suggest(command: &str) -> Option<&'static str> {
+        fn suggest(command: &str) -> Option<String> {
             fn levenshtein(a: &str, b: &str) -> usize {
                 let b: Vec<char> = b.chars().collect();
                 let mut previous: Vec<usize> = (0..=b.len()).collect();
@@ -251,10 +330,15 @@ impl Shell {
                 previous[b.len()]
             }
 
-            let mut best: Option<(usize, &'static str)> = None;
+            let mut best: Option<(usize, String)> = None;
             for name in COMMANDS {
-                let distance = levenshtein(command, name);
-                if distance <= 2 && best.is_none_or(|(best_distance, _)| distance < best_distance) {
+                let name = name.decrypt();
+                let distance = levenshtein(command, &name);
+                if distance <= 2
+                    && best
+                        .as_ref()
+                        .is_none_or(|(best_distance, _)| distance < *best_distance)
+                {
                     best = Some((distance, name));
                 }
             }
@@ -263,7 +347,11 @@ impl Shell {
 
         if let Some(suggestion) = suggest(command) {
             out.push(one(colored(
-                format!("did you mean `{suggestion}`? try help"),
+                format!(
+                    "{} `{suggestion}`? {}",
+                    encrypted_str!("did you mean").decrypt(),
+                    encrypted_str!("try help").decrypt()
+                ),
                 theme::MUTED,
             )));
         }
@@ -397,20 +485,20 @@ impl LineEditor {
     /// pre-types the flag that asks for the build a phone can read.
     pub fn opening_screen(&mut self, touch: bool) -> (Vec<Line>, String) {
         let mut out = vec![one(colored(
-            "dev-sam-sh 1.0 — developer sam's terminal",
+            encrypted_str!("dev-sam-sh 1.0 — developer sam's terminal").decrypt(),
             theme::MUTED,
         ))];
         if !touch {
             out.push(one(colored(
-                "type help for commands, or run dev-sam",
+                encrypted_str!("type help for commands, or run dev-sam").decrypt(),
                 theme::MUTED,
             )));
         }
         out.push(Line::new());
         let line = if touch {
-            format!("dev-sam {TOUCH_FLAG}")
+            format!("{CMD_DEV_SAM} {TOUCH_FLAG}")
         } else {
-            "dev-sam".to_string()
+            CMD_DEV_SAM.decrypt()
         };
         self.set_line(line.clone());
         (out, line)
@@ -420,7 +508,7 @@ impl LineEditor {
     pub fn after_dev_sam_app_exit(&mut self) -> Vec<Line> {
         self.set_line(String::new());
         vec![one(colored(
-            "dev-sam exited — type dev-sam to run it again, or help",
+            encrypted_str!("dev-sam exited — type dev-sam to run it again, or help").decrypt(),
             theme::MUTED,
         ))]
     }
@@ -569,7 +657,10 @@ impl LineEditor {
 /// The prompt's own styled text: `sam@developersam:~$ `.
 pub fn prompt_spans() -> Vec<Span> {
     vec![
-        bold_colored("sam@developersam", theme::PROMPT_USER),
+        bold_colored(
+            encrypted_str!("sam@developersam").decrypt(),
+            theme::PROMPT_USER,
+        ),
         colored(":", theme::MUTED),
         colored("~", theme::ACCENT_TEXT),
         colored("$ ", theme::MUTED),
@@ -630,9 +721,18 @@ fn read_file(path: &[String]) -> Option<Vec<Line>> {
                 encrypted_str!("run dev-sam to launch the app, or explore:").decrypt(),
                 theme::TEXT,
             )),
-            one(colored(format!("  cat {ABOUT_TXT}"), theme::ACCENT_TEXT)),
-            one(colored(format!("  ls {PROJECTS_DIR}"), theme::ACCENT_TEXT)),
-            one(colored(format!("  cat {TIMELINE_TXT}"), theme::ACCENT_TEXT)),
+            one(colored(
+                format!("  {CMD_CAT} {ABOUT_TXT}"),
+                theme::ACCENT_TEXT,
+            )),
+            one(colored(
+                format!("  {CMD_LS} {PROJECTS_DIR}"),
+                theme::ACCENT_TEXT,
+            )),
+            one(colored(
+                format!("  {CMD_CAT} {TIMELINE_TXT}"),
+                theme::ACCENT_TEXT,
+            )),
         ]),
         [file] if *file == ABOUT_TXT.decrypt() => {
             let mut out: Vec<Line> = highlight::doc_comment_lines();
