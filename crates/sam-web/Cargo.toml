@@ -1,0 +1,43 @@
+[package]
+name = "sam-web"
+version = "0.1.0"
+description = "The developersam.com web app: a Leptos site compiled to wasm, hosted by Next"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+js-sys = "0.3"
+leptos = { version = "0.8", features = ["csr"] }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+  "CssStyleDeclaration",
+  "Document",
+  "DomRect",
+  "Element",
+  "Event",
+  "EventTarget",
+  "HtmlElement",
+  "KeyboardEvent",
+  "Location",
+  "Node",
+  "NodeList",
+  "ScrollIntoViewOptions",
+  "ScrollLogicalPosition",
+  "Window",
+] }
+console_error_panic_hook = "0.1"
+
+# Host-side only: build.rs compiles the blog's posts into the binary.
+[build-dependencies]
+serde_json = { workspace = true }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
+[lints]
+workspace = true

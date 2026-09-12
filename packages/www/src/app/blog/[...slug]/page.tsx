@@ -9,7 +9,7 @@ const localPosts = allMetadata.filter((post) => !isExternalPost(post));
 
 // One exported shell per permalink, so a post's URL is a real document that
 // loads the terminal and opens the reader on it. The prose itself is compiled
-// into the wasm binary from `src/blog-posts` by `crates/sam-tui/build.rs`.
+// into the wasm binary from `src/blog-posts` by `crates/sam-web/build.rs`.
 export function generateStaticParams(): Params[] {
   return localPosts.map(({ year, month, date, titleSlug }) => ({
     slug: [year, month, date, titleSlug],

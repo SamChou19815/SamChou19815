@@ -1,6 +1,50 @@
 @import "tailwindcss";
 
 @source "../**/*.{js,ts,jsx,tsx}";
+/* The site itself is a Rust program: `crates/sam-web` draws every view, and the
+   classes it draws with are written in the `class=` attributes of its `view!`
+   macros. The scanner reads a .rs file the same way it reads a .tsx one. */
+@source "../../../../crates/sam-web/src/**/*.rs";
+
+@theme {
+  /* The font the terminal is set in. Layout inside the terminal never measures
+     it from JavaScript: lengths are written in `ch` (the font's own character
+     advance) and `lh` (a line of the type), which the browser resolves against
+     whatever font this turns out to be. */
+  --font-terminal:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* One row of the terminal: the height of a line of its type. Named so the
+     views can space and size vertically in rows — `h-row`, `mt-row` — the way
+     they space horizontally in characters. */
+  --spacing-row: 1lh;
+
+  /* The shell's block cursor: a full beat on, a full beat off, with no fade
+     between them. */
+  --animate-cursor-blink: cursor-blink 1.2s steps(1) infinite;
+  @keyframes cursor-blink {
+    0%,
+    50% {
+      opacity: 1;
+    }
+    50.01%,
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
+/* The terminal session. Inside it one Tailwind spacing unit is one character
+   cell — `px-1` pads a character, `gap-3` gaps three, `max-w-88` caps the
+   reading column at 88 — which is what lets the views be written entirely in
+   classes while keeping the monospace measures. The element is also the
+   container the views size themselves against: their breakpoints are in `ch`,
+   so "does the title fit" is a CSS question the browser answers on every
+   resize, with no measuring code anywhere. */
+.terminal {
+  --spacing: 1ch;
+  container: terminal / inline-size;
+}
 
 @layer base {
   h1 {

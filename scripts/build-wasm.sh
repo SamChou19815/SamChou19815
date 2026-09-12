@@ -1,9 +1,9 @@
 #!/bin/sh
-# Builds the sam-tui wasm bundle for the website — the binary plus the
+# Builds the sam-web wasm bundle for the website — the binary plus the
 # wasm-bindgen JS glue and .d.ts — into packages/www/src/app/generated/,
-# where Next bundles it as a static asset. Works whether or not a Rust toolchain
-# is preinstalled: CI sets one up before calling this, but a minimal stable
-# toolchain and wasm-pack are bootstrapped when missing.
+# where Next bundles it as a static asset. Works whether or not a Rust
+# toolchain is preinstalled: CI sets one up before calling this, but a minimal
+# stable toolchain and wasm-pack are bootstrapped when missing.
 set -eu
 
 if ! command -v cargo >/dev/null 2>&1; then
@@ -26,11 +26,9 @@ rustup target add wasm32-unknown-unknown 2>/dev/null || true
 
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$REPO_ROOT"
-# Materialize the patched crossterm/iocraft sources [patch.crates-io] needs.
-./scripts/prepare-patched-deps.sh
 
 OUT_DIR="$REPO_ROOT/packages/www/src/app/generated"
 rm -rf "$OUT_DIR"
-wasm-pack build crates/sam-tui --release --target web --no-pack --out-dir "$OUT_DIR"
+wasm-pack build crates/sam-web --release --target web --no-pack --out-dir "$OUT_DIR"
 
-rm -f "$OUT_DIR/.gitignore" "$OUT_DIR/sam_tui_bg.wasm.d.ts"
+rm -f "$OUT_DIR/.gitignore" "$OUT_DIR/sam_web_bg.wasm.d.ts"
