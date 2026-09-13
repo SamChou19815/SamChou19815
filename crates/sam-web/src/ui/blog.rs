@@ -47,7 +47,15 @@ pub(super) fn Blog() -> impl IntoView {
         .collect_view();
     view! {
         <Pane tab=Tab::Blog node_ref=pane>
-            <ul role="listbox" aria-orientation="vertical" aria-label=BLOG_LIST_LABEL.decrypt()>
+            // The index as the site drew it before the wasm rewrite: a stack
+            // of the same white cards the article is read on, `1rem` apart as
+            // they were then, inside the reader's `2ch` frame.
+            <ul
+                role="listbox"
+                aria-orientation="vertical"
+                aria-label=BLOG_LIST_LABEL.decrypt()
+                class="flex w-full flex-col gap-[1rem] py-[2ch]"
+            >
                 {cards}
             </ul>
         </Pane>
@@ -73,22 +81,25 @@ fn PostCard(post: &'static posts::Post, index: usize, option: NodeRef<html::Li>)
             tabindex=move || if is_selected.get() { 0 } else { -1 }
             node_ref=option
         >
-            <div class="h-row shrink-0"></div>
+            // The reader's card. The old site lifted a card's shadow on
+            // hover; this is still a terminal, so the cursor is the listbox
+            // highlight: the selected card fills and its border takes the
+            // accent.
             <Link
                 url=post.url()
-                class="block w-full border border-[#d1d5db] bg-[#f7f7f7] px-2 py-row group-aria-selected:border-[#3b82f6] group-aria-selected:bg-[#dbeafe]"
+                class="block w-full rounded-md border border-[#e5e7eb] bg-white p-[1rem] group-aria-selected:border-[#2563eb] group-aria-selected:bg-[#dbeafe]"
                 {..}
                 on:click=move |_| selected.set(index)
                 on:mousemove=hover(selected, index)
             >
-                <div class="min-h-row">
-                    <span class="block truncate font-bold text-[#2563eb] group-aria-selected:text-[#1e3a8a]">
-                        {title}
-                    </span>
+                // The reader's title a step down — its second-level heading —
+                // wrapping rather than truncating: a card has the room.
+                <div class="min-w-0 break-words text-[1.3em] leading-[1.3] font-bold text-[#2563eb] group-aria-selected:text-[#1e3a8a]">
+                    {title}
                 </div>
-                <div class="min-h-row whitespace-pre">
+                <div class="pt-[0.5lh] text-[0.9em]">
                     <span class="text-[#4b5563] group-aria-selected:text-[#1e3a8a]">
-                        {post.formatted_date()}
+                        {format!("~ {}", post.formatted_date())}
                     </span>
                 </div>
             </Link>

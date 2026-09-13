@@ -18,6 +18,9 @@ use super::pane::{scroll_keys, Pane};
 use super::text::{runs, style_of};
 
 const CLOSE_LABEL: EncryptedString = encrypted_str!("Close");
+const NEWER_LABEL: EncryptedString = encrypted_str!("Newer Post");
+const OLDER_LABEL: EncryptedString = encrypted_str!("Older Post");
+const POST_NAV_LABEL: EncryptedString = encrypted_str!("Blog post page navigation");
 
 #[component]
 pub(super) fn Reader() -> impl IntoView {
@@ -38,6 +41,13 @@ fn Post(post: usize) -> impl IntoView {
     Effect::new(move |_| blog.set(post));
 
     let pane = NodeRef::<html::Div>::new();
+    // A neighbor opens in place: the same view type is rebuilt onto the same
+    // pane, which would otherwise keep the last post's scroll position.
+    Effect::new(move |_| {
+        if let Some(pane) = pane.get() {
+            pane.set_scroll_top(0);
+        }
+    });
     let show = use_show();
     // Every non-Ctrl key is the reader's: tab keys are inert while a post is open.
     use_view_keys(move |key, mods| {
@@ -64,17 +74,59 @@ fn Post(post: usize) -> impl IntoView {
         .collect_view();
     view! {
         <Pane node_ref=pane>
-            // The article as the site drew it before the wasm rewrite: a
-            // white card on the gray page, without the drop shadow that card
-            // carried — this is still a terminal. Its gray frame is the same
-            // 2ch the app insets everything by, on every side. The inner
-            // measures are written in rem — in the terminal a Tailwind
-            // spacing unit is a character, not a quarter of one.
-            <div class="my-[2ch] rounded-md border border-[#e5e7eb] bg-white p-[1rem]">
-                <PostHeader post />
-                {blocks}
+            <div class="py-[2ch]">
+                <div class="rounded-md border border-[#e5e7eb] bg-white p-[1rem]">
+                    <PostHeader post />
+                    {blocks}
+                </div>
+                <PostNav post />
             </div>
         </Pane>
+    }
+}
+
+#[component]
+fn PostNav(post: usize) -> impl IntoView {
+    let newer = post.checked_sub(1);
+    let older = (post + 1 < posts::POSTS.len()).then_some(post + 1);
+    let half = "flex min-w-0 flex-1 @max-[56ch]:empty:hidden";
+    view! {
+        <nav class="mt-[2ch] flex gap-[1rem] @max-[56ch]:flex-col" aria-label=POST_NAV_LABEL.decrypt()>
+            <div class=half>
+                {newer.map(|index| view! { <NeighborCard index newer=true /> })}
+            </div>
+            <div class=format!("{half} text-right")>
+                {older.map(|index| view! { <NeighborCard index newer=false /> })}
+            </div>
+        </nav>
+    }
+}
+
+#[component]
+fn NeighborCard(index: usize, newer: bool) -> impl IntoView {
+    let post = &posts::POSTS[index];
+    let label = if newer { NEWER_LABEL } else { OLDER_LABEL }.decrypt();
+    let title = post.title();
+    let mut title = if newer {
+        format!("« {title}")
+    } else {
+        format!("{title} »")
+    };
+    if post.is_external() {
+        title.push_str(" ↗");
+    }
+    view! {
+        <Link
+            url=post.url()
+            class="group block w-full rounded-md border border-[#e5e7eb] bg-white p-[1rem] hover:border-[#2563eb] hover:bg-[#dbeafe]"
+        >
+            <div class="text-[0.9em]">
+                <span class="text-[#4b5563] group-hover:text-[#1e3a8a]">{label}</span>
+            </div>
+            <div class="min-w-0 break-words pt-[0.25lh] font-bold leading-[1.3] text-[#2563eb] group-hover:text-[#1e3a8a]">
+                {title}
+            </div>
+        </Link>
     }
 }
 
@@ -95,12 +147,11 @@ fn PostHeader(post: usize) -> impl IntoView {
     .add_any_attr(custom_attribute("aria-level", "1"));
     view! {
         <div class="w-full pb-[0.6lh]">
-            <div class="grid w-full grid-cols-[1fr_4ch] items-start gap-x-[1ch]">
+            <div class="grid w-full grid-cols-[1fr_auto] items-start gap-x-[1ch]">
                 {heading}
-                // `leading-[2.45em]` centers the x on the title's first line.
                 <Link
                     url=Tab::Blog.route().to_string()
-                    class="whitespace-pre text-center font-bold leading-[2.45em] text-[#2563eb]"
+                    class="whitespace-pre text-[1.9em] leading-[1.3] font-bold text-[#2563eb]"
                     {..}
                     aria-label=CLOSE_LABEL.decrypt()
                 >
