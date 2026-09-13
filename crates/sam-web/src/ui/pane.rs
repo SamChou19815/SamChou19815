@@ -6,19 +6,13 @@ use crate::tab::Tab;
 use leptos::html;
 use leptos::prelude::*;
 
-/// A scrolling box. Tailwind has no scrollbar utilities, so the scrollbar
-/// styling is arbitrary properties. The box must be pinned to less room than
-/// its content (`h-full` under a definite-height parent), or nothing overflows
-/// and nothing scrolls.
-pub(super) const SCROLL: &str = concat!(
-    "overflow-x-hidden overflow-y-auto ",
-    "[scrollbar-width:thin] [scrollbar-color:#64656666_transparent] ",
-    "[&::-webkit-scrollbar]:w-3.5 ",
-    "[&::-webkit-scrollbar-track]:bg-transparent ",
-    "[&::-webkit-scrollbar-thumb]:rounded-full ",
-    "[&::-webkit-scrollbar-thumb]:bg-[#64656666] ",
-    "[&::-webkit-scrollbar-thumb:hover]:bg-[#646566b3]",
-);
+/// A scrolling box. The scrollbar is the platform's own: styling it
+/// (`::-webkit-scrollbar`) would force the always-visible classic kind that
+/// takes layout space, shifting the reading column left of the header row —
+/// the native overlay scrollbar takes none. The box must be pinned to less
+/// room than its content (`h-full` under a definite-height parent), or
+/// nothing overflows and nothing scrolls.
+pub(super) const SCROLL: &str = "overflow-x-hidden overflow-y-auto";
 
 #[derive(PartialEq)]
 pub(super) enum Scroll {

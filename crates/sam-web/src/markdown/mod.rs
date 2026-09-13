@@ -31,9 +31,19 @@ use scan::{scan_line, LineKind};
 /// styled runs; how many rows it takes is decided where it is drawn.
 pub(crate) enum Block {
     Line(Line),
-    /// A list item: `marker` hangs in the two characters the text indents by,
-    /// which the view draws for it.
-    Bullet(Line),
+    /// A `#` heading: its level (1 for `#` through 3 for `###`) and its
+    /// styled text. The view sizes it by level.
+    Heading {
+        level: u8,
+        line: Line,
+    },
+    /// A list item: its marker (`•` or `2.`) and its text. The text can span
+    /// the source lines the item was written across; the view hangs the
+    /// marker in the space it indents by.
+    Bullet {
+        marker: String,
+        line: Line,
+    },
     /// A block quote: the line is already italic and in the quote color; the
     /// view draws the bar it hangs from.
     Quote(Line),
@@ -58,25 +68,36 @@ pub(crate) fn post_blocks(post: &Post) -> Vec<Block> {
     let compiled = post.code_blocks();
     let mut blocks: Vec<Block> = Vec::new();
     let mut paragraph: Vec<&str> = Vec::new();
+    // The list item being written, if the last block line opened one: its
+    // marker and the lines of its text. Lines that continue it — indented
+    // under it, no blank line between — fold in here rather than starting a
+    // paragraph of their own.
+    let mut list_item: Option<(String, Vec<&str>)> = None;
     let mut code: Option<(String, Vec<&str>)> = None;
     let mut in_code = false;
     // The compiled highlighting of the next fenced block, in body order.
     let mut next_compiled = compiled.iter();
 
-    fn flush(blocks: &mut Vec<Block>, paragraph: &mut Vec<&str>) {
-        if paragraph.is_empty() {
-            return;
+    fn flush(
+        blocks: &mut Vec<Block>,
+        paragraph: &mut Vec<&str>,
+        item: &mut Option<(String, Vec<&str>)>,
+    ) {
+        if !paragraph.is_empty() {
+            let text = paragraph.join(" ");
+            paragraph.clear();
+            blocks.push(Block::Line(inline(&text, None)));
         }
-        let text = paragraph.join(" ");
-        paragraph.clear();
-        blocks.push(Block::Line(inline(&text, None)));
+        if let Some((marker, lines)) = item.take() {
+            blocks.push(bullet(&marker, &lines));
+        }
     }
 
     let mut lines = body.lines();
     while let Some(line) = lines.next() {
         match scan_line(line, &mut in_code) {
             LineKind::FenceOpen(lang) => {
-                flush(&mut blocks, &mut paragraph);
+                flush(&mut blocks, &mut paragraph, &mut list_item);
                 code = Some((lang.to_string(), Vec::new()));
             }
             LineKind::FenceClose => match code.take() {
@@ -114,7 +135,7 @@ pub(crate) fn post_blocks(post: &Post) -> Vec<Block> {
                         blocks.push(Block::Image { url });
                     }
                 } else if let Some((url, rest)) = leading_image(trimmed) {
-                    flush(&mut blocks, &mut paragraph);
+                    flush(&mut blocks, &mut paragraph, &mut list_item);
                     blocks.push(Block::Image {
                         url: SitePath::new(url),
                     });
@@ -124,40 +145,46 @@ pub(crate) fn post_blocks(post: &Post) -> Vec<Block> {
                         paragraph.push(rest);
                     }
                 } else if line.trim().is_empty() {
-                    flush(&mut blocks, &mut paragraph);
+                    flush(&mut blocks, &mut paragraph, &mut list_item);
                     blocks.push(Block::Line(Line::new()));
-                } else if let Some((text, color)) = trimmed
+                } else if let Some((text, color, level)) = trimmed
                     .strip_prefix("### ")
-                    .map(|text| (text, theme::TEXT))
+                    .map(|text| (text, theme::TEXT, 3u8))
                     .or_else(|| {
                         trimmed
                             .strip_prefix("## ")
-                            .map(|text| (text, theme::ACCENT_TEXT))
+                            .map(|text| (text, theme::ACCENT_TEXT, 2))
                     })
                     .or_else(|| {
                         trimmed
                             .strip_prefix("# ")
-                            .map(|text| (text, theme::ACCENT_TEXT))
+                            .map(|text| (text, theme::ACCENT_TEXT, 1))
                     })
                 {
-                    flush(&mut blocks, &mut paragraph);
-                    blocks.push(Block::Line(heading(text, color)));
-                } else if let Some(text) = trimmed
+                    flush(&mut blocks, &mut paragraph, &mut list_item);
+                    blocks.push(Block::Heading {
+                        level,
+                        line: heading(text, color),
+                    });
+                } else if let Some((marker, text)) = trimmed
                     .strip_prefix("- ")
+                    .map(|text| ("•", text))
                     .or_else(|| numbered_item(trimmed))
                 {
-                    flush(&mut blocks, &mut paragraph);
-                    blocks.push(Block::Bullet(bullet(text)));
+                    flush(&mut blocks, &mut paragraph, &mut list_item);
+                    list_item = Some((marker.to_string(), vec![text]));
                 } else if let Some(text) = trimmed.strip_prefix("> ") {
-                    flush(&mut blocks, &mut paragraph);
+                    flush(&mut blocks, &mut paragraph, &mut list_item);
                     blocks.push(Block::Quote(quote(text)));
+                } else if let Some((_, lines)) = list_item.as_mut() {
+                    lines.push(trimmed);
                 } else {
                     paragraph.push(trimmed);
                 }
             }
         }
     }
-    flush(&mut blocks, &mut paragraph);
+    flush(&mut blocks, &mut paragraph, &mut list_item);
     if let Some((lang, source)) = code {
         blocks.push(code_block(lang, source, next_compiled.next(), false));
     }
@@ -242,13 +269,13 @@ fn span_color(color: SpanColor) -> TextStyle {
     }
 }
 
-/// The text after a numbered list item's `N. ` marker.
-fn numbered_item(line: &str) -> Option<&str> {
+/// A numbered list item's marker (`N.`) and the text after its `N. ` prefix.
+fn numbered_item(line: &str) -> Option<(&str, &str)> {
     let digits = line.chars().take_while(char::is_ascii_digit).count();
     if digits == 0 || !line[digits..].starts_with(". ") {
         return None;
     }
-    Some(&line[digits + 2..])
+    Some((&line[..digits + 1], &line[digits + 2..]))
 }
 
 /// An `![alt](url)` reference leading a line: its url and trailing text.
@@ -272,13 +299,12 @@ fn heading(text: &str, color: theme::Color) -> Line {
     inline(text, Some(color))
 }
 
-fn bullet(text: &str) -> Line {
-    let mut all = vec![Span::styled(
-        "• ",
-        TextStyle::new().color(theme::ACCENT_TEXT).bold(),
-    )];
-    all.extend(inline(text, None));
-    all
+/// One list item: its marker hangs, its text flows.
+fn bullet(marker: &str, lines: &[&str]) -> Block {
+    Block::Bullet {
+        marker: marker.to_string(),
+        line: inline(&lines.join(" "), None),
+    }
 }
 
 fn quote(text: &str) -> Line {
@@ -291,18 +317,25 @@ fn quote(text: &str) -> Line {
         .collect()
 }
 
-/// Renders inline markdown: `**bold**`, `*italic*`, `` `code` `` and links,
-/// each link carried by the run of text it was written on.
+/// Renders inline markdown: `**bold**`, `*italic*`, `_italic_`, `` `code` ``
+/// and links, each link carried by the run of text it was written on. An
+/// underscore only opens or closes emphasis at a word boundary; inside a
+/// word it is the literal character, so identifiers and URLs survive it.
 fn inline(text: &str, base: Option<theme::Color>) -> Line {
     let base_color = base.unwrap_or(theme::TEXT);
     let mut contents: Line = Vec::new();
     let mut rest = text;
     let mut bold = false;
     let mut italic = false;
+    // The character the runs so far ended on: word boundaries are judged
+    // against it.
+    let mut last: Option<char> = None;
     while !rest.is_empty() {
-        let cut = rest.find(['*', '`', '[']).unwrap_or(rest.len());
+        let cut = rest.find(['*', '`', '[', '_']).unwrap_or(rest.len());
         if cut > 0 {
-            contents.push(styled(rest[..cut].to_string(), base_color, bold, italic));
+            let run = &rest[..cut];
+            last = run.chars().next_back();
+            contents.push(styled(run.to_string(), base_color, bold, italic));
         }
         rest = &rest[cut..];
         if rest.is_empty() {
@@ -328,6 +361,7 @@ fn inline(text: &str, base: Option<theme::Color>) -> Line {
                     rest = "";
                 }
             }
+            last = None;
         } else if let Some(tail) = rest.strip_prefix('[') {
             if let Some(close) = tail.find("](") {
                 if let Some(end) = tail[close + 2..].find(')').map(|index| close + 2 + index) {
@@ -338,17 +372,39 @@ fn inline(text: &str, base: Option<theme::Color>) -> Line {
                     // words themselves are the click target.
                     contents.push(link(name, theme::ACCENT_TEXT, url));
                     rest = &tail[end + 1..];
+                    last = None;
                     continue;
                 }
             }
             contents.push(styled("[".to_string(), base_color, bold, italic));
+            last = Some('[');
+            rest = tail;
+        } else if let Some(tail) = rest.strip_prefix('_') {
+            let next = tail.chars().next();
+            let at_word_start = last.is_none_or(|c| !c.is_alphanumeric());
+            let at_word_end = next.is_none_or(|c| !c.is_alphanumeric());
+            if at_word_start && !italic && next.is_some_and(|c| !c.is_whitespace())
+                || at_word_end && italic && last.is_some_and(|c| !c.is_whitespace())
+            {
+                italic = !italic;
+            } else {
+                contents.push(styled("_".to_string(), base_color, bold, italic));
+                last = Some('_');
+            }
             rest = tail;
         } else if let Some(tail) = rest.strip_prefix('*') {
             italic = !italic;
             rest = tail;
         } else {
-            contents.push(styled(rest[..1].to_string(), base_color, bold, italic));
-            rest = &rest[1..];
+            let first = rest.chars().next().unwrap_or_default();
+            contents.push(styled(
+                rest[..first.len_utf8()].to_string(),
+                base_color,
+                bold,
+                italic,
+            ));
+            last = Some(first);
+            rest = &rest[first.len_utf8()..];
         }
     }
     contents
