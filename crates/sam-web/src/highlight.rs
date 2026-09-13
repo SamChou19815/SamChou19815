@@ -1,5 +1,7 @@
-//! Syntax highlighting for the samlang program on the About tab, using the
-//! homepage's Prism light token colors.
+//! Syntax highlighting for samlang code — the About tab's program and blog
+//! posts' `samlang` fenced blocks — using the homepage's Prism light token
+//! colors. Every other fenced language is highlighted by tree-sitter at
+//! build time (see `build.rs`) and painted with the same palette.
 
 use crate::crypt::{encrypted_str, EncryptedString};
 use crate::data;
@@ -40,10 +42,17 @@ pub(crate) fn doc_comment_lines() -> Vec<Line> {
 }
 
 pub(crate) fn program_lines() -> Vec<Line> {
+    let program = data::ABOUT_PROGRAM.decrypt();
+    let lines: Vec<&str> = program.lines().collect();
+    samlang_lines(&lines)
+}
+
+/// Highlights the lines of a samlang snippet — the About tab's program, or a
+/// blog post's `samlang` fenced block.
+pub(crate) fn samlang_lines(source_lines: &[&str]) -> Vec<Line> {
     let mut result = Vec::new();
     let mut in_comment = false;
-    let program = data::ABOUT_PROGRAM.decrypt();
-    for source_line in program.lines() {
+    for source_line in source_lines {
         let (spans, comment_continues) = highlight_line(source_line, in_comment);
         in_comment = comment_continues;
         result.push(spans);

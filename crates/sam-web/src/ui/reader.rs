@@ -56,7 +56,7 @@ fn Post(post: usize) -> impl IntoView {
         true
     });
 
-    let blocks = markdown::post_blocks(&posts::POSTS[post].body().decrypt())
+    let blocks = markdown::post_blocks(&posts::POSTS[post])
         .into_iter()
         .map(|block| view! { <BlockView block /> })
         .collect_view();

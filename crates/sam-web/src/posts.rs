@@ -12,6 +12,33 @@
 use crate::crypt::{EncryptedRun, EncryptedString};
 use crate::site_path::SitePath;
 
+/// The palette a highlighted span of code is painted with: the homepage's
+/// Prism light tokens, the same ones [`crate::highlight`] paints samlang
+/// with. The names are what build.rs's tree-sitter captures resolve to.
+#[derive(Clone, Copy)]
+pub(crate) enum SpanColor {
+    Keyword,
+    String,
+    Number,
+    Function,
+    Type,
+    Comment,
+}
+
+/// One highlighted range of a code block's line: where in the line it starts,
+/// how long it is, and the color that paints it.
+pub(crate) struct CodeSpan {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
+    pub(crate) color: SpanColor,
+}
+
+/// The tree-sitter highlighting build.rs compiled for one fenced block: per
+/// line, its spans.
+pub(crate) struct CodeBlock {
+    pub(crate) lines: &'static [&'static [CodeSpan]],
+}
+
 pub(crate) struct Post {
     title: EncryptedRun,
     year: EncryptedRun,
@@ -22,6 +49,10 @@ pub(crate) struct Post {
     external_url: Option<EncryptedRun>,
     /// Markdown body with the frontmatter stripped. Empty for external posts.
     body: EncryptedRun,
+    /// One entry per fenced block in the body, in order: its compiled
+    /// highlighting, or no lines for the blocks that get none — plain ones,
+    /// and the samlang ones the runtime highlights itself.
+    code_blocks: &'static [CodeBlock],
 }
 
 include!(concat!(env!("OUT_DIR"), "/posts.rs"));
@@ -38,6 +69,10 @@ impl Post {
 
     pub(crate) fn body(&self) -> EncryptedString {
         self.body.of(POSTS_BLOB)
+    }
+
+    pub(crate) fn code_blocks(&self) -> &'static [CodeBlock] {
+        self.code_blocks
     }
 
     pub(crate) fn is_external(&self) -> bool {
