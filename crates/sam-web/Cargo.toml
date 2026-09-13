@@ -30,9 +30,29 @@ web-sys = { version = "0.3", features = [
 ] }
 console_error_panic_hook = "0.1"
 
-# Host-side only: build.rs compiles the blog's posts into the binary.
+# Host-side only: build.rs compiles the blog's posts into the binary, with
+# their fenced code blocks highlighted by tree-sitter grammars.
 [build-dependencies]
 serde_json = { workspace = true }
+tree-sitter = "0.27"
+tree-sitter-highlight = "0.27"
+tree-sitter-bash = "0.25"
+tree-sitter-c = "0.24"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-css = "0.25"
+tree-sitter-go = "0.25"
+tree-sitter-html = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-php = "0.24"
+tree-sitter-python = "0.25"
+tree-sitter-ruby = "0.23"
+tree-sitter-rust = "0.24"
+tree-sitter-swift = "0.7"
+tree-sitter-typescript = "0.23"
+tree-sitter-yaml = "0.7"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-O", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
