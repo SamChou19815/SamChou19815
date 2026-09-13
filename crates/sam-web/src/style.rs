@@ -9,54 +9,54 @@
 use crate::theme::Color;
 
 /// The style of a run of text.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub struct TextStyle {
+#[derive(Clone, Default)]
+pub(crate) struct TextStyle {
     /// The text color, or `None` for the page's default foreground.
-    pub color: Option<Color>,
-    pub bold: bool,
-    pub italic: bool,
-    pub underline: bool,
+    pub(crate) color: Option<Color>,
+    pub(crate) bold: bool,
+    pub(crate) italic: bool,
+    pub(crate) underline: bool,
 }
 
 impl TextStyle {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub fn color(mut self, color: Color) -> Self {
+    pub(crate) fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
         self
     }
 
-    pub fn bold(mut self) -> Self {
+    pub(crate) fn bold(mut self) -> Self {
         self.bold = true;
         self
     }
 
-    pub fn italic(mut self) -> Self {
+    pub(crate) fn italic(mut self) -> Self {
         self.italic = true;
         self
     }
 
-    pub fn underline(mut self) -> Self {
+    pub(crate) fn underline(mut self) -> Self {
         self.underline = true;
         self
     }
 }
 
 /// A run of uniformly styled text, and where it leads if it is a link.
-#[derive(Clone, Default, PartialEq, Eq, Debug)]
-pub struct Span {
-    pub text: String,
-    pub style: TextStyle,
+#[derive(Clone)]
+pub(crate) struct Span {
+    pub(crate) text: String,
+    pub(crate) style: TextStyle,
     /// The URL this run opens, for the runs that are links. Wrapping and
     /// merging both carry it, so a link that breaks across two rows is
     /// clickable on both of them and never merges into the prose beside it.
-    pub link: Option<String>,
+    pub(crate) link: Option<String>,
 }
 
 impl Span {
-    pub fn new(text: impl Into<String>) -> Self {
+    pub(crate) fn new(text: impl Into<String>) -> Self {
         Span {
             text: text.into(),
             style: TextStyle::default(),
@@ -64,7 +64,7 @@ impl Span {
         }
     }
 
-    pub fn styled(text: impl Into<String>, style: TextStyle) -> Self {
+    pub(crate) fn styled(text: impl Into<String>, style: TextStyle) -> Self {
         Span {
             text: text.into(),
             style,
@@ -73,7 +73,7 @@ impl Span {
     }
 
     /// The same run, opening `url` when it is clicked.
-    pub fn linked(mut self, url: impl Into<String>) -> Self {
+    pub(crate) fn linked(mut self, url: impl Into<String>) -> Self {
         self.link = Some(url.into());
         self
     }
@@ -81,21 +81,21 @@ impl Span {
 
 /// A line of styled text: what every view, and the shell's scrollback, is made
 /// of.
-pub type Line = Vec<Span>;
+pub(crate) type Line = Vec<Span>;
 
-pub fn colored(text: impl Into<String>, color: Color) -> Span {
+pub(crate) fn colored(text: impl Into<String>, color: Color) -> Span {
     Span::styled(text, TextStyle::new().color(color))
 }
 
-pub fn bold_colored(text: impl Into<String>, color: Color) -> Span {
+pub(crate) fn bold_colored(text: impl Into<String>, color: Color) -> Span {
     Span::styled(text, TextStyle::new().color(color).bold())
 }
 
-pub fn underlined_colored(text: impl Into<String>, color: Color) -> Span {
+fn underlined_colored(text: impl Into<String>, color: Color) -> Span {
     Span::styled(text, TextStyle::new().color(color).underline())
 }
 
 /// A link, drawn the way the site draws one and carrying where it goes.
-pub fn link(text: impl Into<String>, color: Color, url: &str) -> Span {
+pub(crate) fn link(text: impl Into<String>, color: Color, url: &str) -> Span {
     underlined_colored(text, color).linked(url)
 }

@@ -8,7 +8,7 @@
 //! mentions one only opens it where the words actually are.
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum HitTarget {
+pub(crate) enum HitTarget {
     Tab(usize),
     Item(usize),
     Link(String),

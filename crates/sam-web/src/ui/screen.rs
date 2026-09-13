@@ -14,9 +14,8 @@
 //! is up — so a keystroke redraws the runs that show what it changed and
 //! nothing else, and a post is parsed once, when it is opened.
 
-use crate::crypt::EncryptedString;
+use crate::crypt::{encrypted_str, EncryptedString};
 use crate::data;
-use crate::encrypted_str;
 use crate::hit::HitTarget;
 use crate::markdown::{self, Block};
 use crate::posts;
@@ -35,10 +34,9 @@ use super::{hanging_line, styled_line, Activate, Model};
 /// paints it a cell at a time.
 const TITLE: EncryptedString = encrypted_str!("DEV SAM");
 
-// Colors in classes are the ones in [`theme`]: `#2563eb` ACCENT_TEXT,
-// `#3b82f6` ACCENT, `#dbeafe` SELECT_BG, `#1e3a8a` SELECT_FG, `#f7f7f7`
-// SURFACE, `#d1d5db` BORDER_SUBTLE, `#1c1e21` TEXT, `#4b5563` MUTED, `#374151`
-// SUBTLE.
+// The colors in classes are the site's palette — the constants that remain in
+// [`theme`], plus the ones only a class spells: `#2563eb`, `#3b82f6`,
+// `#dbeafe`, `#1e3a8a`, `#f7f7f7`, `#d1d5db`, `#1c1e21`, `#4b5563`, `#374151`.
 //
 // The two list tabs are what the platform already knows how to use: a
 // listbox whose options are the cards ([`timeline_tree`], [`blog_tree`]). The
@@ -108,7 +106,7 @@ fn focus_follows_selection(selected: Memo<usize>, cards: &[NodeRef<html::Li>]) {
     Effect::new(move |previous: Option<()>| {
         let index = selected.get();
         if let Some(option) = cards.get(index).and_then(|card| card.get()) {
-            let mut scroll = web_sys::FocusOptions::new();
+            let scroll = web_sys::FocusOptions::new();
             scroll.set_prevent_scroll(previous.is_none());
             let _ = option.focus_with_options(&scroll);
         }
@@ -118,7 +116,7 @@ fn focus_follows_selection(selected: Memo<usize>, cards: &[NodeRef<html::Li>]) {
 /// The app: the header fixed at the top of the screen, the pane filling what
 /// is left. `touch` is a host with no keys to press, which leaves the Help
 /// tab out of the bar.
-pub(crate) fn screen(model: Model, touch: bool, on_activate: impl Activate) -> AnyView {
+pub(super) fn screen(model: Model, touch: bool, on_activate: impl Activate) -> AnyView {
     view! {
         <div class="flex h-full w-full flex-col">
             {header(model, touch, on_activate)}

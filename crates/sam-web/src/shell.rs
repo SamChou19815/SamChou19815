@@ -5,9 +5,8 @@
 //! ends in a URL carries it on the run of text it is written on, so the links
 //! `cat` prints are clicked where they are read.
 
-use crate::crypt::EncryptedString;
+use crate::crypt::{encrypted_str, EncryptedString};
 use crate::data;
-use crate::encrypted_str;
 use crate::highlight;
 use crate::style::{bold_colored, colored, Line, Span, TextStyle};
 use crate::theme;
@@ -43,38 +42,32 @@ const COMMANDS: [EncryptedString; 10] = [
 ];
 
 #[derive(Clone)]
-pub struct Shell {
+pub(crate) struct Shell {
     /// `[]` = `/home/sam`
     cwd_segments: Vec<String>,
     history: Vec<String>,
 }
 
-pub enum CommandRunOutcome {
+enum CommandRunOutcome {
     RenderText(Vec<Line>),
     Clear,
     LaunchApp,
 }
 
-impl Default for Shell {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Shell {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Shell {
             cwd_segments: Vec::new(),
             history: Vec::new(),
         }
     }
 
-    pub fn history(&self) -> &[String] {
+    fn history(&self) -> &[String] {
         &self.history
     }
 
     /// `sam@developersam:~/projects$ `
-    pub fn prompt_spans(&self) -> Vec<Span> {
+    fn prompt_spans(&self) -> Vec<Span> {
         let mut cwd = String::from("~");
         for segment in &self.cwd_segments {
             cwd.push('/');
@@ -91,7 +84,7 @@ impl Shell {
         ]
     }
 
-    pub fn execute(&mut self, line: &str) -> CommandRunOutcome {
+    fn execute(&mut self, line: &str) -> CommandRunOutcome {
         let line = line.trim();
         if line.is_empty() {
             return CommandRunOutcome::RenderText(Vec::new());
@@ -125,7 +118,7 @@ impl Shell {
         }
     }
 
-    pub fn tab_complete(&self, line: &str) -> Vec<String> {
+    fn tab_complete(&self, line: &str) -> Vec<String> {
         let trimmed = line.trim_start();
         let (before, word) = match trimmed.rfind(' ') {
             Some(position) => (&trimmed[..position], trimmed[position + 1..].trim_start()),
@@ -424,26 +417,16 @@ fn one(span: Span) -> Line {
 /// One prompt row: the prompt itself, then the edited line split around the
 /// cursor so the front-end can paint the block cursor over the character it
 /// sits on (or an empty cell at the end of the line).
-pub struct PromptRow {
+pub(crate) struct PromptRow {
     /// Snapshotted with the row: a `cd` moves the shell's prompt on before the row is frozen.
-    pub prompt: Vec<Span>,
-    pub before_cursor: Vec<Span>,
+    pub(crate) prompt: Vec<Span>,
+    pub(crate) before_cursor: Vec<Span>,
     /// The character under the cursor, if any.
-    pub at_cursor: Option<char>,
-    pub after_cursor: Vec<Span>,
+    pub(crate) at_cursor: Option<char>,
+    pub(crate) after_cursor: Vec<Span>,
 }
 
-impl PromptRow {
-    pub fn line_len(&self) -> usize {
-        self.before_cursor
-            .iter()
-            .chain(self.after_cursor.iter())
-            .map(|span| span.text.chars().count())
-            .sum()
-    }
-}
-
-pub enum EditOutcome {
+pub(crate) enum EditOutcome {
     /// Nothing to print. The line may well have changed — a typed character,
     /// a moved cursor — but the prompt row is drawn from the editor as it
     /// stands, so there is nothing to hand over.
@@ -467,7 +450,7 @@ pub enum EditOutcome {
 /// lives on the [`Shell`], which is the thing that records it, so the `history`
 /// command and the arrow keys can never drift apart.
 #[derive(Clone)]
-pub struct LineEditor {
+pub(crate) struct LineEditor {
     line: String,
     /// Byte offset of the cursor within `line`.
     cursor: usize,
@@ -476,14 +459,8 @@ pub struct LineEditor {
     history_index: usize,
 }
 
-impl Default for LineEditor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl LineEditor {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         LineEditor {
             line: String::new(),
             cursor: 0,
@@ -493,10 +470,10 @@ impl LineEditor {
 
     /// The screen the session opens on, with `dev-sam` pre-typed at the
     /// prompt: one Enter away from the app.
-    pub fn opening_screen(&mut self) -> Vec<Line> {
+    pub(crate) fn opening_screen(&mut self) -> Vec<Line> {
         let out = vec![
             one(colored(
-                encrypted_str!("dev-sam-sh 1.0 — developer sam's terminal").decrypt(),
+                encrypted_str!("sam-sh 1.0 — developer sam's terminal").decrypt(),
                 theme::MUTED,
             )),
             one(colored(
@@ -510,7 +487,7 @@ impl LineEditor {
     }
 
     /// The message printed when the app has exited, over a fresh prompt.
-    pub fn after_dev_sam_app_exit() -> Vec<Line> {
+    pub(crate) fn after_dev_sam_app_exit() -> Vec<Line> {
         vec![one(colored(
             encrypted_str!("dev-sam exited — type dev-sam to run it again, or help").decrypt(),
             theme::MUTED,
@@ -518,7 +495,7 @@ impl LineEditor {
     }
 
     /// Feeds one key. Returns what the front-end should paint.
-    pub fn handle_key(&mut self, key: Key, mods: Mods, shell: &mut Shell) -> EditOutcome {
+    pub(crate) fn handle_key(&mut self, key: Key, mods: Mods, shell: &mut Shell) -> EditOutcome {
         if mods.ctrl {
             return self.handle_control_key(key);
         }
@@ -645,7 +622,7 @@ impl LineEditor {
     }
 
     /// The prompt row as it is rendered right now, at `shell`'s prompt.
-    pub fn prompt_row(&self, shell: &Shell) -> PromptRow {
+    pub(crate) fn prompt_row(&self, shell: &Shell) -> PromptRow {
         let before = self.line[..self.cursor].to_string();
         let mut chars = self.line[self.cursor..].chars();
         let at_cursor = chars.next();

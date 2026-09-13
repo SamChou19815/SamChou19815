@@ -17,7 +17,7 @@ use crate::theme;
 
 /// One unit of a rendered post. A [`Block::Line`] is a paragraph's worth of
 /// styled runs; how many rows it takes is decided where it is drawn.
-pub enum Block {
+pub(crate) enum Block {
     Line(Line),
     /// A list item: `marker` hangs in the two characters the text indents by,
     /// which the view draws for it.
@@ -41,7 +41,7 @@ pub enum Block {
 }
 
 /// Renders a post body into blocks.
-pub fn post_blocks(body: &str) -> Vec<Block> {
+pub(crate) fn post_blocks(body: &str) -> Vec<Block> {
     let mut blocks: Vec<Block> = Vec::new();
     let mut paragraph: Vec<&str> = Vec::new();
     let mut code: Option<(String, Vec<Line>)> = None;

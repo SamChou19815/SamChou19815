@@ -58,7 +58,7 @@ fn compile_posts(www_src: &Path) -> (String, Vec<u8>) {
          static POSTS_BLOB: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/posts.bin\"));\n\
          /// The blog's name.\n\
          const BLOG_TITLE: EncryptedRun = {};\n\
-         pub static POSTS: &[Post] = &[\n",
+         pub(crate) static POSTS: &[Post] = &[\n",
         "generated",
         encrypted(&mut blog_post_encrypted_blob, BLOG_TITLE)
     );

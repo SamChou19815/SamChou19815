@@ -15,7 +15,7 @@
 //! shows the new state has been drawn. The URL bar and the title are an
 //! effect of the view the app is on, like anything else drawn from it.
 
-pub mod screen;
+mod screen;
 use crate::hit::HitTarget;
 use crate::shell::{self, EditOutcome, LineEditor, Shell};
 use crate::site_path::SitePath;
@@ -51,7 +51,7 @@ enum Mode {
 /// carries a [`HitTarget`] is given. Cheap to copy into each of them, and
 /// safe to hold in a reactive closure, which is where a card's class reads it
 /// from.
-pub(crate) trait Activate: Fn(&HitTarget) + Copy + Send + Sync + 'static {}
+trait Activate: Fn(&HitTarget) + Copy + Send + Sync + 'static {}
 
 impl<F: Fn(&HitTarget) + Copy + Send + Sync + 'static> Activate for F {}
 
@@ -68,21 +68,21 @@ struct Prompt {
 /// on, so a change to one — the selection, say — redraws the runs that show
 /// it and nothing else. With it, the box the views draw into.
 #[derive(Clone, Copy)]
-pub(crate) struct Model {
+struct Model {
     /// The tab the header marks.
-    pub tab: Memo<usize>,
+    tab: Memo<usize>,
     /// The post in the reader, if one is open.
-    pub reader: Memo<Option<usize>>,
+    reader: Memo<Option<usize>>,
     /// The selected card of the Timeline tab.
-    pub timeline_selected: Memo<usize>,
+    timeline_selected: Memo<usize>,
     /// The selected card of the Blog tab.
-    pub blog_selected: Memo<usize>,
+    blog_selected: Memo<usize>,
     /// The pane: the box under the header the browser scrolls.
-    pub pane: NodeRef<html::Div>,
+    pane: NodeRef<html::Div>,
     /// Where the pointer was last reported, in screen coordinates — nowhere
     /// until it has been. What tells a pointer that moved onto a card from
     /// one the pane slid under ([`screen::hover`]).
-    pub pointer: StoredValue<(i32, i32)>,
+    pointer: StoredValue<(i32, i32)>,
 }
 
 /// Runs `work` once the frame showing the app's new state has been drawn. The
@@ -98,7 +98,7 @@ fn after_render(work: impl FnOnce() + 'static) {
 /// Mounts the session into `parent`. `touch_device` is the host's answer for
 /// whether this is a phone or tablet — a host with no keyboard, where the app
 /// runs itself rather than waiting at a prompt no one can type at.
-pub fn mount(parent: web_sys::HtmlElement, touch_device: bool) {
+pub(crate) fn mount(parent: web_sys::HtmlElement, touch_device: bool) {
     console_error_panic_hook::set_once();
     let path = current_path();
     // The session lives as long as the page: the mount handle is forgotten,
@@ -129,7 +129,7 @@ pub fn mount(parent: web_sys::HtmlElement, touch_device: bool) {
 /// is definite (a fixed box, or a flex child that `flex-1 min-h-0` has sized),
 /// `w-full` under a full-width one. Left at its natural `auto` height it grows
 /// to fit its content, nothing overflows, and nothing can scroll.
-pub(crate) const SCROLL: &str = concat!(
+const SCROLL: &str = concat!(
     "overflow-x-hidden overflow-y-auto ",
     "[scrollbar-width:thin] [scrollbar-color:#64656666_transparent] ",
     "[&::-webkit-scrollbar]:w-3.5 ",
@@ -260,7 +260,7 @@ fn claims(mode: Mode, key: Key, mods: Mods) -> bool {
 
 /// One styled run as a `span`, with the click target it carries, if any. A
 /// link is clicked on the words it is written on, and nowhere else.
-pub(crate) fn span_view(span: &Span, on_activate: impl Activate) -> AnyView {
+fn span_view(span: &Span, on_activate: impl Activate) -> AnyView {
     let mut class = String::new();
     let mut style = String::new();
     // Every color is one the palette picks as the view is built, so it is the
@@ -296,7 +296,7 @@ pub(crate) fn span_view(span: &Span, on_activate: impl Activate) -> AnyView {
 /// wrap at the width they land at — at words, the way the browser wraps
 /// everything; the reader's code blocks ask for `wraps: false` and scroll
 /// instead, and the About listing wraps under its indent ([`hanging_line`]).
-pub(crate) fn styled_line(line: &Line, wraps: bool, on_activate: impl Activate) -> AnyView {
+fn styled_line(line: &Line, wraps: bool, on_activate: impl Activate) -> AnyView {
     let runs: Vec<AnyView> = line
         .iter()
         .map(|span| span_view(span, on_activate))
@@ -318,7 +318,7 @@ pub(crate) fn styled_line(line: &Line, wraps: bool, on_activate: impl Activate) 
 /// still reads as the tail of the line above. A run too long to break at a
 /// space — a URL — is broken where it runs out of room; it stays one run, so
 /// a link is clickable on both of its rows.
-pub(crate) fn hanging_line(line: &Line, hang: usize, on_activate: impl Activate) -> AnyView {
+fn hanging_line(line: &Line, hang: usize, on_activate: impl Activate) -> AnyView {
     let runs: Vec<AnyView> = line
         .iter()
         .map(|span| span_view(span, on_activate))
@@ -381,8 +381,8 @@ fn prompt_view(snapshot: &shell::PromptRow, on_activate: impl Activate) -> AnyVi
             .iter()
             .map(|span| span_view(span, on_activate)),
     );
-    // `#1c1e21` and `#f7f7f7` are [`theme::TEXT`] and [`theme::SURFACE`], the
-    // two colors the terminal pins on itself.
+    // `#1c1e21` is [`theme::TEXT`]; `#f7f7f7` is the surface color the
+    // terminal pins on itself.
     let cursor_character = snapshot
         .at_cursor
         .map(String::from)

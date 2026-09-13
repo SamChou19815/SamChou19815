@@ -20,42 +20,40 @@
 //! bar on it, and brings a path in (a URL entered, a link followed, the back
 //! button) through [`App::go_to`].
 
-pub mod crypt;
-pub mod data;
-pub mod highlight;
-pub mod hit;
-pub mod markdown;
-pub mod posts;
-pub mod shell;
-pub mod site_path;
-pub mod style;
-pub mod theme;
+mod crypt;
+mod data;
+mod ffi;
+mod highlight;
+mod hit;
+mod markdown;
+mod posts;
+mod shell;
+mod site_path;
+mod style;
+mod theme;
+mod ui;
 
-#[cfg(target_arch = "wasm32")]
-pub mod ffi;
-#[cfg(target_arch = "wasm32")]
-pub mod ui;
-
-pub use site_path::SitePath;
+use crypt::encrypted_str;
+use site_path::SitePath;
 
 /// The tabs' names, encrypted like every other string so the binary spells out
 /// none of the site's structure — read one back with `.decrypt()`.
-pub const TAB_NAMES: [crypt::EncryptedString; 4] = [
+pub(crate) const TAB_NAMES: [crypt::EncryptedString; 4] = [
     encrypted_str!("About"),
     encrypted_str!("Timeline"),
     encrypted_str!("Blog"),
     encrypted_str!("Help"),
 ];
-pub const TAB_COUNT: usize = 4;
-pub const ABOUT_TAB: usize = 0;
-pub const TIMELINE_TAB: usize = 1;
-pub const BLOG_TAB: usize = 2;
-pub const HELP_TAB: usize = 3;
+pub(crate) const TAB_COUNT: usize = 4;
+pub(crate) const ABOUT_TAB: usize = 0;
+pub(crate) const TIMELINE_TAB: usize = 1;
+pub(crate) const BLOG_TAB: usize = 2;
+pub(crate) const HELP_TAB: usize = 3;
 
 /// The site path each tab is served at. The web front-end keeps the URL bar on
 /// whatever the app is showing, so every view the app can be in has to be a
 /// place the site can be entered at — see [`App::route`] and [`App::go_to`].
-pub const TAB_ROUTES: [crypt::EncryptedString; TAB_COUNT] = [
+const TAB_ROUTES: [crypt::EncryptedString; TAB_COUNT] = [
     encrypted_str!("/about"),
     encrypted_str!("/timeline"),
     encrypted_str!("/blog"),
@@ -63,10 +61,10 @@ pub const TAB_ROUTES: [crypt::EncryptedString; TAB_COUNT] = [
 ];
 
 /// Where the blog index lives, and the prefix every post's permalink shares.
-pub const BLOG_ROUTE: crypt::EncryptedString = encrypted_str!("/blog");
+const BLOG_ROUTE: crypt::EncryptedString = encrypted_str!("/blog");
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Key {
+#[derive(Clone, Copy)]
+pub(crate) enum Key {
     Up,
     Down,
     Left,
@@ -84,18 +82,18 @@ pub enum Key {
     Char(char),
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct Mods {
-    pub ctrl: bool,
-    pub shift: bool,
-    pub alt: bool,
+#[derive(Clone, Copy)]
+pub(crate) struct Mods {
+    pub(crate) ctrl: bool,
+    pub(crate) shift: bool,
+    pub(crate) alt: bool,
 }
 
 /// How far a keystroke moves the pane. The wheel is not here: the pane is a
-/// scrolling box, so a wheel, a trackpad, a drag and a scrollbar are all the
-/// browser's business and the app never hears about them.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Scroll {
+/// scrolling box, so a wheel, a trackpad, a drag and a scrollbar are all
+/// the browser's business and the app never hears about them.
+#[derive(PartialEq)]
+pub(crate) enum Scroll {
     /// Rows, negative up.
     Rows(i32),
     /// Screenfuls, negative up.
@@ -108,8 +106,8 @@ pub enum Scroll {
 /// it and taken with [`App::take_errands`]. Bringing the selected card into
 /// view is not one of these: the selected card is the focused one, and the
 /// browser scrolls a freshly focused element into view on its own.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Errand {
+#[derive(PartialEq)]
+pub(crate) enum Errand {
     /// Open a URL that is not a view of this app, in a new tab.
     Open(String),
     /// Move the pane the app is showing.
@@ -123,8 +121,7 @@ pub enum Errand {
 /// with it rather than sitting in a field beside one; showing anything else
 /// replaces this whole value, which is what closes the reader without anyone
 /// having to remember to.
-#[derive(Clone, PartialEq, Eq)]
-pub enum Screen {
+enum Screen {
     Tab(usize),
     Post(usize),
 }
@@ -132,7 +129,7 @@ pub enum Screen {
 impl Screen {
     /// The tab the header marks as the one in front. A post is read on the Blog
     /// tab, so an open post marks that one.
-    pub fn tab(&self) -> usize {
+    fn tab(&self) -> usize {
         match self {
             Screen::Tab(tab) => *tab,
             Screen::Post(_) => BLOG_TAB,
@@ -140,7 +137,7 @@ impl Screen {
     }
 
     /// The post in the reader, if this view is one.
-    pub fn reader(&self) -> Option<usize> {
+    fn reader(&self) -> Option<usize> {
         match self {
             Screen::Tab(_) => None,
             Screen::Post(post) => Some(*post),
@@ -149,7 +146,7 @@ impl Screen {
 
     /// This view as a site path — what the URL bar should read. An open post is
     /// its own permalink; a tab is the path it is served at.
-    pub fn route(&self) -> SitePath {
+    fn route(&self) -> SitePath {
         match self {
             Screen::Tab(tab) => SitePath::new(TAB_ROUTES[*tab].decrypt()),
             Screen::Post(post) => posts::POSTS[*post].path(),
@@ -157,8 +154,7 @@ impl Screen {
     }
 }
 
-#[derive(Clone)]
-pub struct App {
+pub(crate) struct App {
     /// The view on screen. Everything that changes what the app is showing goes
     /// through [`App::switch_tab`] or [`App::open_post`], each of which replaces
     /// this outright — so the app can never be showing a tab with a post's
@@ -173,16 +169,10 @@ pub struct App {
     errands: Vec<Errand>,
 }
 
-impl Default for App {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl App {
     /// The app on its first tab. A deep link is followed with [`App::go_to`]
     /// before the first frame, so what it draws is already the right view.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         App {
             screen: Screen::Tab(ABOUT_TAB),
             selected: [0; TAB_COUNT],
@@ -192,13 +182,13 @@ impl App {
 
     /// Takes what the browser has to do for the inputs handled so far, leaving
     /// nothing behind.
-    pub fn take_errands(&mut self) -> Vec<Errand> {
+    pub(crate) fn take_errands(&mut self) -> Vec<Errand> {
         std::mem::take(&mut self.errands)
     }
 
     /// What a click on a region of the current frame does: a pointer names the
     /// card it means by landing on it, so selecting and opening are one act.
-    pub fn activate(&mut self, target: &hit::HitTarget) {
+    pub(crate) fn activate(&mut self, target: &hit::HitTarget) {
         match target {
             hit::HitTarget::Link(url) => self.open_link(url),
             hit::HitTarget::Tab(index) => self.switch_tab(*index),
@@ -222,7 +212,7 @@ impl App {
     /// already on the card, so there is nothing to bring into view. Reports
     /// whether the selection moved, so the front-end redraws only when it did
     /// and not on every twitch of the pointer over the card it is on.
-    pub fn hover(&mut self, index: usize) -> bool {
+    pub(crate) fn hover(&mut self, index: usize) -> bool {
         let tab = self.tab();
         if self.reader().is_some() || !matches!(tab, TIMELINE_TAB | BLOG_TAB) {
             return false;
@@ -249,24 +239,24 @@ impl App {
 
     /// The tab the header marks as the one in front — the Blog tab whenever a
     /// post is open, since the reader is a mode of it.
-    pub fn tab(&self) -> usize {
+    pub(crate) fn tab(&self) -> usize {
         self.screen.tab()
     }
 
     /// The post open in the reader, if one is.
-    pub fn reader(&self) -> Option<usize> {
+    pub(crate) fn reader(&self) -> Option<usize> {
         self.screen.reader()
     }
 
     /// The view the app is on, as a site path — what the URL bar should read.
-    pub fn route(&self) -> SitePath {
+    pub(crate) fn route(&self) -> SitePath {
         self.screen.route()
     }
 
     /// Shows the view a site path names, and reports whether it named one. A
     /// permalink opens its post in the reader; the blog index and the other tabs
     /// are tabs, so landing on one is what closes it.
-    pub fn go_to(&mut self, path: &SitePath) -> bool {
+    pub(crate) fn go_to(&mut self, path: &SitePath) -> bool {
         let Some(screen) = screen_at(path) else {
             return false;
         };
@@ -277,12 +267,12 @@ impl App {
         true
     }
 
-    pub fn selected(&self, tab: usize) -> usize {
+    pub(crate) fn selected(&self, tab: usize) -> usize {
         self.selected[tab]
     }
 
     /// Feeds one keystroke into the state machine.
-    pub fn handle_key(&mut self, key: Key, mods: Mods) {
+    pub(crate) fn handle_key(&mut self, key: Key, mods: Mods) {
         if mods.ctrl && matches!(key, Key::Char('c') | Key::Char('d')) {
             self.errands.push(Errand::Quit);
             return;
@@ -456,18 +446,18 @@ fn screen_at(path: &SitePath) -> Option<Screen> {
 /// Whether the app has a view at `path`. The front-end asks before following
 /// a back button itself rather than handing it to the browser, so the two
 /// never disagree about what this app is responsible for.
-pub fn has_view(path: &SitePath) -> bool {
+pub(crate) fn has_view(path: &SitePath) -> bool {
     screen_at(path).is_some()
 }
 
 /// What the document is called while the shell, rather than a view, is up.
 /// Encrypted like every other title, so the binary names no page.
-pub const SHELL_TITLE: crypt::EncryptedString = encrypted_str!("Developer Sam — Terminal");
+pub(crate) const SHELL_TITLE: crypt::EncryptedString = encrypted_str!("Developer Sam — Terminal");
 
 /// What the document is called while the view at `path` is on screen. The post
 /// titles come from `posts.rs`, which build.rs compiles out of the same sources
 /// the site renders, so the tab and the page cannot disagree.
-pub fn title_for(path: &SitePath) -> String {
+pub(crate) fn title_for(path: &SitePath) -> String {
     match screen_at(path) {
         Some(Screen::Post(post)) => {
             format!("{} | {}", posts::POSTS[post].title(), posts::blog_title())
@@ -482,7 +472,7 @@ pub fn title_for(path: &SitePath) -> String {
 }
 
 /// Where activating a link should lead.
-pub enum LinkTarget {
+enum LinkTarget {
     /// A view of this app: follow it here, without touching the browser.
     View(SitePath),
     /// Somewhere else on the web: the browser opens it in a new tab.
@@ -494,7 +484,7 @@ pub enum LinkTarget {
 }
 
 /// Where the URL a link carries should lead.
-pub fn link_target(url: &str) -> LinkTarget {
+fn link_target(url: &str) -> LinkTarget {
     if let Some(path) = site_path(url) {
         if has_view(&path) {
             return LinkTarget::View(path);
