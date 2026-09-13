@@ -100,13 +100,13 @@ pub(super) fn Header(touch_device: bool) -> impl IntoView {
     view! {
         <header class="shrink-0 border-b border-[#d1d5db]">
             <div class="px-2">
-                <div class="mx-auto w-full max-w-88 px-1 pt-row">
+                <div class="mx-auto w-full max-w-88 pt-row">
                     <div class="flex flex-wrap items-center">
                         <div class="hidden [@media(min-width:542px)_and_(min-height:432px)]:@min-[60ch]:block">
                             <Wordmark />
                         </div>
                         <nav
-                            class="flex min-w-max flex-1 items-center justify-center gap-3 @max-[67ch]:justify-start"
+                            class="flex min-w-max flex-1 items-center justify-end gap-3 @max-[67ch]:justify-start"
                             aria-label=TABS_LABEL.decrypt()
                         >
                             {tabs}
