@@ -6,27 +6,25 @@
 //! [`encrypted_str!`] does the encrypting at compile time; call sites read them
 //! back with `decrypt()`, or straight through `Display`.
 
-use crate::crypt::EncryptedString;
-use crate::encrypted_str;
+use crate::crypt::{encrypted_str, EncryptedString};
 use crate::theme::Color;
 
-pub const COPYRIGHT: EncryptedString = encrypted_str!("Copyright (C) 2015-2026 Developer Sam.");
+pub(crate) const COPYRIGHT: EncryptedString =
+    encrypted_str!("Copyright (C) 2015-2026 Developer Sam.");
 
-pub struct Link {
-    pub name: EncryptedString,
-    pub url: EncryptedString,
+pub(crate) struct Link {
+    pub(crate) name: EncryptedString,
+    pub(crate) url: EncryptedString,
 }
 
-pub struct Project {
-    pub id: EncryptedString,
-    /// Site-root-relative artwork, as on the homepage project cards.
-    pub image: Option<EncryptedString>,
-    pub tagline: EncryptedString,
-    pub links: &'static [Link],
+pub(crate) struct Project {
+    pub(crate) id: EncryptedString,
+    pub(crate) tagline: EncryptedString,
+    pub(crate) links: &'static [Link],
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Category {
+#[derive(Clone, Copy)]
+pub(crate) enum Category {
     Work,
     Education,
     Project,
@@ -35,7 +33,7 @@ pub enum Category {
 }
 
 impl Category {
-    pub fn label(self) -> EncryptedString {
+    pub(crate) fn label(self) -> EncryptedString {
         match self {
             Category::Work => encrypted_str!("work"),
             Category::Education => encrypted_str!("education"),
@@ -47,7 +45,7 @@ impl Category {
 
     /// The color this category is painted with across the whole site
     /// (tailwind 600-series: readable on the white homepage cards).
-    pub fn color(self) -> Color {
+    pub(crate) fn color(self) -> Color {
         match self {
             Category::Work => Color::rgb(37, 99, 235),      // blue-600
             Category::Education => Color::rgb(22, 163, 74), // green-600
@@ -58,19 +56,19 @@ impl Category {
     }
 }
 
-pub struct TimelineEvent {
-    pub title: EncryptedString,
-    pub time: EncryptedString,
+pub(crate) struct TimelineEvent {
+    pub(crate) title: EncryptedString,
+    pub(crate) time: EncryptedString,
     /// Site-root-relative artwork, as on the homepage timeline cards. Ten of
     /// the twenty-seven events have none.
-    pub image: Option<EncryptedString>,
-    pub category: Category,
-    pub detail: Option<EncryptedString>,
-    pub links: &'static [Link],
+    pub(crate) image: Option<EncryptedString>,
+    pub(crate) category: Category,
+    pub(crate) detail: Option<EncryptedString>,
+    pub(crate) links: &'static [Link],
 }
 
 /// The samlang program from the homepage's sticky code block.
-pub const ABOUT_PROGRAM: EncryptedString = encrypted_str!(
+pub(crate) const ABOUT_PROGRAM: EncryptedString = encrypted_str!(
     r#"import {List} from std.list;
 
 class Developer(
@@ -93,7 +91,7 @@ class Main {
 );
 
 /// The doc comment that the homepage renders above the program.
-pub const ABOUT_DOC_LINKS: &[Link] = &[
+pub(crate) const ABOUT_DOC_LINKS: &[Link] = &[
     Link {
         name: encrypted_str!("demo"),
         url: encrypted_str!("https://samlang.io/demo"),
@@ -116,10 +114,9 @@ pub const ABOUT_DOC_LINKS: &[Link] = &[
     },
 ];
 
-pub const PROJECTS: &[Project] = &[
+pub(crate) const PROJECTS: &[Project] = &[
     Project {
         id: encrypted_str!("samlang"),
-        image: Some(encrypted_str!("/projects/samlang.webp")),
         tagline: encrypted_str!("Sam's programming language with full type-inference."),
         links: &[
             Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/samlang") },
@@ -129,7 +126,6 @@ pub const PROJECTS: &[Project] = &[
     },
     Project {
         id: encrypted_str!("mini-react"),
-        image: Some(encrypted_str!("/projects/mini-react.webp")),
         tagline: encrypted_str!("A simplified version of the React runtime with useState and useEffect hooks, built from scratch."),
         links: &[
             Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/mini-react") },
@@ -139,13 +135,11 @@ pub const PROJECTS: &[Project] = &[
     },
     Project {
         id: encrypted_str!("samwise"),
-        image: Some(encrypted_str!("/projects/samwise.webp")),
         tagline: encrypted_str!("A todo-list app by Cornell DTI, built with React, Redux and Firebase."),
         links: &[Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/cornell-dti/samwise") }],
     },
     Project {
         id: encrypted_str!("courseplan"),
-        image: Some(encrypted_str!("/timeline/courseplan-promotion.png")),
         tagline: encrypted_str!("Course planning tool for Cornell students by Cornell DTI."),
         links: &[
             Link { name: encrypted_str!("Product"), url: encrypted_str!("https://courseplan.io") },
@@ -154,13 +148,11 @@ pub const PROJECTS: &[Project] = &[
     },
     Project {
         id: encrypted_str!("ten"),
-        image: Some(encrypted_str!("/projects/ten.webp")),
         tagline: encrypted_str!("A tiny esoteric language implemented in Go."),
         links: &[Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/ten-golang") }],
     },
     Project {
         id: encrypted_str!("critter-compiler"),
-        image: Some(encrypted_str!("/timeline/critter-compiler.webp")),
         tagline: encrypted_str!("A compiler for the Critter World language from Cornell CS 2112. Proved the language is Turing complete."),
         links: &[
             Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/primitivize") },
@@ -172,7 +164,6 @@ pub const PROJECTS: &[Project] = &[
     },
     Project {
         id: encrypted_str!("sampl"),
-        image: Some(encrypted_str!("/timeline/sampl.webp")),
         tagline: encrypted_str!("Sam's first programming language. Archived in favor of samlang."),
         links: &[
             Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/sampl") },
@@ -185,7 +176,7 @@ pub const PROJECTS: &[Project] = &[
 ];
 
 /// Contact channels, used by the shell's `contact.txt`.
-pub const SOCIAL_LINKS: &[Link] = &[
+pub(crate) const SOCIAL_LINKS: &[Link] = &[
     Link {
         name: encrypted_str!("GitHub"),
         url: encrypted_str!("https://github.com/SamChou19815"),
@@ -205,7 +196,7 @@ pub const SOCIAL_LINKS: &[Link] = &[
 ];
 
 /// The homepage timeline, newest first, mirroring `DATASET_TIMELINE`.
-pub const TIMELINE: &[TimelineEvent] = &[
+pub(crate) const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: encrypted_str!("Became a Canadian permanent resident"),
         time: encrypted_str!("August 2026"),

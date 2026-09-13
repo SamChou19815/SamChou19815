@@ -44,7 +44,7 @@ const fn unscramble(byte: u8, seed: u32, index: usize) -> u8 {
 }
 
 /// A string's own seed: FNV-1a over its bytes.
-pub const fn seed_of(text: &str) -> u32 {
+pub(crate) const fn seed_of(text: &str) -> u32 {
     let bytes = text.as_bytes();
     let mut hash: u32 = 0x811c_9dc5;
     let mut index = 0;
@@ -62,7 +62,7 @@ pub const fn seed_of(text: &str) -> u32 {
 /// long-running one outright, so this is for the literals a human writes.
 /// Anything corpus-sized — the blog — is encrypted by `build.rs`, which runs
 /// the same [`scramble`] compiled.
-pub const fn encrypt<const N: usize>(text: &str, seed: u32) -> [u8; N] {
+pub(crate) const fn encrypt<const N: usize>(text: &str, seed: u32) -> [u8; N] {
     let bytes = text.as_bytes();
     let mut cipher = [0u8; N];
     let mut index = 0;

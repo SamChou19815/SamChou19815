@@ -12,17 +12,17 @@ include!("cipher.rs");
 /// Build one with [`encrypted_str!`].
 /// Read it with [`EncryptedString::decrypt`], or through [`std::fmt::Display`] with padding done.
 #[derive(Clone, Copy)]
-pub struct EncryptedString {
+pub(crate) struct EncryptedString {
     seed: u32,
     cipher: &'static [u8],
 }
 
 impl EncryptedString {
-    pub const fn new(seed: u32, cipher: &'static [u8]) -> Self {
+    pub(crate) const fn new(seed: u32, cipher: &'static [u8]) -> Self {
         Self { seed, cipher }
     }
 
-    pub fn decrypt(&self) -> String {
+    pub(crate) fn decrypt(&self) -> String {
         let plain: Vec<u8> = self
             .cipher
             .iter()
@@ -39,18 +39,18 @@ impl EncryptedString {
 /// Strategy: a build script that pre-encrypt all blog post content and put it in a single blob, and
 /// this struct tells where and how to decrypt.
 #[derive(Clone, Copy)]
-pub struct EncryptedRun {
+pub(crate) struct EncryptedRun {
     seed: u32,
     start: u32,
     len: u32,
 }
 
 impl EncryptedRun {
-    pub const fn new(seed: u32, start: u32, len: u32) -> Self {
+    pub(crate) const fn new(seed: u32, start: u32, len: u32) -> Self {
         Self { seed, start, len }
     }
 
-    pub fn of(self, blob: &'static [u8]) -> EncryptedString {
+    pub(crate) fn of(self, blob: &'static [u8]) -> EncryptedString {
         let start = self.start as usize;
         EncryptedString::new(self.seed, &blob[start..start + self.len as usize])
     }
@@ -64,7 +64,6 @@ impl std::fmt::Display for EncryptedString {
     }
 }
 
-#[macro_export]
 macro_rules! encrypted_str {
     ($text:literal) => {{
         const PLAIN: &str = $text;
@@ -74,3 +73,4 @@ macro_rules! encrypted_str {
         $crate::crypt::EncryptedString::new(SEED, &CIPHER)
     }};
 }
+pub(crate) use encrypted_str;

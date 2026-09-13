@@ -12,7 +12,7 @@
 use crate::crypt::{EncryptedRun, EncryptedString};
 use crate::site_path::SitePath;
 
-pub struct Post {
+pub(crate) struct Post {
     title: EncryptedRun,
     year: EncryptedRun,
     month: EncryptedRun,
@@ -27,24 +27,24 @@ pub struct Post {
 include!(concat!(env!("OUT_DIR"), "/posts.rs"));
 
 /// The blog's name.
-pub fn blog_title() -> EncryptedString {
+pub(crate) fn blog_title() -> EncryptedString {
     BLOG_TITLE.of(POSTS_BLOB)
 }
 
 impl Post {
-    pub fn title(&self) -> EncryptedString {
+    pub(crate) fn title(&self) -> EncryptedString {
         self.title.of(POSTS_BLOB)
     }
 
-    pub fn body(&self) -> EncryptedString {
+    pub(crate) fn body(&self) -> EncryptedString {
         self.body.of(POSTS_BLOB)
     }
 
-    pub fn is_external(&self) -> bool {
+    pub(crate) fn is_external(&self) -> bool {
         self.external_url.is_some()
     }
 
-    pub fn formatted_date(&self) -> String {
+    pub(crate) fn formatted_date(&self) -> String {
         format!(
             "{}-{}-{}",
             self.year.of(POSTS_BLOB),
@@ -56,7 +56,7 @@ impl Post {
     /// The post's permalink as a site path. Only local posts have one; an
     /// external post's empty slug makes this meaningless, which is why
     /// [`find`] never matches one.
-    pub fn path(&self) -> SitePath {
+    pub(crate) fn path(&self) -> SitePath {
         SitePath::new(format!(
             "/blog/{}/{}/{}/{}",
             self.year.of(POSTS_BLOB),
@@ -67,7 +67,7 @@ impl Post {
     }
 
     /// Where the post lives on the web — the external host, or this site.
-    pub fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         match self.external_url {
             Some(url) => url.of(POSTS_BLOB).decrypt(),
             None => format!("https://developersam.com{}", self.path()),
@@ -76,7 +76,7 @@ impl Post {
 }
 
 /// The post a site path names, if it is one this site hosts.
-pub fn find(path: &SitePath) -> Option<usize> {
+pub(crate) fn find(path: &SitePath) -> Option<usize> {
     POSTS
         .iter()
         .position(|post| !post.is_external() && &post.path() == path)

@@ -1,9 +1,8 @@
 //! Syntax highlighting for the samlang program on the About tab, using the
 //! homepage's Prism light token colors.
 
-use crate::crypt::EncryptedString;
+use crate::crypt::{encrypted_str, EncryptedString};
 use crate::data;
-use crate::encrypted_str;
 use crate::style::{link, Line, Span, TextStyle};
 use crate::theme;
 
@@ -26,7 +25,7 @@ fn styled_italic(text: &str, color: theme::Color) -> Span {
     Span::styled(text, TextStyle::new().color(color).italic())
 }
 
-pub fn doc_comment_lines() -> Vec<Line> {
+pub(crate) fn doc_comment_lines() -> Vec<Line> {
     let plain = |text: &str| vec![styled(text, comment_color())];
     let mut lines = vec![plain("/**"), plain(&format!(" * {}", data::COPYRIGHT))];
     for entry in data::ABOUT_DOC_LINKS {
@@ -40,7 +39,7 @@ pub fn doc_comment_lines() -> Vec<Line> {
     lines
 }
 
-pub fn program_lines() -> Vec<Line> {
+pub(crate) fn program_lines() -> Vec<Line> {
     let mut result = Vec::new();
     let mut in_comment = false;
     let program = data::ABOUT_PROGRAM.decrypt();
