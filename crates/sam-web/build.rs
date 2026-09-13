@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// wanted here; the crate uses the rest.
 #[allow(dead_code)]
 mod cipher {
-    include!("src/cipher.rs");
+    include!("src/crypt/cipher.rs");
 }
 
 fn main() {
@@ -17,7 +17,7 @@ fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
 
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=src/cipher.rs");
+    println!("cargo:rerun-if-changed=src/crypt/cipher.rs");
 
     let (posts, posts_blob) = compile_posts(&www_src);
     std::fs::write(out.join("posts.bin"), &posts_blob).expect("writing posts.bin");

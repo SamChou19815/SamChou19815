@@ -24,8 +24,6 @@ impl Color {
 
 /// The accent as text (blue-600) — readable on the light background.
 pub(crate) const ACCENT_TEXT: Color = Color::rgb(37, 99, 235);
-/// Selected-row text: blue-900 on the blue-100 tint (≈8:1).
-pub(crate) const SELECT_FG: Color = Color::rgb(30, 58, 138);
 
 /// Site body text `#1c1e21`.
 pub(crate) const TEXT: Color = Color::rgb(28, 30, 33);
