@@ -27,10 +27,7 @@ pub(super) fn Help() -> impl IntoView {
             encrypted_str!("↑/↓ or j/k"),
             encrypted_str!("move selection / scroll"),
         ),
-        (
-            encrypted_str!("Enter"),
-            encrypted_str!("read a post / open a card's link"),
-        ),
+        (encrypted_str!("Enter"), encrypted_str!("read a post")),
         (
             encrypted_str!("g / G"),
             encrypted_str!("jump to top / bottom"),
