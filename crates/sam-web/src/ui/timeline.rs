@@ -27,21 +27,16 @@ pub(super) fn Timeline() -> impl IntoView {
     focus_follows_selection(selected, &options);
 
     let open_link = use_open_link();
-    let link_of = move |index: usize| {
-        let event = &data::TIMELINE[selected.get_untracked().min(data::TIMELINE.len() - 1)];
-        event.links.get(index).map(|link| link.url.decrypt())
-    };
     use_view_keys(move |key, _| {
         if list_keys(selected, data::TIMELINE.len(), pane, key) {
             return true;
         }
-        let link = match key {
-            Key::Enter => link_of(0),
-            Key::Char(c @ '1'..='9') => link_of(c as usize - '1' as usize),
-            _ => return false,
+        let Key::Char(c @ '1'..='9') = key else {
+            return false;
         };
-        if let Some(url) = link {
-            open_link(&url);
+        let event = &data::TIMELINE[selected.get_untracked().min(data::TIMELINE.len() - 1)];
+        if let Some(link) = event.links.get(c as usize - '1' as usize) {
+            open_link(&link.url.decrypt());
         }
         true
     });
@@ -77,13 +72,9 @@ fn TimelineCard(
         timeline: selected, ..
     } = expect_context::<Lists>();
     let is_selected = is_selected(selected, index);
-    let open_link = use_open_link();
     let on_click = move |event: web_sys::MouseEvent| {
         event.stop_propagation();
         selected.set(index);
-        if let Some(link) = data::TIMELINE[index].links.first() {
-            open_link(&link.url.decrypt());
-        }
     };
     // As a CSS variable so the selected variant can override it.
     let tag_style = format!("--tag:{};", event.category.color().css());
