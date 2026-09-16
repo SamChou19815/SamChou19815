@@ -65,12 +65,8 @@ fn Wordmark() -> impl IntoView {
 }
 
 #[component]
-fn TabLink(tab: Tab, touch_device: bool) -> impl IntoView {
-    let shown = if touch_device && tab == Tab::Help {
-        "hidden aria-[current=page]:inline"
-    } else {
-        "hidden @min-[36ch]:inline aria-[current=page]:inline"
-    };
+fn TabLink(tab: Tab) -> impl IntoView {
+    let shown = "hidden @min-[36ch]:inline aria-[current=page]:inline";
     let class = format!(
         "{shown} transition-none text-[#374151] aria-[current=page]:font-bold aria-[current=page]:text-[#1e3a8a]"
     );
@@ -83,10 +79,10 @@ fn TabLink(tab: Tab, touch_device: bool) -> impl IntoView {
 }
 
 #[component]
-pub(super) fn Header(touch_device: bool) -> impl IntoView {
+pub(super) fn Header() -> impl IntoView {
     let tabs = Tab::ALL
         .iter()
-        .map(|&tab| view! { <TabLink tab touch_device /> })
+        .map(|&tab| view! { <TabLink tab /> })
         .collect_view();
     view! {
         <header class="shrink-0 border-b border-[#d1d5db]">

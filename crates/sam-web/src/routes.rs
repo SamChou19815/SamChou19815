@@ -48,7 +48,6 @@ pub(crate) fn title_for(path: &SitePath) -> String {
         }
         Some(Screen::Tab(Tab::About)) => encrypted_str!("About | Developer Sam").to_string(),
         Some(Screen::Tab(Tab::Timeline)) => encrypted_str!("Timeline | Developer Sam").to_string(),
-        Some(Screen::Tab(Tab::Help)) => encrypted_str!("Help | Developer Sam").to_string(),
         Some(Screen::Tab(Tab::Blog)) => posts::blog_title().to_string(),
         None => SHELL_TITLE.to_string(),
     }

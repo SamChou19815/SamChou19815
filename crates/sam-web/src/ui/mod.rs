@@ -2,7 +2,6 @@ mod about;
 mod app;
 mod blog;
 mod header;
-mod help;
 mod keyboard;
 mod listbox;
 mod nav;
@@ -73,13 +72,12 @@ fn Session(touch_device: bool) -> impl IntoView {
         <div class="terminal fixed inset-0 overflow-hidden bg-[#f7f7f7] font-terminal text-[15px] leading-[1.2] text-[#1c1e21]">
             <Routes fallback=|| view! { <Redirect path="/" options=replacing() /> }>
                 <Route path=path!("/") view=move || view! { <prompt::Prompt scrollback state /> } />
-                <ParentRoute path=path!("") view=move || view! { <app::App touch_device /> }>
+                <ParentRoute path=path!("") view=move || view! { <app::App /> }>
                     <Route path=path!("about") view=about::About />
                     <Route path=path!("timeline") view=timeline::Timeline />
                     <Route path=path!("blog") view=blog::Blog />
                     <Route path=path!("blog/:year/:month/:day/:slug") view=reader::Reader />
                     <Route path=path!("blog/*rest") view=move || view! { <Redirect path=blog() options=replacing() /> } />
-                    <Route path=path!("help") view=help::Help />
                 </ParentRoute>
             </Routes>
         </div>

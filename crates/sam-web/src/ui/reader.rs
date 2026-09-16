@@ -54,7 +54,6 @@ fn Post(post: usize) -> impl IntoView {
             Key::Esc | Key::Backspace | Key::Char('q') | Key::Left | Key::Char('h') => {
                 show.run(Tab::Blog.route());
             }
-            Key::Char('?') => show.run(Tab::Help.route()),
             key => {
                 scroll_keys(pane, key);
             }

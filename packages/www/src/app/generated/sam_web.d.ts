@@ -36,10 +36,6 @@ export class IntoUnderlyingSource {
     pull(controller: ReadableStreamDefaultController): Promise<any>;
 }
 
-/**
- * The wasm entry point: the host loads the bundle, hands it a mount element
- * and whether this is a touch device, and the session takes it from there.
- */
 export function start(element: HTMLElement, touch_device: boolean): void;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -60,11 +56,11 @@ export interface InitOutput {
     readonly intounderlyingsink_abort: (a: number, b: number) => number;
     readonly intounderlyingsink_close: (a: number) => number;
     readonly intounderlyingsink_write: (a: number, b: number) => number;
-    readonly __wasm_bindgen_func_elem_4547: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4549: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2013: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_2013_2: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1945: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_4527: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_4529: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_1993: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1993_2: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_1925: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;
