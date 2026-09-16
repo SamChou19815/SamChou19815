@@ -1,5 +1,3 @@
-//! The timeline: the life story as a listbox.
-
 use crate::crypt::{encrypted_str, EncryptedString};
 use crate::data;
 use crate::keys::Key;
@@ -76,7 +74,6 @@ fn TimelineCard(
         event.stop_propagation();
         selected.set(index);
     };
-    // As a CSS variable so the selected variant can override it.
     let tag_style = format!("--tag:{};", event.category.color().css());
     let tag = format!("[{}]", event.category.label());
 
@@ -141,7 +138,6 @@ fn TimelineCard(
             on:click=on_click
             on:mousemove=hover(selected, index)
         >
-            // The rail; the marker's opaque box breaks it.
             <div class="pointer-events-none absolute inset-y-0 left-[calc(1.5ch_-_0.5px)] w-px bg-[#2563eb]"></div>
             <div class="h-row shrink-0"></div>
             <div class="flex w-full whitespace-pre">

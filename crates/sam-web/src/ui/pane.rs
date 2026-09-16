@@ -1,24 +1,13 @@
-//! The scrolling box: what a scroll request means, and the pane that answers
-//! it — one scroll position per tab, held by the app.
-
 use crate::keys::Key;
 use crate::tab::Tab;
 use leptos::html;
 use leptos::prelude::*;
 
-/// A scrolling box. The scrollbar is the platform's own: styling it
-/// (`::-webkit-scrollbar`) would force the always-visible classic kind that
-/// takes layout space, shifting the reading column left of the header row —
-/// the native overlay scrollbar takes none. The box must be pinned to less
-/// room than its content (`h-full` under a definite-height parent), or
-/// nothing overflows and nothing scrolls.
 pub(super) const SCROLL: &str = "overflow-x-hidden overflow-y-auto";
 
 #[derive(PartialEq)]
 pub(super) enum Scroll {
-    /// Rows, negative up.
     Rows(i32),
-    /// Screenfuls, negative up.
     Pages(i32),
     Top,
     Bottom,
@@ -39,7 +28,7 @@ pub(super) fn apply_scroll(pane: &web_sys::Element, by: Scroll) {
         Scroll::Rows(rows) => {
             pane.scroll_by_with_x_and_y(0.0, f64::from(rows) * line_height(pane));
         }
-        // A screenful less two rows of overlap.
+        // Keep two rows of overlap.
         Scroll::Pages(pages) => {
             let row = line_height(pane);
             let page = (viewport - 2.0 * row).max(row);
@@ -50,7 +39,7 @@ pub(super) fn apply_scroll(pane: &web_sys::Element, by: Scroll) {
     }
 }
 
-/// Held by the app so it survives the view unmounting.
+/// Per-tab scroll position, kept at app level so it survives tab switches.
 #[derive(Clone, Copy)]
 pub(super) struct ScrollPositions(pub(super) StoredValue<[f64; Tab::ALL.len()]>);
 

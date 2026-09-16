@@ -1,5 +1,3 @@
-//! Getting around: the current path, in-app navigation, and where links go.
-
 use crate::routes::{link_target, LinkTarget};
 use crate::site_path::SitePath;
 use leptos::prelude::*;
@@ -22,7 +20,7 @@ pub(super) fn use_show() -> Callback<SitePath> {
     Callback::new(move |path: SitePath| navigate(path.as_str(), showing()))
 }
 
-/// The document never scrolls, the panes do — so the router must not scroll.
+/// `scroll: false` since the panes scroll, not the document.
 fn showing() -> NavigateOptions {
     NavigateOptions {
         scroll: false,
@@ -30,9 +28,7 @@ fn showing() -> NavigateOptions {
     }
 }
 
-/// Entering or leaving the app replaces the history entry: booting from `/`
-/// leaves no prompt entry for the back button, quitting puts `/` back over
-/// the last view.
+/// For entering/leaving the app, so the back button skips the prompt.
 pub(super) fn replacing() -> NavigateOptions {
     NavigateOptions {
         replace: true,
@@ -40,7 +36,7 @@ pub(super) fn replacing() -> NavigateOptions {
     }
 }
 
-/// Only http(s): a `javascript:` URL would run in this document.
+/// http(s) only, never `javascript:`.
 pub(super) fn open_url(url: &str) {
     let lower = url.to_ascii_lowercase();
     if !lower.starts_with("https://") && !lower.starts_with("http://") {
@@ -50,7 +46,7 @@ pub(super) fn open_url(url: &str) {
     let _ = window.open_with_url_and_target_and_features(url, "_blank", "noopener");
 }
 
-/// Clicks stop here so a card around the link does not also act on them.
+/// Stops click propagation so an enclosing card doesn't also handle it.
 #[component]
 pub(super) fn Link(
     url: String,
@@ -59,7 +55,6 @@ pub(super) fn Link(
     children: Children,
 ) -> impl IntoView {
     let in_app = use_context::<InApp>().is_some();
-    // The site's base stylesheet gives every <a> a color transition.
     let anchor_class = format!("transition-none {class}");
     match link_target(&url, in_app) {
         LinkTarget::View(path) => {
@@ -67,7 +62,7 @@ pub(super) fn Link(
             let href = path.to_string();
             let on_click = move |event: web_sys::MouseEvent| {
                 event.stop_propagation();
-                // Modified clicks (new tab/window) stay with the browser.
+                // Let the browser handle open-in-new-tab etc.
                 if event.meta_key() || event.ctrl_key() || event.shift_key() || event.alt_key() {
                     return;
                 }
@@ -101,8 +96,7 @@ pub(super) fn Link(
     }
 }
 
-/// Opens a link from a key: synchronously, so `window.open` is still inside
-/// the user gesture and not taken for a pop-up.
+/// Must be called synchronously from the key handler, or `window.open` gets popup-blocked.
 pub(super) fn use_open_link() -> impl Fn(&str) + Copy {
     let show = use_show();
     move |url: &str| match link_target(url, true) {

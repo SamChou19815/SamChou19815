@@ -1,5 +1,3 @@
-//! The Help tab: the key bindings.
-
 use crate::crypt::encrypted_str;
 use crate::tab::Tab;
 use crate::theme;

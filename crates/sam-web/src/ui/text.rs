@@ -1,5 +1,3 @@
-//! Styled text as components: a run, and the lines it lays out.
-
 use crate::style::{Line, Span};
 use crate::theme;
 use leptos::prelude::*;
@@ -15,7 +13,6 @@ pub(super) fn style_of(color: theme::Color) -> String {
 pub(super) fn Run(span: Span) -> impl IntoView {
     let mut class = String::new();
     let mut style = String::new();
-    // Colors come from the palette at build time, so they cannot be classes.
     if let Some(color) = span.style.color {
         let _ = write!(style, "color:{};", color.css());
     }
@@ -31,7 +28,6 @@ pub(super) fn Run(span: Span) -> impl IntoView {
     let text = span.text;
     match span.link {
         Some(url) => {
-            // Not the site's link blue: the run's own color, or the default.
             class.push_str(" text-inherit");
             view! { <Link url class style>{text}</Link> }.into_any()
         }

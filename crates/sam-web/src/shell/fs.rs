@@ -1,6 +1,3 @@
-//! The virtual file system rooted at `/home/sam`, as `ls` lists it and `cat`
-//! prints it.
-
 use crate::crypt::{encrypted_str, EncryptedString};
 use crate::data;
 use crate::highlight;
@@ -9,9 +6,6 @@ use crate::theme;
 
 use super::{one, CMD_CAT, CMD_LS};
 
-// The virtual file system's names. Encrypted like the site's content in
-// [`data`], so the listing is no more legible in the binary than what `cat`
-// prints; each is written once so `ls`, `cat` and completion cannot drift.
 pub(in crate::shell) const HOME_DIR: EncryptedString = encrypted_str!("/home/sam");
 pub(in crate::shell) const PROJECTS_DIR: EncryptedString = encrypted_str!("projects");
 pub(in crate::shell) const ABOUT_TXT: EncryptedString = encrypted_str!("about.txt");
@@ -42,14 +36,11 @@ pub(in crate::shell) fn fs_entries(path: &[String]) -> Option<Vec<(String, bool)
     None
 }
 
-/// A line whose tail is the URL itself, clickable where it is printed.
 fn link_line(mut spans: Line, url: &str) -> Line {
     spans.push(Span::new(url).linked(url));
     spans
 }
 
-/// The file at `path`, as `cat` prints it. The names are matched decrypted,
-/// since a pattern cannot be an [`EncryptedString`].
 pub(in crate::shell) fn read_file(path: &[String]) -> Option<Vec<Line>> {
     match path {
         [file] if *file == README_MD.decrypt() => Some(vec![

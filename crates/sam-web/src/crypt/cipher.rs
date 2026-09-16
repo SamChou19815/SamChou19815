@@ -1,6 +1,5 @@
 // Zero dependency FNV-1a cipher. Not designed to be secure.
 
-/// The key the keystream is derived from.
 const KEY: &[u8] = b"dev-sam";
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -28,8 +27,7 @@ const fn keystream(seed: u32, index: usize) -> u8 {
         mixed >>= 8;
         byte += 1;
     }
-    // Fold the whole word down to the byte that is actually used, so the low
-    // bits of one multiplication are not the whole answer.
+    // Mix in the high bits instead of just truncating.
     (hash ^ (hash >> 24) ^ (hash >> 48)) as u8
 }
 
@@ -38,12 +36,11 @@ pub(crate) const fn scramble(byte: u8, seed: u32, index: usize) -> u8 {
     (byte ^ keystream(seed, index)).rotate_left(3)
 }
 
-/// The exact inverse of [`scramble`].
 const fn unscramble(byte: u8, seed: u32, index: usize) -> u8 {
     byte.rotate_right(3) ^ keystream(seed, index)
 }
 
-/// A string's own seed: FNV-1a over its bytes.
+/// FNV-1a of the plaintext.
 pub(crate) const fn seed_of(text: &str) -> u32 {
     let bytes = text.as_bytes();
     let mut hash: u32 = 0x811c_9dc5;
@@ -55,13 +52,7 @@ pub(crate) const fn seed_of(text: &str) -> u32 {
     hash
 }
 
-/// Encrypts `text` into `N` bytes, where `N` is the length of `text`. A `const
-/// fn`, so the only place it ever runs is const evaluation.
-///
-/// Const evaluation is far slower than the compiled cipher and rustc denies a
-/// long-running one outright, so this is for the literals a human writes.
-/// Anything corpus-sized — the blog — is encrypted by `build.rs`, which runs
-/// the same [`scramble`] compiled.
+/// Compile-time only. Too slow for anything big (blog posts go through build.rs instead).
 pub(crate) const fn encrypt<const N: usize>(text: &str, seed: u32) -> [u8; N] {
     let bytes = text.as_bytes();
     let mut cipher = [0u8; N];

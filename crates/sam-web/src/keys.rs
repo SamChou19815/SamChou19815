@@ -1,6 +1,3 @@
-//! Keys as the app sees them: a DOM keyboard event boiled down to a [`Key`]
-//! plus modifiers, and which of them each keymap claims.
-
 #[derive(Clone, Copy)]
 pub(crate) enum Key {
     Up,
@@ -66,8 +63,7 @@ pub(crate) enum Keymap {
     App,
 }
 
-/// Plain keys are always claimed. Ctrl combos only when they mean something
-/// here; everything else stays with the browser (reload, new tab, find).
+/// Only claim the Ctrl combos we handle, so browser shortcuts (reload, find, ...) keep working.
 pub(crate) fn claims(keymap: Keymap, key: Key, mods: Mods) -> bool {
     if mods.alt {
         return false;

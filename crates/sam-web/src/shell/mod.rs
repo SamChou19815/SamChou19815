@@ -1,10 +1,3 @@
-//! The `dev-sam-sh` command interpreter: the shell proper, over the virtual
-//! file system in [`fs`] and behind the line editor in [`editor`].
-//!
-//! It prints styled lines ([`Line`]) for the front-end to draw. A line that
-//! ends in a URL carries it on the run of text it is written on, so the links
-//! `cat` prints are clicked where they are read.
-
 mod editor;
 mod fs;
 
@@ -16,10 +9,6 @@ use crate::theme;
 
 use fs::{fs_entries, read_file, ABOUT_TXT, HOME_DIR, PROJECTS_DIR};
 
-// The command vocabulary, encrypted like the rest of the site's content so the
-// binary spells out none of it — no `strings` pass reveals the shell's verbs.
-// A match arm cannot be an [`EncryptedString`], so dispatch and completion
-// compare the typed word against these decrypted.
 pub(in crate::shell) const CMD_CAT: EncryptedString = encrypted_str!("cat");
 const CMD_CD: EncryptedString = encrypted_str!("cd");
 const CMD_CLEAR: EncryptedString = encrypted_str!("clear");
@@ -31,7 +20,6 @@ pub(in crate::shell) const CMD_LS: EncryptedString = encrypted_str!("ls");
 const CMD_PWD: EncryptedString = encrypted_str!("pwd");
 const CMD_WHOAMI: EncryptedString = encrypted_str!("whoami");
 
-/// Every command name, in the order `help` prints and completion offers.
 const COMMANDS: [EncryptedString; 10] = [
     CMD_CAT,
     CMD_CD,
@@ -150,8 +138,6 @@ impl Shell {
 
     fn help(&self) -> Vec<Line> {
         let mut out = Vec::new();
-        // The names and blurbs are decrypted here, never spelled in the binary;
-        // the one line that names a file reads it from the file system too.
         let cat_hint = format!(
             "{} {ABOUT_TXT})",
             encrypted_str!("print a file (try").decrypt()
@@ -227,7 +213,6 @@ impl Shell {
                         contents.push(colored(format!("{name:<width$}"), theme::TEXT));
                     }
                 }
-                // The listing ends where its last padded column ends.
                 if let Some(last) = contents.last_mut() {
                     let trimmed = last.text.trim_end().to_string();
                     last.text = trimmed;
@@ -413,7 +398,6 @@ pub(in crate::shell) fn line_of(text: impl Into<String>) -> Line {
     vec![Span::new(text)]
 }
 
-/// A one-span line.
 pub(in crate::shell) fn one(span: Span) -> Line {
     vec![span]
 }
