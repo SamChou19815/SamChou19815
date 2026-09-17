@@ -1,6 +1,3 @@
-//! The prompt: the scrollback, the prompt row, and the shell state behind
-//! them.
-
 use crate::keys::{Key, Keymap, Mods};
 use crate::shell::{self, EditOutcome, LineEditor, Shell};
 use crate::style::{Line, Span, TextStyle};
@@ -14,15 +11,13 @@ use super::nav::replacing;
 use super::pane::SCROLL;
 use super::text::{runs, StyledLine};
 
-/// Shell state lives in the session, not the prompt: it must survive a run of
-/// the app so the scrollback is still there on exit.
+/// Owned by the session, not the prompt, so it survives a run of the app.
 #[derive(Clone)]
 pub(super) struct ShellState {
     pub(super) shell: Shell,
     pub(super) editor: LineEditor,
 }
 
-/// Runs `work` after the queued render effects have flushed.
 fn after_render(work: impl FnOnce() + 'static) {
     leptos::task::spawn_local(async move {
         leptos::task::tick().await;
@@ -85,7 +80,7 @@ pub(super) fn Prompt(
     let navigate = use_navigate();
 
     use_keyboard(Keymap::Prompt, move |key: Key, mods: Mods| {
-        // Snapshot first: a submit clears the editor's copy of the line.
+        // Snapshot before handle_key clears the line.
         let snapshot = state.with_untracked(|state| state.editor.prompt_row(&state.shell));
         let outcome = state
             .try_update(|state| state.editor.handle_key(key, mods, &mut state.shell))

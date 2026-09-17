@@ -1,5 +1,3 @@
-//! The app's chrome: the wordmark and the tab bar.
-
 use crate::crypt::{encrypted_str, EncryptedString};
 use crate::tab::Tab;
 use leptos::prelude::*;
@@ -8,8 +6,6 @@ use leptos_router::components::A;
 const TITLE: EncryptedString = encrypted_str!("DEV SAM");
 const TABS_LABEL: EncryptedString = encrypted_str!("Tabs");
 
-/// Three-row letters out of half blocks; at two rows the crossbars have
-/// nowhere to go.
 const GLYPHS: [(char, [&str; 3]); 11] = [
     ('A', ["█▀█", "█▀█", "▀ ▀"]),
     ('D', ["█▀▄", "█ █", "▀▀ "]),
@@ -42,8 +38,6 @@ fn banner_rows(text: &str) -> [String; 3] {
     rows
 }
 
-/// Painted rectangles rather than block glyphs: fonts leave a hairline
-/// between adjacent block characters.
 #[component]
 fn BlockCell(character: char) -> impl IntoView {
     let fill = match character {
@@ -70,11 +64,8 @@ fn Wordmark() -> impl IntoView {
     view! { <div class="text-[#2563eb]">{rows}</div> }
 }
 
-/// The router sets `aria-current=page` on the tab in front.
 #[component]
 fn TabLink(tab: Tab, touch_device: bool) -> impl IntoView {
-    // Help is key bindings: hidden on touch unless it is the current tab.
-    // Below 36ch only the current tab is shown.
     let shown = if touch_device && tab == Tab::Help {
         "hidden aria-[current=page]:inline"
     } else {

@@ -1,5 +1,3 @@
-//! The editable line at the prompt.
-
 use crate::crypt::encrypted_str;
 use crate::keys::{Key, Mods};
 use crate::style::{colored, Line, Span};
@@ -7,48 +5,34 @@ use crate::theme;
 
 use super::{one, CommandRunOutcome, Shell, CMD_DEV_SAM};
 
-/// One prompt row: the prompt itself, then the edited line split around the
-/// cursor so the front-end can paint the block cursor over the character it
-/// sits on (or an empty cell at the end of the line).
+/// The line split around the cursor so the UI can draw a block cursor.
 pub(crate) struct PromptRow {
-    /// Snapshotted with the row: a `cd` moves the shell's prompt on before the row is frozen.
+    /// Snapshotted: `cd` changes the prompt before the row is frozen into scrollback.
     pub(crate) prompt: Vec<Span>,
     pub(crate) before_cursor: Vec<Span>,
-    /// The character under the cursor, if any.
     pub(crate) at_cursor: Option<char>,
     pub(crate) after_cursor: Vec<Span>,
 }
 
 pub(crate) enum EditOutcome {
-    /// Nothing to print. The line may well have changed — a typed character,
-    /// a moved cursor — but the prompt row is drawn from the editor as it
-    /// stands, so there is nothing to hand over.
+    /// Nothing to append to scrollback (the prompt row itself is always re-rendered).
     None,
-    /// Lines to append, then a fresh prompt row.
     Output(Vec<Line>),
-    /// Wipe the screen; the prompt (and whatever was being typed, for Ctrl+L)
-    /// starts over at the top.
     ClearScreen,
-    /// The submitted line ran `dev-sam`.
+    /// `dev-sam` was run.
     Launch,
-    /// Tab completion printed its candidates, then the prompt.
     Completion(Vec<String>),
-    /// Ctrl+C: the current prompt row freezes with a `^C` echoed at the
-    /// cursor — over the characters ahead of it, as a terminal prints — and a
-    /// fresh empty prompt follows.
+    /// Ctrl+C. Freeze the row with `^C` echoed at the cursor.
     Interrupt,
 }
 
-/// The editable line at the prompt. Keeps the buffer and the cursor; history
-/// lives on the [`Shell`], which is the thing that records it, so the `history`
-/// command and the arrow keys can never drift apart.
+/// History lives on [`Shell`] so `history` and arrow keys share it.
 #[derive(Clone)]
 pub(crate) struct LineEditor {
     line: String,
-    /// Byte offset of the cursor within `line`.
+    /// Byte offset.
     cursor: usize,
-    /// Where the arrow keys are in the shell's history. Equal to its length
-    /// while a fresh line is being typed.
+    /// `== history.len()` when typing a fresh line.
     history_index: usize,
 }
 
@@ -61,8 +45,7 @@ impl LineEditor {
         }
     }
 
-    /// The screen the session opens on, with `dev-sam` pre-typed at the
-    /// prompt: one Enter away from the app.
+    /// Pre-types `dev-sam` so Enter launches the app.
     pub(crate) fn opening_screen(&mut self) -> Vec<Line> {
         let out = vec![
             one(colored(
@@ -79,7 +62,6 @@ impl LineEditor {
         out
     }
 
-    /// The message printed when the app has exited, over a fresh prompt.
     pub(crate) fn after_dev_sam_app_exit() -> Vec<Line> {
         vec![one(colored(
             encrypted_str!("dev-sam exited — type dev-sam to run it again, or help").decrypt(),
@@ -87,7 +69,6 @@ impl LineEditor {
         ))]
     }
 
-    /// Feeds one key. Returns what the front-end should paint.
     pub(crate) fn handle_key(&mut self, key: Key, mods: Mods, shell: &mut Shell) -> EditOutcome {
         if mods.ctrl {
             return self.handle_control_key(key);
@@ -151,7 +132,6 @@ impl LineEditor {
                 self.set_line(String::new());
                 EditOutcome::Interrupt
             }
-            // Wipe the screen but keep whatever was being typed, as a shell does.
             Key::Char('l') => EditOutcome::ClearScreen,
             Key::Char('a') => {
                 self.cursor = 0;
@@ -186,8 +166,6 @@ impl LineEditor {
         let candidates = shell.tab_complete(&self.line);
         match candidates.as_slice() {
             [] => EditOutcome::None,
-            // Completion works on the last word of the whole line, so it also
-            // lands the cursor at the end.
             [only] => {
                 let start = self.line.rfind(' ').map_or(0, |position| position + 1);
                 let suffix = if only.ends_with('/') { "" } else { " " };
@@ -214,7 +192,6 @@ impl LineEditor {
         self.line = line;
     }
 
-    /// The prompt row as it is rendered right now, at `shell`'s prompt.
     pub(crate) fn prompt_row(&self, shell: &Shell) -> PromptRow {
         let before = self.line[..self.cursor].to_string();
         let mut chars = self.line[self.cursor..].chars();

@@ -1,5 +1,3 @@
-//! The blog reader: a post over the blog index.
-
 use crate::crypt::{encrypted_str, EncryptedString};
 use crate::keys::Key;
 use crate::markdown::{self, Block};
@@ -36,20 +34,18 @@ pub(super) fn Reader() -> impl IntoView {
 
 #[component]
 fn Post(post: usize) -> impl IntoView {
-    // Closing the reader lands on this post's card, however it was opened.
+    // So closing the reader lands on this post's card.
     let Lists { blog, .. } = expect_context::<Lists>();
     Effect::new(move |_| blog.set(post));
 
     let pane = NodeRef::<html::Div>::new();
-    // A neighbor opens in place: the same view type is rebuilt onto the same
-    // pane, which would otherwise keep the last post's scroll position.
+    // Navigating to a neighbor post reuses the pane, so reset scroll.
     Effect::new(move |_| {
         if let Some(pane) = pane.get() {
             pane.set_scroll_top(0);
         }
     });
     let show = use_show();
-    // Every non-Ctrl key is the reader's: tab keys are inert while a post is open.
     use_view_keys(move |key, mods| {
         if mods.ctrl {
             return false;
@@ -68,7 +64,6 @@ fn Post(post: usize) -> impl IntoView {
 
     let blocks = markdown::post_blocks(&posts::POSTS[post])
         .into_iter()
-        // Blank lines were the TUI's paragraph spacing; margins do that now.
         .filter(|block| !matches!(block, Block::Line(line) if line.is_empty()))
         .map(|block| view! { <BlockView block /> })
         .collect_view();
@@ -134,8 +129,6 @@ fn NeighborCard(index: usize, newer: bool) -> impl IntoView {
 fn PostHeader(post: usize) -> impl IntoView {
     let title = posts::POSTS[post].title().decrypt();
     let date = posts::POSTS[post].formatted_date();
-    // `role=heading` rather than `<h1>`: the site stylesheet styles `h1`.
-    // Leptos has no typed `aria-level`.
     let heading = view! {
         <div
             role="heading"
@@ -165,7 +158,6 @@ fn PostHeader(post: usize) -> impl IntoView {
     }
 }
 
-/// Prose leading: relaxed, where the terminal's own rows stay tight.
 const RELAXED: &str = "leading-[1.7]";
 
 #[component]
@@ -178,8 +170,6 @@ fn BlockView(block: Block) -> impl IntoView {
         }
         .into_any(),
         Block::Heading { level, line } => {
-            // The levels breathe on their own scale: the deeper the heading,
-            // the less air it needs before it.
             let (size, top) = match level {
                 1 => ("text-[1.5em]", "mt-[2.2lh]"),
                 2 => ("text-[1.3em]", "mt-[1.9lh]"),
@@ -193,9 +183,6 @@ fn BlockView(block: Block) -> impl IntoView {
             .into_any()
         }
         Block::Bullet { marker, line } => {
-            // The marker and the space after it hang: wrapped lines align
-            // exactly under the first line's text, `•` at two characters, a
-            // number as wide as it is written.
             let hang = marker.chars().count() + 1;
             view! {
                 <div
@@ -231,8 +218,6 @@ fn BlockView(block: Block) -> impl IntoView {
                     </div>
                 }
             };
-            // Code keeps the terminal's tight grid — just a step smaller than
-            // the prose around it, with air inside its fences.
             let rows = lines
                 .iter()
                 .map(|line| {

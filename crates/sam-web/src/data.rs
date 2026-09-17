@@ -1,10 +1,4 @@
-//! The site's content: the About program, the projects and the timeline.
-//!
-//! Every string here is an [`EncryptedString`] rather than a `&'static str`, so
-//! none of this copy is legible in the compiled wasm's data section — see
-//! [`crate::crypt`]. The literals stay readable in this file because
-//! [`encrypted_str!`] does the encrypting at compile time; call sites read them
-//! back with `decrypt()`, or straight through `Display`.
+//! Site content. Everything is an [`EncryptedString`], see [`crate::crypt`].
 
 use crate::crypt::{encrypted_str, EncryptedString};
 use crate::theme::Color;
@@ -43,8 +37,6 @@ impl Category {
         }
     }
 
-    /// The color this category is painted with across the whole site
-    /// (tailwind 600-series: readable on the white homepage cards).
     pub(crate) fn color(self) -> Color {
         match self {
             Category::Work => Color::rgb(37, 99, 235),      // blue-600
@@ -59,15 +51,12 @@ impl Category {
 pub(crate) struct TimelineEvent {
     pub(crate) title: EncryptedString,
     pub(crate) time: EncryptedString,
-    /// Site-root-relative artwork, as on the homepage timeline cards. Ten of
-    /// the twenty-seven events have none.
     pub(crate) image: Option<EncryptedString>,
     pub(crate) category: Category,
     pub(crate) detail: Option<EncryptedString>,
     pub(crate) links: &'static [Link],
 }
 
-/// The samlang program from the homepage's sticky code block.
 pub(crate) const ABOUT_PROGRAM: EncryptedString = encrypted_str!(
     r#"import {List} from std.list;
 
@@ -90,7 +79,6 @@ class Main {
 }"#
 );
 
-/// The doc comment that the homepage renders above the program.
 pub(crate) const ABOUT_DOC_LINKS: &[Link] = &[
     Link {
         name: encrypted_str!("demo"),
@@ -175,7 +163,6 @@ pub(crate) const PROJECTS: &[Project] = &[
     },
 ];
 
-/// Contact channels, used by the shell's `contact.txt`.
 pub(crate) const SOCIAL_LINKS: &[Link] = &[
     Link {
         name: encrypted_str!("GitHub"),
@@ -195,7 +182,7 @@ pub(crate) const SOCIAL_LINKS: &[Link] = &[
     },
 ];
 
-/// The homepage timeline, newest first, mirroring `DATASET_TIMELINE`.
+/// Newest first.
 pub(crate) const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
         title: encrypted_str!("Became a Canadian permanent resident"),

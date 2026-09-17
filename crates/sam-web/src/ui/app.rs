@@ -1,6 +1,3 @@
-//! Inside `.terminal` one Tailwind spacing unit is `1ch` and `row` is `1lh`
-//! (see `common.css`), so every measure here is in characters and lines.
-
 use crate::keys::{Key, Mods};
 use crate::routes::screen_at;
 use crate::site_path::SitePath;
@@ -14,19 +11,18 @@ use super::keyboard::AppKeys;
 use super::nav::{replacing, use_path, use_show};
 use super::pane::ScrollPositions;
 
-/// In context while the app is up: links to its views navigate in-app.
+/// Present in context when inside the app, so links to app views navigate in-app.
 #[derive(Clone, Copy)]
 pub(super) struct InApp;
 
-/// Held by the app so it survives the list unmounting.
+/// Selection state, kept at app level so it survives tab switches.
 #[derive(Clone, Copy)]
 pub(super) struct Lists {
     pub(super) timeline: RwSignal<usize>,
     pub(super) blog: RwSignal<usize>,
 }
 
-/// Last pointer position in screen coordinates. Shared across lists so a tab
-/// switch under a resting pointer is not taken for movement.
+/// Last pointer position. See [`super::listbox::hover`].
 #[derive(Clone, Copy)]
 pub(super) struct Pointer(pub(super) StoredValue<(i32, i32)>);
 

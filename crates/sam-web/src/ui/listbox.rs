@@ -1,5 +1,4 @@
-//! Listboxes with a roving tabindex: the selected card is `aria-selected`,
-//! `tabindex=0` and focused, which is what scrolls it into view.
+//! Roving tabindex listbox. Focusing the selected item is what scrolls it into view.
 
 use crate::keys::Key;
 use leptos::html;
@@ -8,14 +7,12 @@ use leptos::prelude::*;
 use super::app::Pointer;
 use super::pane::{apply_scroll, Scroll};
 
-/// Per-card memo so moving the selection only redraws the two cards involved.
+/// Memo so only the two affected cards rerender on selection change.
 pub(super) fn is_selected(selected: RwSignal<usize>, index: usize) -> Memo<bool> {
     Memo::new(move |_| selected.get() == index)
 }
 
-/// The first run is the list mounting under a scroll position its pane is
-/// about to restore, so it focuses without scrolling; later runs are
-/// selection moves, and the focus scroll is what brings the card into view.
+/// On mount, don't scroll: the pane is about to restore its own scroll position.
 pub(super) fn focus_follows_selection(selected: RwSignal<usize>, cards: &[NodeRef<html::Li>]) {
     let cards = cards.to_vec();
     Effect::new(move |previous: Option<()>| {
@@ -28,9 +25,8 @@ pub(super) fn focus_follows_selection(selected: RwSignal<usize>, cards: &[NodeRe
     });
 }
 
-/// Hover selects — but browsers fire `mousemove` when the pane scrolls under
-/// a resting pointer, which must not undo a keyboard selection move. Only a
-/// pointer that actually moved counts.
+/// Browsers fire `mousemove` when content scrolls under a stationary pointer, which would undo
+/// keyboard selection. Ignore events where the pointer didn't actually move.
 pub(super) fn hover(selected: RwSignal<usize>, index: usize) -> impl Fn(web_sys::MouseEvent) {
     let Pointer(pointer) = expect_context::<Pointer>();
     move |event: web_sys::MouseEvent| {

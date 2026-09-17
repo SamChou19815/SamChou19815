@@ -1,6 +1,3 @@
-//! The URL's view of the app: which screen a path names, the title that goes
-//! with it, and where a clicked URL leads.
-
 use crate::crypt::{encrypted_str, EncryptedString};
 use crate::posts;
 use crate::site_path::SitePath;
@@ -28,7 +25,7 @@ pub(crate) fn screen_at(path: &SitePath) -> Option<Screen> {
         .iter()
         .copied()
         .find(|tab| tab.route().as_str() == path.as_str())
-        // Anything else under /blog (an unpublished post) lands on the index.
+        // Unknown /blog/... paths fall back to the index.
         .or_else(|| {
             path.as_str()
                 .strip_prefix(Tab::Blog.route().as_str())
@@ -60,12 +57,11 @@ pub(crate) fn title_for(path: &SitePath) -> String {
 pub(crate) enum LinkTarget {
     View(SitePath),
     External(String),
-    /// Anything but http(s) — a `javascript:` URL would run in this document.
+    /// Not http(s). Don't open `javascript:` URLs.
     Ignore,
 }
 
-/// `in_app`: at the prompt, a link to one of the app's views is just a URL
-/// to open like any other.
+/// Outside the app, links to app views open like any other URL.
 pub(crate) fn link_target(url: &str, in_app: bool) -> LinkTarget {
     if in_app {
         if let Some(path) = site_path(url) {

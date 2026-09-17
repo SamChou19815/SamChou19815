@@ -58,8 +58,7 @@ impl EncryptedRun {
 
 impl std::fmt::Display for EncryptedString {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // `pad` rather than `write_str`: the shell lays its columns out with
-        // `{:<12}` and friends, which a `write_str` impl would silently ignore.
+        // `pad` so `{:<12}` works.
         formatter.pad(&self.decrypt())
     }
 }

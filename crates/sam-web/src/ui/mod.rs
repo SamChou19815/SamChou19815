@@ -1,5 +1,3 @@
-//! The component tree under the router.
-
 mod about;
 mod app;
 mod blog;
@@ -28,14 +26,12 @@ use prompt::ShellState;
 
 pub(crate) fn mount(parent: web_sys::HtmlElement, touch_device: bool) {
     console_error_panic_hook::set_once();
-    // Dropping the mount handle would tear the site down.
     leptos::mount::mount_to(parent, move || {
         view! { <Router><Session touch_device /></Router> }
     })
     .forget();
 }
 
-/// The route table: the prompt at `/`, the app over everything else.
 #[component]
 fn Session(touch_device: bool) -> impl IntoView {
     let path = use_path();
@@ -48,7 +44,7 @@ fn Session(touch_device: bool) -> impl IntoView {
 
     Effect::new(move |_| document().set_title(&title_for(&path.get())));
 
-    // A touch device has no Enter to press, so it skips the prompt.
+    // No keyboard on touch devices, skip the prompt.
     if !app_up.get_untracked() {
         if touch_device {
             use_navigate()(Tab::About.route().as_str(), replacing());
@@ -60,7 +56,7 @@ fn Session(touch_device: bool) -> impl IntoView {
         }
     }
 
-    // Any exit from the app (`q`, Ctrl+C, back button) prints the exit line.
+    // Covers q, Ctrl+C, and the back button.
     Effect::watch(
         move || app_up.get(),
         move |up, was_up, _| {
@@ -74,7 +70,6 @@ fn Session(touch_device: bool) -> impl IntoView {
 
     let blog = move || Tab::Blog.route().to_string();
     view! {
-        // Pins its own text color: the site body is `dark:text-gray-200`.
         <div class="terminal fixed inset-0 overflow-hidden bg-[#f7f7f7] font-terminal text-[15px] leading-[1.2] text-[#1c1e21]">
             <Routes fallback=|| view! { <Redirect path="/" options=replacing() /> }>
                 <Route path=path!("/") view=move || view! { <prompt::Prompt scrollback state /> } />

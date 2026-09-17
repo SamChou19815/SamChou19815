@@ -1,5 +1,3 @@
-//! The blog index: posts as a listbox.
-
 use crate::crypt::{encrypted_str, EncryptedString};
 use crate::keys::Key;
 use crate::posts;
@@ -47,9 +45,6 @@ pub(super) fn Blog() -> impl IntoView {
         .collect_view();
     view! {
         <Pane tab=Tab::Blog node_ref=pane>
-            // The index as the site drew it before the wasm rewrite: a stack
-            // of the same white cards the article is read on, `1rem` apart as
-            // they were then, inside the reader's `2ch` frame.
             <ul
                 role="listbox"
                 aria-orientation="vertical"
@@ -81,10 +76,6 @@ fn PostCard(post: &'static posts::Post, index: usize, option: NodeRef<html::Li>)
             tabindex=move || if is_selected.get() { 0 } else { -1 }
             node_ref=option
         >
-            // The reader's card. The old site lifted a card's shadow on
-            // hover; this is still a terminal, so the cursor is the listbox
-            // highlight: the selected card fills and its border takes the
-            // accent.
             <Link
                 url=post.url()
                 class="block w-full rounded-md border border-[#e5e7eb] bg-white p-[1rem] group-aria-selected:border-[#2563eb] group-aria-selected:bg-[#dbeafe]"
@@ -92,8 +83,6 @@ fn PostCard(post: &'static posts::Post, index: usize, option: NodeRef<html::Li>)
                 on:click=move |_| selected.set(index)
                 on:mousemove=hover(selected, index)
             >
-                // The reader's title a step down — its second-level heading —
-                // wrapping rather than truncating: a card has the room.
                 <div class="min-w-0 break-words text-[1.3em] leading-[1.3] font-bold text-[#2563eb] group-aria-selected:text-[#1e3a8a]">
                     {title}
                 </div>

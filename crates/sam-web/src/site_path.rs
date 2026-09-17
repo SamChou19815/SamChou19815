@@ -1,9 +1,6 @@
 use std::fmt;
 
-/// A path into this site, like `/blog`: rooted at the domain, never carrying
-/// scheme or host, and free of trailing slashes but for the root's own. A bare
-/// string cannot be passed where one is wanted — a link's URL, say — without
-/// [`SitePath::parse`] vetting it first.
+/// A `/`-rooted path within this site. No scheme, host, or trailing slash.
 #[derive(Clone, PartialEq)]
 pub(crate) struct SitePath(String);
 
@@ -12,8 +9,6 @@ impl SitePath {
         SitePath(String::from("/"))
     }
 
-    /// Wraps a `/`-rooted path this app built itself, dropping any trailing
-    /// slash it somehow ends with.
     pub(crate) fn new(path: impl Into<String>) -> Self {
         let mut path = path.into();
         debug_assert!(path.starts_with('/'), "a site path is rooted: {path}");
@@ -23,9 +18,6 @@ impl SitePath {
         SitePath(path)
     }
 
-    /// The path an outside string names, if it names one at all: it has to be
-    /// `/`-rooted — anything else belongs to a host or a browser, not to a
-    /// path this app could ever serve.
     pub(crate) fn parse(path: &str) -> Option<Self> {
         path.starts_with('/').then(|| Self::new(path))
     }

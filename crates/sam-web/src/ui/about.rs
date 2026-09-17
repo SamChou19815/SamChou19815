@@ -1,5 +1,3 @@
-//! The About tab: the samlang source that writes itself.
-
 use crate::highlight;
 use crate::style::Line;
 use crate::tab::Tab;
@@ -24,7 +22,6 @@ pub(super) fn About() -> impl IntoView {
     }
 }
 
-/// samlang's indent width.
 const INDENT: usize = 2;
 
 fn hang_of(line: &Line) -> usize {
@@ -38,7 +35,6 @@ fn hang_of(line: &Line) -> usize {
     indent + gutter + INDENT
 }
 
-/// Wraps under the indent rather than scrolling sideways: phones show no scrollbar.
 #[component]
 fn CodeListing(lines: Vec<Line>) -> impl IntoView {
     let rows = lines

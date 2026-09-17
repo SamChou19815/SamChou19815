@@ -1,5 +1,4 @@
-//! Compiles the blog's posts into `posts.rs`, their fenced code blocks
-//! highlighted by tree-sitter grammars.
+//! Generates `posts.rs`: blog posts encrypted, with code blocks highlighted by tree-sitter.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -7,16 +6,12 @@ use std::path::{Path, PathBuf};
 use tree_sitter::Language;
 use tree_sitter_highlight::{Highlight, HighlightConfiguration, HighlightEvent, Highlighter};
 
-/// The cipher the crate itself uses, included rather than duplicated — a build
-/// script cannot depend on the crate it builds. Only the encrypting half is
-/// wanted here; the crate uses the rest.
+// `include!` because a build script can't depend on its own crate.
 #[allow(dead_code)]
 mod cipher {
     include!("src/crypt/cipher.rs");
 }
 
-/// The fence scanner the renderer uses, included the same way, so the blocks
-/// highlighted here are exactly the blocks the renderer draws.
 #[allow(dead_code)]
 mod markdown_scan {
     include!("src/markdown/scan.rs");
@@ -36,23 +31,19 @@ fn main() {
     std::fs::write(out.join("posts.rs"), posts).expect("writing posts.rs");
 }
 
-// --- Compiling the blog --------------------------------------------------------
-
-/// The blog's name.
 const BLOG_TITLE: &str = "Developer Sam Blog";
 
-/// One post between reading its sources and writing `posts.rs`.
 struct PostSource {
     title: String,
     year: String,
     month: String,
     date: String,
-    /// Empty for external posts, which have no page on this site.
+    /// Empty for external posts.
     slug: String,
     external_url: Option<String>,
-    /// Markdown body with the MDX header stripped. Empty for external posts.
+    /// Frontmatter stripped. Empty for external posts.
     body: String,
-    /// One entry per fenced block in the body, in order: its highlighting.
+    /// One per fenced block, in order.
     code_blocks: Vec<CompiledBlock>,
 }
 
@@ -71,7 +62,6 @@ fn compile_posts(www_src: &Path) -> (String, Vec<u8>) {
     let mut code = format!(
         "// @{} by build.rs — do not edit.\n\
          static POSTS_BLOB: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/posts.bin\"));\n\
-         /// The blog's name.\n\
          const BLOG_TITLE: EncryptedRun = {};\n\
          pub(crate) static POSTS: &[Post] = &[\n",
         "generated",
@@ -261,18 +251,11 @@ fn external_posts(www_src: &Path) -> Vec<PostSource> {
         .collect()
 }
 
-// --- Tree-sitter highlighting --------------------------------------------------
-//
-// The grammars run here, on the host, at build time: the highlighting joins
-// the post it belongs to as static data, byte ranges and palette colors with
-// no text of their own, and the wasm binary carries no grammar at all.
-
-/// A recognized tree-sitter capture name and the palette color it resolves
-/// to, in the renderer's `SpanColor` terms. `None` is a deliberate plain:
-/// recognizing the name lets it outmatch a shorter name that would color.
+/// Capture name -> `SpanColor` variant. `None` entries exist so a more specific name can beat
+/// a shorter colored one (e.g. `keyword.operator` stays plain instead of matching `keyword`).
 const CAPTURE_COLORS: &[(&str, Option<&str>)] = &[
-    // Escapes before constants: a `constant.character.escape` capture holds
-    // both names, and the tie is broken by order.
+    // Order matters for ties, e.g. `constant.character.escape` matches both `escape` and
+    // `constant`.
     ("escape", Some("Keyword")),
     ("comment", Some("Comment")),
     ("string.special.key", Some("Function")),
@@ -298,9 +281,8 @@ const CAPTURE_COLORS: &[(&str, Option<&str>)] = &[
     ("keyword", Some("Keyword")),
 ];
 
-/// One grammar the highlighter can be pointed at.
 struct Grammar {
-    /// The name injections call this language by.
+    /// Also what injection queries refer to it by.
     name: &'static str,
     language: Language,
     highlights: String,
@@ -324,8 +306,6 @@ fn grammar(
     }
 }
 
-/// Query strings joined into one, the way a grammar's own query files would
-/// be if it shipped them whole.
 fn joined(queries: &[&str]) -> String {
     queries.join("\n")
 }
@@ -349,9 +329,7 @@ fn grammars() -> Vec<Grammar> {
     use tree_sitter_typescript as typescript;
     use tree_sitter_yaml as yaml;
 
-    // The typescript crate ships its highlight query as a supplement to the
-    // javascript one — the grammars share their node names, so the two join
-    // into the whole query every editor composes for the language.
+    // The typescript queries only extend the javascript ones.
     let typescript_highlights =
         joined(&[javascript::HIGHLIGHT_QUERY, typescript::HIGHLIGHTS_QUERY]);
     let tsx_highlights = joined(&[
@@ -393,9 +371,7 @@ fn grammars() -> Vec<Grammar> {
         grammar(
             "json",
             Language::new(json::LANGUAGE),
-            // The grammar paints a key like any other string; a later pattern
-            // for the same node wins, so this one gives keys their own color
-            // back.
+            // Later patterns win, so this gives keys a different color from string values.
             joined(&[
                 json::HIGHLIGHTS_QUERY,
                 "(pair key: (string) @string.special.key)",
@@ -497,9 +473,7 @@ fn grammars() -> Vec<Grammar> {
     ]
 }
 
-/// The language table the configs are built in: canonical names, which are
-/// also what injections call them by, and the extra fence labels that reach
-/// each one.
+/// Grammar name and its fence label aliases.
 const LANGUAGES: &[(&str, &[&str])] = &[
     ("typescript", &["ts"]),
     ("tsx", &[]),
@@ -521,14 +495,11 @@ const LANGUAGES: &[(&str, &[&str])] = &[
     ("ruby", &["rb"]),
 ];
 
-/// The compiled highlighting of one fenced block: per line, its spans.
 struct CompiledBlock {
-    /// Per line: where in the line each span starts, how long it is, and its
-    /// palette color. Empty when the block gets no highlighting.
+    /// Per line: `(start, len, SpanColor variant)`. Empty if not highlighted.
     lines: Vec<Vec<(u32, u32, &'static str)>>,
 }
 
-/// Highlights every post's fenced blocks, in place.
 fn highlight_posts(posts: &mut [PostSource]) {
     let mut highlighter = Highlighter::new();
     let names: Vec<&str> = CAPTURE_COLORS.iter().map(|(name, _)| *name).collect();
@@ -555,13 +526,11 @@ fn highlight_posts(posts: &mut [PostSource]) {
     }
 }
 
-/// One fenced block while scanning a body: its label and raw lines.
 struct ScannedBlock<'a> {
     lang: &'a str,
     lines: Vec<&'a str>,
 }
 
-/// All of a body's fenced blocks, scanned the way the renderer scans them.
 fn body_blocks(body: &str) -> Vec<ScannedBlock<'_>> {
     use markdown_scan::{scan_line, LineKind};
     let mut blocks = Vec::new();
@@ -588,8 +557,7 @@ fn body_blocks(body: &str) -> Vec<ScannedBlock<'_>> {
             LineKind::Text(_) => {}
         }
     }
-    // A block left open at the end of the body is still drawn — highlighted,
-    // then, like any other.
+    // Unclosed block at EOF still counts.
     blocks.extend(open);
     blocks
 }
@@ -602,8 +570,7 @@ fn body_code_blocks(
     body_blocks(body)
         .into_iter()
         .map(|block| {
-            // The first word of the label names the language; anything after
-            // it is metadata to whatever wrote the label.
+            // e.g. "rust title=foo.rs"
             let label = block.lang.split_whitespace().next().unwrap_or("");
             let config = configs.iter().find(|(name, _)| {
                 label.eq_ignore_ascii_case(name)
@@ -615,8 +582,7 @@ fn body_code_blocks(
                     })
             });
             match config {
-                // Samlang keeps the runtime highlighter; text and unknown
-                // labels are drawn plain.
+                // samlang is highlighted at runtime; anything else unknown is plain.
                 None => CompiledBlock { lines: Vec::new() },
                 Some((_, config)) => CompiledBlock {
                     lines: highlight_block(highlighter, configs, config, &block.lines),
@@ -626,8 +592,6 @@ fn body_code_blocks(
         .collect()
 }
 
-/// The config table entry a language name reaches, by the name injections
-/// call it by.
 fn config_by_name<'a>(
     configs: &'a [(&str, HighlightConfiguration)],
     name: &str,
@@ -645,14 +609,12 @@ fn highlight_block(
     lines: &[&str],
 ) -> Vec<Vec<(u32, u32, &'static str)>> {
     let source = lines.join("\n");
-    // Injections name their language the way the config table does.
     let mut injected = |name: &str| config_by_name(configs, name);
     let Ok(events) = highlighter.highlight(config, source.as_bytes(), None, None, &mut injected)
     else {
         return vec![Vec::new(); lines.len()];
     };
-    // The innermost highlight covering a source range paints it; the ranges
-    // tile the source, so the colored ones flatten into one list.
+    // Innermost highlight wins.
     let mut colored: Vec<(usize, usize, &'static str)> = Vec::new();
     let mut stack: Vec<usize> = Vec::new();
     for event in events.flatten() {
@@ -668,7 +630,7 @@ fn highlight_block(
             }
         }
     }
-    // Split the colored ranges into the lines the renderer will paint.
+    // Split ranges by line.
     let mut per_line = vec![Vec::new(); lines.len()];
     let mut line_start = 0;
     for (line_index, line) in lines.iter().enumerate() {
@@ -689,7 +651,6 @@ fn highlight_block(
     per_line
 }
 
-/// The `code_blocks` expression for one post's compiled highlighting.
 fn code_blocks_expr(blocks: &[CompiledBlock]) -> String {
     let mut out = String::from("&[");
     for block in blocks {

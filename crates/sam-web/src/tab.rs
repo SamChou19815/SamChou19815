@@ -1,5 +1,3 @@
-//! The app's four tabs.
-
 use crate::crypt::{encrypted_str, EncryptedString};
 use crate::site_path::SitePath;
 
@@ -12,11 +10,10 @@ pub(crate) enum Tab {
 }
 
 impl Tab {
-    /// Every tab, in the order the header lists and `1`–`4` reach them.
+    /// Header order, also the order of the 1-4 shortcuts.
     pub(crate) const ALL: [Tab; 4] = [Tab::About, Tab::Timeline, Tab::Blog, Tab::Help];
 
-    /// Where the tab sits in [`Tab::ALL`]: the digit key that reaches it, and
-    /// the index into the per-tab state.
+    /// Index into [`Tab::ALL`].
     pub(crate) const fn index(self) -> usize {
         match self {
             Tab::About => 0,
@@ -35,7 +32,7 @@ impl Tab {
         }
     }
 
-    /// Mirrored by the route table in [`crate::ui`].
+    /// Must match the route table in [`crate::ui`].
     pub(crate) fn route(self) -> SitePath {
         SitePath::new(
             match self {

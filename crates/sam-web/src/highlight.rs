@@ -1,15 +1,10 @@
-//! Syntax highlighting for samlang code — the About tab's program and blog
-//! posts' `samlang` fenced blocks — using the homepage's Prism light token
-//! colors. Every other fenced language is highlighted by tree-sitter at
-//! build time (see `build.rs`) and painted with the same palette.
+//! samlang syntax highlighting. Other languages are highlighted by tree-sitter in build.rs.
 
 use crate::crypt::{encrypted_str, EncryptedString};
 use crate::data;
 use crate::style::{link, Line, Span, TextStyle};
 use crate::theme;
 
-/// The language's keywords, encrypted like the program they color so the binary
-/// spells out none of them; matched by decrypting.
 const KEYWORDS: [EncryptedString; 6] = [
     encrypted_str!("import"),
     encrypted_str!("from"),
@@ -47,8 +42,6 @@ pub(crate) fn program_lines() -> Vec<Line> {
     samlang_lines(&lines)
 }
 
-/// Highlights the lines of a samlang snippet — the About tab's program, or a
-/// blog post's `samlang` fenced block.
 pub(crate) fn samlang_lines(source_lines: &[&str]) -> Vec<Line> {
     let mut result = Vec::new();
     let mut in_comment = false;
