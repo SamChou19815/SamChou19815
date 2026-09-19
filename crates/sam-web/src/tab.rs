@@ -6,12 +6,11 @@ pub(crate) enum Tab {
     About,
     Timeline,
     Blog,
-    Help,
 }
 
 impl Tab {
-    /// Header order, also the order of the 1-4 shortcuts.
-    pub(crate) const ALL: [Tab; 4] = [Tab::About, Tab::Timeline, Tab::Blog, Tab::Help];
+    /// Header order, also the order of the 1-3 shortcuts.
+    pub(crate) const ALL: [Tab; 3] = [Tab::About, Tab::Timeline, Tab::Blog];
 
     /// Index into [`Tab::ALL`].
     pub(crate) const fn index(self) -> usize {
@@ -19,7 +18,6 @@ impl Tab {
             Tab::About => 0,
             Tab::Timeline => 1,
             Tab::Blog => 2,
-            Tab::Help => 3,
         }
     }
 
@@ -28,7 +26,6 @@ impl Tab {
             Tab::About => encrypted_str!("About"),
             Tab::Timeline => encrypted_str!("Timeline"),
             Tab::Blog => encrypted_str!("Blog"),
-            Tab::Help => encrypted_str!("Help"),
         }
     }
 
@@ -39,7 +36,6 @@ impl Tab {
                 Tab::About => encrypted_str!("/about"),
                 Tab::Timeline => encrypted_str!("/timeline"),
                 Tab::Blog => encrypted_str!("/blog"),
-                Tab::Help => encrypted_str!("/help"),
             }
             .decrypt(),
         )

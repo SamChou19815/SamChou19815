@@ -27,7 +27,7 @@ pub(super) struct Lists {
 pub(super) struct Pointer(pub(super) StoredValue<(i32, i32)>);
 
 #[component]
-pub(super) fn App(touch_device: bool) -> impl IntoView {
+pub(super) fn App() -> impl IntoView {
     provide_context(InApp);
     provide_context(Lists {
         timeline: RwSignal::new(0),
@@ -53,7 +53,6 @@ pub(super) fn App(touch_device: bool) -> impl IntoView {
             match key {
                 Key::Left | Key::Char('h') | Key::BackTab => switch_tab(tab.get_untracked().prev()),
                 Key::Right | Key::Char('l') | Key::Tab => switch_tab(tab.get_untracked().next()),
-                Key::Char('?') => switch_tab(Tab::Help),
                 Key::Char('q') => quit(),
                 Key::Char(c @ '1'..='4') => switch_tab(Tab::ALL[c as usize - '1' as usize]),
                 _ => {}
@@ -63,7 +62,7 @@ pub(super) fn App(touch_device: bool) -> impl IntoView {
 
     view! {
         <div class="flex h-full w-full flex-col">
-            <Header touch_device />
+            <Header />
             <main class="flex min-h-0 w-full flex-1 flex-col">
                 <div class="min-h-0 w-full flex-1 px-2">
                     <Outlet />
