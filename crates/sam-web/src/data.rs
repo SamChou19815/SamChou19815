@@ -185,6 +185,19 @@ pub(crate) const SOCIAL_LINKS: &[Link] = &[
 /// Newest first.
 pub(crate) const TIMELINE: &[TimelineEvent] = &[
     TimelineEvent {
+        title: encrypted_str!("Website Redesign v4"),
+        time: encrypted_str!("September 2026"),
+        image: Some(encrypted_str!("/timeline/website-v4.png")),
+        category: Category::Milestone,
+        detail: Some(encrypted_str!(
+            "This is the first version with a TUI feel."
+        )),
+        links: &[Link {
+            name: encrypted_str!("Blog Post"),
+            url: encrypted_str!("https://developersam.com/blog/2026/09/20/website-v4"),
+        }],
+    },
+    TimelineEvent {
         title: encrypted_str!("Became a Canadian permanent resident"),
         time: encrypted_str!("August 2026"),
         image: Some(encrypted_str!("/timeline/canada.webp")),
