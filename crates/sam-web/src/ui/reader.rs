@@ -236,7 +236,7 @@ fn BlockView(block: Block) -> impl IntoView {
         }
         Block::Image { url } => view! {
             <img
-                class="mt-[1.2lh] block h-auto max-w-full w-auto max-h-[16lh]"
+                class="mt-[1.2lh] block h-auto max-w-full w-auto"
                 src=url.to_string()
                 alt=""
             />

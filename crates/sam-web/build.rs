@@ -133,12 +133,14 @@ fn sorted_files(dir: &Path) -> Vec<PathBuf> {
 
 fn local_posts(www_src: &Path) -> Vec<PostSource> {
     let root = www_src.join("blog-posts");
+    // Watching the directory (cargo scans it recursively) rather than each file found, so a
+    // newly added post also triggers a rerun.
+    println!("cargo:rerun-if-changed={}", root.display());
     let mut posts = Vec::new();
     for year in sorted_dirs(&root) {
         for month in sorted_dirs(&year) {
             for date in sorted_dirs(&month) {
                 for page_md_path in sorted_files(&date) {
-                    println!("cargo:rerun-if-changed={}", page_md_path.display());
                     let source = std::fs::read_to_string(&page_md_path).unwrap_or_else(|error| {
                         panic!("reading {}: {error}", page_md_path.display())
                     });
