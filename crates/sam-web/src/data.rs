@@ -194,7 +194,7 @@ pub(crate) const TIMELINE: &[TimelineEvent] = &[
         )),
         links: &[Link {
             name: encrypted_str!("Blog Post"),
-            url: encrypted_str!("https://developersam.com/blog/2026/09/20/website-v4"),
+            url: encrypted_str!("https://developersam.com/blog/2026/09/19/website-v4"),
         }],
     },
     TimelineEvent {
