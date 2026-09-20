@@ -83,7 +83,7 @@ fn TimelineCard(
             <div class="mt-row">
                 <div class="pl-3">
                     <img
-                        class="block h-auto max-w-full w-auto max-w-[min(100%,32ch)] max-h-[8lh]"
+                        class="block h-auto w-auto max-w-[min(100%,48ch)]"
                         src=url.to_string()
                         alt=""
                     />
