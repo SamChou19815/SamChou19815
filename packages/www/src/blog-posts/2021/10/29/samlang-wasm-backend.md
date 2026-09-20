@@ -1,5 +1,6 @@
 ---
 title: "WebAssembly Backend for samlang"
+discussion: "1655"
 ---
 
 Since the release of Apple M1 MacBook, a ticking bomb starts: eventually there will be a day that I

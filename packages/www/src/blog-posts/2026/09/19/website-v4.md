@@ -1,5 +1,6 @@
 ---
 title: "Website V4 Redesign"
+discussion: "1644"
 ---
 
 ![Website Change](/blog/2026-09-19-website-v4/change.png)

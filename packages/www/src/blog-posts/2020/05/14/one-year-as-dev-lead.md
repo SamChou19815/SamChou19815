@@ -1,5 +1,6 @@
 ---
 title: "One Year as Developer Lead"
+discussion: "1660"
 ---
 
 Almost a year ago, I started to perform developer lead responsibilities at

@@ -1,5 +1,6 @@
 ---
 title: "Computer Science in High Schools"
+discussion: "1664"
 ---
 
 This year, I got an intern with a resume that did not mention my high school's CS project with a

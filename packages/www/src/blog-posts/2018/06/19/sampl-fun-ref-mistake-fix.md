@@ -1,5 +1,6 @@
 ---
 title: "Function Reference in SAMPL - A Design Mistake and the Fix"
+discussion: "1666"
 ---
 
 ## Background

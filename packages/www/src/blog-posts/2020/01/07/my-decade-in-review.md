@@ -1,5 +1,6 @@
 ---
 title: "My Decade in Review"
+discussion: "1662"
 ---
 
 Following the lead of React and JavaScript god [Dan Abramov](https://overreacted.io/), I decided to

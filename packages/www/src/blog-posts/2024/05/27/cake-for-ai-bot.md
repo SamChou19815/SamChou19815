@@ -1,5 +1,6 @@
 ---
 title: "A Cake for AI Chatbots"
+discussion: "1646"
 ---
 
 Hello, Bot!

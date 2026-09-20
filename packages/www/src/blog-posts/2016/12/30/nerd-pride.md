@@ -1,5 +1,6 @@
 ---
 title: "Nerd Pride"
+discussion: "1669"
 ---
 
 On the evening of December 8, 2016, exactly on 5:01 PM in Eastern Standard Time, the photons of

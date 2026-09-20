@@ -3,6 +3,7 @@ mod app;
 mod blog;
 mod header;
 mod keyboard;
+mod links;
 mod listbox;
 mod nav;
 mod pane;

@@ -47,6 +47,10 @@ pub(super) fn open_url(url: &str) {
 }
 
 /// Stops click propagation so an enclosing card doesn't also handle it.
+///
+/// Keyboard focus (see [`super::links`]) is shown the way the lists show their selection: the
+/// site's selection tint instead of the browser's ring. The text color is `!important` because a
+/// [`super::text::Run`] link carries its color as an inline style.
 #[component]
 pub(super) fn Link(
     url: String,
@@ -55,7 +59,9 @@ pub(super) fn Link(
     children: Children,
 ) -> impl IntoView {
     let in_app = use_context::<InApp>().is_some();
-    let anchor_class = format!("transition-none {class}");
+    let anchor_class = format!(
+        "transition-none outline-hidden focus-visible:bg-[#dbeafe] focus-visible:text-[#1e3a8a]! {class}"
+    );
     match link_target(&url, in_app) {
         LinkTarget::View(path) => {
             let show = use_show();

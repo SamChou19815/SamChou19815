@@ -1,5 +1,6 @@
 ---
 title: "Why I Write Useless Code"
+discussion: "1653"
 ---
 
 There are a lot of ways you can categorize code, but in this blog post, I will mostly focus on their
