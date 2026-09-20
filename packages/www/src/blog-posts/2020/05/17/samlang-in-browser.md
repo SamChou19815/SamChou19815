@@ -1,5 +1,6 @@
 ---
 title: "Making samlang Run in Browsers"
+discussion: "1659"
 ---
 
 ## Background

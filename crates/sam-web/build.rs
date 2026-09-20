@@ -19,7 +19,11 @@ mod markdown_scan {
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let www_src = manifest.join("../../packages/www/src");
+    // Canonical so the paths in warnings and panics below read cleanly.
+    let www_src = manifest
+        .join("../../packages/www/src")
+        .canonicalize()
+        .expect("packages/www/src exists");
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
 
     println!("cargo:rerun-if-changed=build.rs");
@@ -45,6 +49,9 @@ struct PostSource {
     body: String,
     /// One per fenced block, in order.
     code_blocks: Vec<CompiledBlock>,
+    /// The GitHub Discussion that is the post's comments section. None for external posts and
+    /// for local posts without one yet.
+    discussion: Option<u32>,
 }
 
 fn compile_posts(www_src: &Path) -> (String, Vec<u8>) {
@@ -77,6 +84,7 @@ fn compile_posts(www_src: &Path) -> (String, Vec<u8>) {
              \x20       external_url: {},\n\
              \x20       body: {},\n\
              \x20       code_blocks: {},\n\
+             \x20       discussion: {},\n\
              \x20   }},\n",
             encrypted(&mut blog_post_encrypted_blob, &post.title),
             encrypted(&mut blog_post_encrypted_blob, &post.year),
@@ -86,6 +94,8 @@ fn compile_posts(www_src: &Path) -> (String, Vec<u8>) {
             optional_encrypted(&mut blog_post_encrypted_blob, &post.external_url),
             encrypted(&mut blog_post_encrypted_blob, &post.body),
             code_blocks_expr(&post.code_blocks),
+            post.discussion
+                .map_or_else(|| "None".to_string(), |number| format!("Some({number})")),
         )
         .expect("writing to a String cannot fail");
     }
@@ -180,12 +190,32 @@ fn parse_post(
     slug: &str,
 ) -> PostSource {
     let (front, body) = frontmatter(source, page_md_path);
-    let title = front
-        .iter()
-        .find(|(key, _)| *key == "title")
+    let field = |name: &str| {
+        front
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value)
+    };
+    let title = field("title")
         .unwrap_or_else(|| panic!("{}: the frontmatter has no title", page_md_path.display()))
-        .1
         .clone();
+    let discussion = field("discussion").map(|value| {
+        value.parse().unwrap_or_else(|error| {
+            panic!(
+                "{}: discussion must be a GitHub Discussion number: {error}",
+                page_md_path.display()
+            )
+        })
+    });
+    if discussion.is_none() {
+        // Visible in the build output rather than fatal, so a draft can still be previewed;
+        // the reader simply shows no discussion link until the post has one.
+        println!(
+            "cargo:warning={}: no comments section; create a GitHub Discussion and add its number \
+             to the frontmatter as `discussion: \"<number>\"`",
+            page_md_path.display()
+        );
+    }
     PostSource {
         title,
         year: year.to_string(),
@@ -195,6 +225,7 @@ fn parse_post(
         external_url: None,
         body,
         code_blocks: Vec::new(),
+        discussion,
     }
 }
 
@@ -249,6 +280,8 @@ fn external_posts(www_src: &Path) -> Vec<PostSource> {
             external_url: Some(field(entry, "externalUrl")),
             body: String::new(),
             code_blocks: Vec::new(),
+            // The reader never opens an external post, so there is nowhere to link one from.
+            discussion: None,
         })
         .collect()
 }

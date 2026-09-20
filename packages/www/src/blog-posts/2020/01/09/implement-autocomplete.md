@@ -1,5 +1,6 @@
 ---
 title: "How to Implement Autocomplete"
+discussion: "1661"
 ---
 
 Implement autocomplete in 79 lines of code. Actually, it's not that easy.

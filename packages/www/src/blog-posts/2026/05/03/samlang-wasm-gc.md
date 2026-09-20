@@ -1,5 +1,6 @@
 ---
 title: "WASM GC Backend for samlang"
+discussion: "1645"
 ---
 
 This is a long overdue blog post that serves as a project update on [samlang](https://samlang.io).

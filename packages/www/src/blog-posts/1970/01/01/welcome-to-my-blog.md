@@ -1,5 +1,6 @@
 ---
 title: "Welcome to My Blog!"
+discussion: "1670"
 ---
 
 This is the zeroth post in my blog. Since the content of the post might change when I migrate the

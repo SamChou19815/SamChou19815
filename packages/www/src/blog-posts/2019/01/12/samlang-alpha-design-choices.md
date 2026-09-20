@@ -1,5 +1,6 @@
 ---
 title: "Design Choice of samlang in Alpha"
+discussion: "1663"
 ---
 
 ## Background

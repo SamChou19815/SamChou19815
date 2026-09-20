@@ -1,5 +1,6 @@
 ---
 title: "Life of a High School CS Club President, from a SWE's Perspective"
+discussion: "1650"
 ---
 
 Imagine yourself being the president of the [CS club at my high school](https://computerization.io).

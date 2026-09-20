@@ -11,11 +11,13 @@ use leptos_router::components::Redirect;
 
 use super::app::Lists;
 use super::keyboard::use_view_keys;
+use super::links::link_keys;
 use super::nav::{replacing, use_path, use_show, Link};
 use super::pane::{scroll_keys, Pane};
 use super::text::{runs, style_of};
 
 const CLOSE_LABEL: EncryptedString = encrypted_str!("Close");
+const DISCUSSION_LABEL: EncryptedString = encrypted_str!("Discussion");
 const NEWER_LABEL: EncryptedString = encrypted_str!("Newer Post");
 const OLDER_LABEL: EncryptedString = encrypted_str!("Older Post");
 const POST_NAV_LABEL: EncryptedString = encrypted_str!("Blog post page navigation");
@@ -55,7 +57,9 @@ fn Post(post: usize) -> impl IntoView {
                 show.run(Tab::Blog.route());
             }
             key => {
-                scroll_keys(pane, key);
+                if !link_keys(pane, key) {
+                    scroll_keys(pane, key);
+                }
             }
         }
         true
@@ -112,12 +116,12 @@ fn NeighborCard(index: usize, newer: bool) -> impl IntoView {
     view! {
         <Link
             url=post.url()
-            class="group block w-full rounded-md border border-[#e5e7eb] bg-white p-[1rem] hover:border-[#2563eb] hover:bg-[#dbeafe]"
+            class="group block w-full rounded-md border border-[#e5e7eb] bg-white p-[1rem] hover:border-[#2563eb] hover:bg-[#dbeafe] focus-visible:border-[#2563eb]"
         >
             <div class="text-[0.9em]">
-                <span class="text-[#4b5563] group-hover:text-[#1e3a8a]">{label}</span>
+                <span class="text-[#4b5563] group-hover:text-[#1e3a8a] group-focus-visible:text-[#1e3a8a]">{label}</span>
             </div>
-            <div class="min-w-0 break-words pt-[0.25lh] font-bold leading-[1.3] text-[#2563eb] group-hover:text-[#1e3a8a]">
+            <div class="min-w-0 break-words pt-[0.25lh] font-bold leading-[1.3] text-[#2563eb] group-hover:text-[#1e3a8a] group-focus-visible:text-[#1e3a8a]">
                 {title}
             </div>
         </Link>
@@ -128,6 +132,19 @@ fn NeighborCard(index: usize, newer: bool) -> impl IntoView {
 fn PostHeader(post: usize) -> impl IntoView {
     let title = posts::POSTS[post].title().decrypt();
     let date = posts::POSTS[post].formatted_date();
+    let discussion = posts::POSTS[post].discussion_url().map(|url| {
+        view! {
+            <span style=style_of(theme::MUTED)>" · "</span>
+            <Link
+                url
+                class="font-bold text-[#2563eb] hover:text-[#1e3a8a]"
+                {..}
+                aria-label=format!("{} on GitHub", DISCUSSION_LABEL.decrypt())
+            >
+                {format!("{} ↗", DISCUSSION_LABEL.decrypt())}
+            </Link>
+        }
+    });
     let heading = view! {
         <div
             role="heading"
@@ -152,6 +169,7 @@ fn PostHeader(post: usize) -> impl IntoView {
             </div>
             <div class="pt-[0.5lh] text-[0.9em]">
                 <span style=style_of(theme::MUTED)>{format!("~ {date}")}</span>
+                {discussion}
             </div>
         </div>
     }

@@ -1,5 +1,6 @@
 ---
 title: "Rewriting samlang in Rust"
+discussion: "1651"
 ---
 
 ## Motivation

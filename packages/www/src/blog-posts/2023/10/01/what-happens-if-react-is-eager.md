@@ -1,5 +1,6 @@
 ---
 title: "What Will Happen if React Evaluates JSX Eagerly?"
+discussion: "1648"
 ---
 
 TLDR: Absolute Chaos

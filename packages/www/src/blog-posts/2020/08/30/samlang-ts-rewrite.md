@@ -1,5 +1,6 @@
 ---
 title: "Rewriting samlang in TypeScript"
+discussion: "1658"
 ---
 
 A lot has changed since my [last blog post](/blog/2020/05/17/samlang-in-browser) on my effort to make

@@ -1,5 +1,6 @@
 ---
 title: "Design Choice of SAMPL - Written After the First Alpha Release"
+discussion: "1667"
 ---
 
 ## Beginning
