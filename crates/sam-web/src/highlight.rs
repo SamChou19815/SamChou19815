@@ -58,10 +58,10 @@ fn highlight_line(source: &str, mut in_comment: bool) -> (Vec<Span>, bool) {
     let mut rest = source;
     while !rest.is_empty() {
         if in_comment {
-            match rest.find("*/") {
-                Some(end) => {
-                    spans.push(styled_italic(&rest[..end + 2], comment_color()));
-                    rest = &rest[end + 2..];
+            match rest.split_once("*/") {
+                Some((comment, after)) => {
+                    spans.push(styled_italic(&format!("{comment}*/"), comment_color()));
+                    rest = after;
                     in_comment = false;
                 }
                 None => {
@@ -74,22 +74,27 @@ fn highlight_line(source: &str, mut in_comment: bool) -> (Vec<Span>, bool) {
         } else if rest.starts_with("//") {
             spans.push(styled_italic(rest, comment_color()));
             rest = "";
-        } else if rest.starts_with('"') {
-            let end = rest[1..].find('"').map_or(rest.len(), |index| index + 2);
-            spans.push(styled(&rest[..end], string_color()));
-            rest = &rest[end..];
+        } else if let Some(open) = rest.strip_prefix('"') {
+            let (literal, after) = match open.split_once('"') {
+                Some((inside, after)) => (format!("\"{inside}\""), after),
+                None => (rest.to_string(), ""),
+            };
+            spans.push(styled(&literal, string_color()));
+            rest = after;
         } else {
             let word_length = rest
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                 .count();
             if word_length == 0 {
-                let first = rest.chars().next().unwrap_or_default();
-                spans.push(styled(&rest[..first.len_utf8()], plain_color()));
-                rest = &rest[first.len_utf8()..];
+                let mut chars = rest.chars();
+                let first = chars.next().unwrap_or_default();
+                spans.push(styled(&first.to_string(), plain_color()));
+                rest = chars.as_str();
             } else {
-                let word = &rest[..word_length];
-                let is_call = rest[word_length..].trim_start().starts_with('(');
+                // ASCII, so chars are bytes.
+                let (word, after) = rest.split_at_checked(word_length).unwrap_or((rest, ""));
+                let is_call = after.trim_start().starts_with('(');
                 let color = if KEYWORDS.iter().any(|keyword| keyword.decrypt() == word) {
                     keyword_color()
                 } else if word.chars().all(|c| c.is_ascii_digit()) {
@@ -102,7 +107,7 @@ fn highlight_line(source: &str, mut in_comment: bool) -> (Vec<Span>, bool) {
                     plain_color()
                 };
                 spans.push(styled(word, color));
-                rest = &rest[word_length..];
+                rest = after;
             }
         }
     }

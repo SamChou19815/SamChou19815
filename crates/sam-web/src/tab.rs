@@ -50,6 +50,11 @@ impl Tab {
     }
 
     fn step(self, by: usize) -> Tab {
-        Tab::ALL[(self.index() + by) % Tab::ALL.len()]
+        Tab::ALL
+            .iter()
+            .cycle()
+            .nth(self.index() + by)
+            .copied()
+            .unwrap_or(self)
     }
 }

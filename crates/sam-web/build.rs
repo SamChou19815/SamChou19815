@@ -1,7 +1,10 @@
-//! Generates `posts.rs`: blog posts encrypted, with code blocks highlighted by tree-sitter.
+//! Generates `key.rs`, the random cipher key for this build, and `posts.rs`: blog posts encrypted,
+//! with code blocks highlighted by tree-sitter.
 
 use std::fmt::Write as _;
+use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use tree_sitter::Language;
 use tree_sitter_highlight::{Highlight, HighlightConfiguration, HighlightEvent, Highlighter};
@@ -30,9 +33,30 @@ fn main() {
     println!("cargo:rerun-if-changed=src/crypt/cipher.rs");
     println!("cargo:rerun-if-changed=src/markdown/scan.rs");
 
+    let key = *KEY.get_or_init(random_key);
+    std::fs::write(
+        out.join("key.rs"),
+        format!("pub(crate) const KEY: u64 = {key:#x};\n"),
+    )
+    .expect("writing key.rs");
+
     let (posts, posts_blob) = compile_posts(&www_src);
     std::fs::write(out.join("posts.bin"), &posts_blob).expect("writing posts.bin");
     std::fs::write(out.join("posts.rs"), posts).expect("writing posts.rs");
+}
+
+/// Shared by `key.rs` and the posts encrypted here, so both decrypt with the same key.
+static KEY: OnceLock<u64> = OnceLock::new();
+
+/// Fresh per build, so it never appears in the source. `RandomState` is seeded from the OS.
+fn random_key() -> u64 {
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos()),
+    );
+    hasher.finish()
 }
 
 const BLOG_TITLE: &str = "Developer Sam Blog";
@@ -104,12 +128,13 @@ fn compile_posts(www_src: &Path) -> (String, Vec<u8>) {
 }
 
 fn encrypted(blog_post_encrypted_blob: &mut Vec<u8>, text: &str) -> String {
+    let key = *KEY.get().expect("key rolled in main");
     let seed = cipher::seed_of(text);
     let start = blog_post_encrypted_blob.len();
     blog_post_encrypted_blob.extend(
         text.bytes()
             .enumerate()
-            .map(|(index, byte)| cipher::scramble(byte, seed, index)),
+            .map(|(index, byte)| cipher::scramble(byte, key, seed, index)),
     );
     format!("EncryptedRun::new({seed}, {start}, {})", text.len())
 }

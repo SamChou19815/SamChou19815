@@ -5,7 +5,7 @@ use crate::tab::Tab;
 
 pub(crate) enum Screen {
     Tab(Tab),
-    Post(usize),
+    Post(&'static posts::Post),
 }
 
 impl Screen {
@@ -18,7 +18,7 @@ impl Screen {
 }
 
 pub(crate) fn screen_at(path: &SitePath) -> Option<Screen> {
-    if let Some(post) = posts::find(path) {
+    if let Some(post) = posts::find(path).and_then(|index| posts::POSTS.get(index)) {
         return Some(Screen::Post(post));
     }
     let tab = Tab::ALL
@@ -44,7 +44,7 @@ pub(crate) const SHELL_TITLE: EncryptedString = encrypted_str!("Developer Sam â€
 pub(crate) fn title_for(path: &SitePath) -> String {
     match screen_at(path) {
         Some(Screen::Post(post)) => {
-            format!("{} | {}", posts::POSTS[post].title(), posts::blog_title())
+            format!("{} | {}", post.title(), posts::blog_title())
         }
         Some(Screen::Tab(Tab::About)) => encrypted_str!("About | Developer Sam").to_string(),
         Some(Screen::Tab(Tab::Timeline)) => encrypted_str!("Timeline | Developer Sam").to_string(),
@@ -82,8 +82,8 @@ fn site_path(url: &str) -> Option<SitePath> {
     }
     let rest = strip_prefix_ignore_case(url, "https://")
         .or_else(|| strip_prefix_ignore_case(url, "http://"))?;
-    let rest = strip_prefix_ignore_case(rest, "www.").unwrap_or(rest);
-    let rest = strip_prefix_ignore_case(rest, "developersam.com")?;
+    let rest = strip_prefix_ignore_case(rest, &encrypted_str!("www.").decrypt()).unwrap_or(rest);
+    let rest = strip_prefix_ignore_case(rest, &encrypted_str!("developersam.com").decrypt())?;
     match rest {
         "" => Some(SitePath::root()),
         _ if rest.starts_with('/') => Some(SitePath::new(rest)),
@@ -93,9 +93,10 @@ fn site_path(url: &str) -> Option<SitePath> {
 }
 
 fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
-    text.len() >= prefix.len() && text[..prefix.len()].eq_ignore_ascii_case(prefix)
+    strip_prefix_ignore_case(text, prefix).is_some()
 }
 
 fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    starts_with_ignore_case(text, prefix).then(|| &text[prefix.len()..])
+    let (head, tail) = text.split_at_checked(prefix.len())?;
+    head.eq_ignore_ascii_case(prefix).then_some(tail)
 }

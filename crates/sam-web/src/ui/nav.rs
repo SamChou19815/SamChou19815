@@ -42,7 +42,9 @@ pub(super) fn open_url(url: &str) {
     if !lower.starts_with("https://") && !lower.starts_with("http://") {
         return;
     }
-    let window = web_sys::window().expect("window");
+    let Some(window) = web_sys::window() else {
+        return;
+    };
     let _ = window.open_with_url_and_target_and_features(url, "_blank", "noopener");
 }
 

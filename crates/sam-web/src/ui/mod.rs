@@ -12,6 +12,7 @@ mod reader;
 mod text;
 mod timeline;
 
+use crate::crypt::encrypted_str;
 use crate::routes::{has_view, title_for};
 use crate::shell::{LineEditor, Shell};
 use crate::style::Line;
@@ -19,7 +20,7 @@ use crate::tab::Tab;
 use leptos::prelude::*;
 use leptos_router::components::{ParentRoute, Redirect, Route, Router, Routes};
 use leptos_router::hooks::use_navigate;
-use leptos_router::path;
+use leptos_router::{path, ParamSegment, StaticSegment, WildcardSegment};
 
 use nav::{replacing, use_path};
 use prompt::ShellState;
@@ -30,6 +31,11 @@ pub(crate) fn mount(parent: web_sys::HtmlElement, touch_device: bool) {
         view! { <Router><Session touch_device /></Router> }
     })
     .forget();
+}
+
+/// Route segments must be `'static`. Leaked once per mount, which happens once per page load.
+fn leak(text: &str) -> &'static str {
+    Box::leak(text.into())
 }
 
 #[component]
@@ -69,16 +75,32 @@ fn Session(touch_device: bool) -> impl IntoView {
     );
 
     let blog = move || Tab::Blog.route().to_string();
+    // Not `path!`: its segments would sit in the wasm as plain text.
+    let tab_segment = |tab: Tab| StaticSegment(leak(tab.route().as_str().trim_start_matches('/')));
+    let about = tab_segment(Tab::About);
+    let timeline = tab_segment(Tab::Timeline);
+    let blog_index = tab_segment(Tab::Blog);
+    let post = (
+        tab_segment(Tab::Blog),
+        ParamSegment(leak(&encrypted_str!("year").decrypt())),
+        ParamSegment(leak(&encrypted_str!("month").decrypt())),
+        ParamSegment(leak(&encrypted_str!("day").decrypt())),
+        ParamSegment(leak(&encrypted_str!("slug").decrypt())),
+    );
+    let blog_rest = (
+        tab_segment(Tab::Blog),
+        WildcardSegment(leak(&encrypted_str!("rest").decrypt())),
+    );
     view! {
         <div class="terminal fixed inset-0 overflow-hidden bg-[#f7f7f7] font-terminal text-[15px] leading-[1.2] text-[#1c1e21]">
             <Routes fallback=|| view! { <Redirect path="/" options=replacing() /> }>
                 <Route path=path!("/") view=move || view! { <prompt::Prompt scrollback state /> } />
                 <ParentRoute path=path!("") view=move || view! { <app::App /> }>
-                    <Route path=path!("about") view=about::About />
-                    <Route path=path!("timeline") view=timeline::Timeline />
-                    <Route path=path!("blog") view=blog::Blog />
-                    <Route path=path!("blog/:year/:month/:day/:slug") view=reader::Reader />
-                    <Route path=path!("blog/*rest") view=move || view! { <Redirect path=blog() options=replacing() /> } />
+                    <Route path=(about,) view=about::About />
+                    <Route path=(timeline,) view=timeline::Timeline />
+                    <Route path=(blog_index,) view=blog::Blog />
+                    <Route path=post view=reader::Reader />
+                    <Route path=blog_rest view=move || view! { <Redirect path=blog() options=replacing() /> } />
                 </ParentRoute>
             </Routes>
         </div>

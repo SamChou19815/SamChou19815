@@ -2,6 +2,7 @@
 
 use crate::crypt::{encrypted_str, EncryptedRun, EncryptedString};
 use crate::site_path::SitePath;
+use crate::tab::Tab;
 
 const DISCUSSIONS_URL: EncryptedString =
     encrypted_str!("https://github.com/SamChou19815/SamChou19815/discussions");
@@ -81,7 +82,8 @@ impl Post {
     /// Only meaningful for local posts.
     pub(crate) fn path(&self) -> SitePath {
         SitePath::new(format!(
-            "/blog/{}/{}/{}/{}",
+            "{}/{}/{}/{}/{}",
+            Tab::Blog.route(),
             self.year.of(POSTS_BLOB),
             self.month.of(POSTS_BLOB),
             self.date.of(POSTS_BLOB),
@@ -92,7 +94,11 @@ impl Post {
     pub(crate) fn url(&self) -> String {
         match self.external_url {
             Some(url) => url.of(POSTS_BLOB).decrypt(),
-            None => format!("https://developersam.com{}", self.path()),
+            None => format!(
+                "{}{}",
+                encrypted_str!("https://developersam.com"),
+                self.path()
+            ),
         }
     }
 

@@ -54,7 +54,11 @@ pub(super) fn App() -> impl IntoView {
                 Key::Left | Key::Char('h') | Key::BackTab => switch_tab(tab.get_untracked().prev()),
                 Key::Right | Key::Char('l') | Key::Tab => switch_tab(tab.get_untracked().next()),
                 Key::Char('q') => quit(),
-                Key::Char(c @ '1'..='4') => switch_tab(Tab::ALL[c as usize - '1' as usize]),
+                Key::Char(c @ '1'..='4') => {
+                    if let Some(&tab) = Tab::ALL.get(c as usize - '1' as usize) {
+                        switch_tab(tab);
+                    }
+                }
                 _ => {}
             }
         },

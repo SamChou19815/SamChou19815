@@ -4,6 +4,7 @@ use crate::highlight;
 use crate::style::{bold_colored, colored, Line, Span, TextStyle};
 use crate::theme;
 
+use super::maze::{self, ARCHIVE_DIR};
 use super::{one, CMD_CAT, CMD_LS};
 
 pub(in crate::shell) const HOME_DIR: EncryptedString = encrypted_str!("/home/sam");
@@ -13,27 +14,29 @@ const CONTACT_TXT: EncryptedString = encrypted_str!("contact.txt");
 const README_MD: EncryptedString = encrypted_str!("readme.md");
 const RESUME_PDF: EncryptedString = encrypted_str!("resume.pdf");
 const TIMELINE_TXT: EncryptedString = encrypted_str!("timeline.txt");
+/// Bait for bots, see [`super::Shell::enter_trap`]. Not listed, so people don't stumble on it.
+pub(in crate::shell) const EVERYTHING_TXT: EncryptedString = encrypted_str!("everything.txt");
 
 pub(in crate::shell) fn fs_entries(path: &[String]) -> Option<Vec<(String, bool)>> {
-    if path.is_empty() {
-        return Some(vec![
+    match path {
+        [] => Some(vec![
+            (format!("{ARCHIVE_DIR}/"), true),
             (format!("{PROJECTS_DIR}/"), true),
             (ABOUT_TXT.decrypt(), false),
             (CONTACT_TXT.decrypt(), false),
             (README_MD.decrypt(), false),
             (RESUME_PDF.decrypt(), false),
             (TIMELINE_TXT.decrypt(), false),
-        ]);
-    }
-    if path.len() == 1 && path[0] == PROJECTS_DIR.decrypt() {
-        return Some(
+        ]),
+        [first, rest @ ..] if *first == ARCHIVE_DIR.decrypt() => maze::entries(rest),
+        [only] if *only == PROJECTS_DIR.decrypt() => Some(
             data::PROJECTS
                 .iter()
                 .map(|project| (project.id.decrypt(), false))
                 .collect(),
-        );
+        ),
+        _ => None,
     }
-    None
 }
 
 fn link_line(mut spans: Line, url: &str) -> Line {
@@ -63,6 +66,10 @@ pub(in crate::shell) fn read_file(path: &[String]) -> Option<Vec<Line>> {
             )),
             one(colored(
                 format!("  {CMD_CAT} {TIMELINE_TXT}"),
+                theme::ACCENT_TEXT,
+            )),
+            one(colored(
+                format!("  {CMD_LS} {ARCHIVE_DIR}"),
                 theme::ACCENT_TEXT,
             )),
         ]),
@@ -142,6 +149,7 @@ pub(in crate::shell) fn read_file(path: &[String]) -> Option<Vec<Line>> {
             }
             Some(out)
         }
+        [directory, rest @ ..] if *directory == ARCHIVE_DIR.decrypt() => maze::read(rest),
         _ => None,
     }
 }

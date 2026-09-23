@@ -53,13 +53,21 @@ pub(super) fn Pane(
     if let Some(tab) = tab {
         Effect::new(move |_| {
             if let Some(pane) = node_ref.get() {
-                pane.set_scroll_top(positions.with_value(|saved| saved[tab.index()]) as i32);
+                pane.set_scroll_top(
+                    positions
+                        .with_value(|saved| saved.get(tab.index()).copied().unwrap_or_default())
+                        as i32,
+                );
             }
         });
     }
     let on_scroll = move |_| {
         if let (Some(tab), Some(pane)) = (tab, node_ref.get_untracked()) {
-            positions.update_value(|saved| saved[tab.index()] = f64::from(pane.scroll_top()));
+            positions.update_value(|saved| {
+                if let Some(slot) = saved.get_mut(tab.index()) {
+                    *slot = f64::from(pane.scroll_top());
+                }
+            });
         }
     };
     view! {

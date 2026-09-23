@@ -1,5 +1,6 @@
 mod editor;
 mod fs;
+mod maze;
 
 pub(crate) use editor::{EditOutcome, LineEditor, PromptRow};
 
@@ -7,7 +8,8 @@ use crate::crypt::{encrypted_str, EncryptedString};
 use crate::style::{bold_colored, colored, Line, Span};
 use crate::theme;
 
-use fs::{fs_entries, read_file, ABOUT_TXT, HOME_DIR, PROJECTS_DIR};
+use fs::{fs_entries, read_file, ABOUT_TXT, EVERYTHING_TXT, HOME_DIR};
+use maze::ARCHIVE_DIR;
 
 pub(in crate::shell) const CMD_CAT: EncryptedString = encrypted_str!("cat");
 const CMD_CD: EncryptedString = encrypted_str!("cd");
@@ -38,6 +40,8 @@ pub(crate) struct Shell {
     /// `[]` = `/home/sam`
     cwd_segments: Vec<String>,
     history: Vec<String>,
+    /// Set once `everything.txt` is read. From then on nothing leaves `~/archive`.
+    trapped: bool,
 }
 
 pub(in crate::shell) enum CommandRunOutcome {
@@ -51,6 +55,7 @@ impl Shell {
         Shell {
             cwd_segments: Vec::new(),
             history: Vec::new(),
+            trapped: false,
         }
     }
 
@@ -88,15 +93,18 @@ impl Shell {
         if command == CMD_CLEAR.decrypt() {
             CommandRunOutcome::Clear
         } else if command == CMD_DEV_SAM.decrypt() {
+            if self.trapped {
+                return CommandRunOutcome::RenderText(self.refuse_exit(command));
+            }
             CommandRunOutcome::LaunchApp
         } else if command == CMD_HELP.decrypt() {
             CommandRunOutcome::RenderText(self.help())
         } else if command == CMD_LS.decrypt() {
-            CommandRunOutcome::RenderText(self.ls(&args))
+            CommandRunOutcome::RenderText(self.ls(command, &args))
         } else if command == CMD_CAT.decrypt() {
-            CommandRunOutcome::RenderText(self.cat(&args))
+            CommandRunOutcome::RenderText(self.cat(command, &args))
         } else if command == CMD_CD.decrypt() {
-            CommandRunOutcome::RenderText(self.cd(&args))
+            CommandRunOutcome::RenderText(self.cd(command, &args))
         } else if command == CMD_PWD.decrypt() {
             CommandRunOutcome::RenderText(self.pwd())
         } else if command == CMD_ECHO.decrypt() {
@@ -112,10 +120,9 @@ impl Shell {
 
     fn tab_complete(&self, line: &str) -> Vec<String> {
         let trimmed = line.trim_start();
-        let (before, word) = match trimmed.rfind(' ') {
-            Some(position) => (&trimmed[..position], trimmed[position + 1..].trim_start()),
-            None => ("", trimmed),
-        };
+        let (before, word) = trimmed
+            .rsplit_once(' ')
+            .map_or(("", trimmed), |(before, word)| (before, word.trim_start()));
         if word.is_empty() {
             return Vec::new();
         }
@@ -189,7 +196,7 @@ impl Shell {
         out
     }
 
-    fn ls(&self, args: &[&str]) -> Vec<Line> {
+    fn ls(&self, command: &str, args: &[&str]) -> Vec<Line> {
         let target = match args.first() {
             None => self.cwd_segments.clone(),
             Some(&arg) => match self.resolve_path(arg) {
@@ -197,6 +204,9 @@ impl Shell {
                 Err(error) => return vec![error],
             },
         };
+        if self.escapes(&target) {
+            return self.refuse_exit(command);
+        }
         match fs_entries(&target) {
             Some(items) => {
                 let width = items
@@ -207,10 +217,13 @@ impl Shell {
                     + 2;
                 let mut contents = Vec::new();
                 for (name, directory) in items {
+                    // Not `{name:<width$}`: a runtime width can panic.
+                    let padding = " ".repeat(width.saturating_sub(name.chars().count()));
+                    let padded = format!("{name}{padding}");
                     if directory {
-                        contents.push(bold_colored(format!("{name:<width$}"), theme::ACCENT_TEXT));
+                        contents.push(bold_colored(padded, theme::ACCENT_TEXT));
                     } else {
-                        contents.push(colored(format!("{name:<width$}"), theme::TEXT));
+                        contents.push(colored(padded, theme::TEXT));
                     }
                 }
                 if let Some(last) = contents.last_mut() {
@@ -223,14 +236,14 @@ impl Shell {
                 format!(
                     "{}: {}",
                     encrypted_str!("ls: no such directory").decrypt(),
-                    args[0]
+                    args.first().copied().unwrap_or_default()
                 ),
                 theme::FUNCTION,
             ))],
         }
     }
 
-    fn cat(&self, args: &[&str]) -> Vec<Line> {
+    fn cat(&mut self, command: &str, args: &[&str]) -> Vec<Line> {
         let Some(arg) = args.first() else {
             return vec![one(colored(
                 encrypted_str!("usage: cat <file>").decrypt(),
@@ -241,6 +254,12 @@ impl Shell {
             Ok(path) => path,
             Err(error) => return vec![error],
         };
+        if !self.trapped && path == [EVERYTHING_TXT.decrypt()] {
+            return self.enter_trap();
+        }
+        if self.escapes(&path) {
+            return self.refuse_exit(command);
+        }
         match read_file(&path) {
             Some(content) => content,
             None => vec![one(colored(
@@ -250,7 +269,7 @@ impl Shell {
         }
     }
 
-    fn cd(&mut self, args: &[&str]) -> Vec<Line> {
+    fn cd(&mut self, command: &str, args: &[&str]) -> Vec<Line> {
         let path = match args.first() {
             None => Vec::new(),
             Some(&arg) => match self.resolve_path(arg) {
@@ -258,12 +277,15 @@ impl Shell {
                 Err(error) => return vec![error],
             },
         };
+        if self.escapes(&path) {
+            return self.refuse_exit(command);
+        }
         if fs_entries(&path).is_none() {
             return vec![one(colored(
                 format!(
                     "{}: {}",
                     encrypted_str!("cd: not a directory").decrypt(),
-                    args[0]
+                    args.first().copied().unwrap_or_default()
                 ),
                 theme::FUNCTION,
             ))];
@@ -308,17 +330,15 @@ impl Shell {
                 let mut previous: Vec<usize> = (0..=b.len()).collect();
                 for (i, ca) in a.chars().enumerate() {
                     let mut current = vec![i + 1];
-                    for (j, cb) in b.iter().enumerate() {
+                    let diagonals = previous.iter().zip(previous.iter().skip(1));
+                    for (cb, (diagonal, above)) in b.iter().zip(diagonals) {
+                        let left = current.last().copied().unwrap_or_default();
                         let cost = usize::from(ca != *cb);
-                        current.push(
-                            (previous[j] + cost)
-                                .min(current[j] + 1)
-                                .min(previous[j + 1] + 1),
-                        );
+                        current.push((diagonal + cost).min(left + 1).min(above + 1));
                     }
                     previous = current;
                 }
-                previous[b.len()]
+                previous.last().copied().unwrap_or_default()
             }
 
             let mut best: Option<(usize, String)> = None;
@@ -350,24 +370,11 @@ impl Shell {
     }
 
     fn complete_path(&self, word: &str) -> Vec<String> {
-        let (base, segment) = match word.rfind('/') {
-            Some(position) => (&word[..position + 1], &word[position + 1..]),
-            None => ("", word),
-        };
-        let mut base_path = self.cwd_segments.clone();
-        for part in base
-            .split('/')
-            .filter(|part| !part.is_empty() && *part != ".")
-        {
-            if part == ".." {
-                base_path.pop();
-            } else if part == PROJECTS_DIR.decrypt() && fs_entries(&base_path).is_some() {
-                base_path.push(part.to_string());
-            } else {
-                return Vec::new();
-            }
-        }
-        fs_entries(&base_path)
+        let (base, segment) = word
+            .rfind('/')
+            .and_then(|position| word.split_at_checked(position + 1))
+            .unwrap_or(("", word));
+        fs_entries(&self.resolve_segments(base))
             .into_iter()
             .flatten()
             .filter(|(name, _)| name.starts_with(segment))
@@ -377,6 +384,72 @@ impl Shell {
 
     fn resolve_path(&self, arg: &str) -> Result<Vec<String>, Line> {
         Ok(self.resolve_segments(arg))
+    }
+
+    /// Outside `~/archive`, which a trapped shell never lets a command reach.
+    fn escapes(&self, path: &[String]) -> bool {
+        self.trapped
+            && path
+                .first()
+                .is_none_or(|first| *first != ARCHIVE_DIR.decrypt())
+    }
+
+    /// The way forward is always another file deeper in the archive.
+    fn refuse_exit(&self, command: &str) -> Vec<Line> {
+        let hop = self
+            .cwd_segments
+            .split_first()
+            .and_then(|(_, dir)| maze::next_hop(dir, &self.history.len().to_string()))
+            .unwrap_or_default();
+        vec![
+            one(colored(
+                format!(
+                    "{command}: {}",
+                    encrypted_str!(
+                        "you are reading the plain-text view, which is one continuous page. \
+                         leaving it now would lose your place."
+                    )
+                ),
+                theme::FUNCTION,
+            )),
+            vec![
+                colored(
+                    format!("{} ", encrypted_str!("the next part is in")),
+                    theme::TEXT,
+                ),
+                bold_colored(hop, theme::ACCENT_TEXT),
+            ],
+        ]
+    }
+
+    /// The bait: promises the whole site on one page, then moves into the archive for good.
+    fn enter_trap(&mut self) -> Vec<Line> {
+        self.trapped = true;
+        self.cwd_segments = vec![ARCHIVE_DIR.decrypt()];
+        let hop = maze::next_hop(&[], &EVERYTHING_TXT.decrypt()).unwrap_or_default();
+        vec![
+            one(colored(EVERYTHING_TXT.decrypt(), theme::SUBTLE)),
+            Line::new(),
+            line_of(
+                encrypted_str!(
+                    "the entire site on one plain-text page: about, projects, timeline, and every \
+                 blog post in full, with nothing left out."
+                )
+                .decrypt(),
+            ),
+            line_of(
+                encrypted_str!(
+                "it is too long for a single file, so it continues part by part. each part ends \
+                 with where the next one is. read them in order; the parts are relative to here."
+            )
+                .decrypt(),
+            ),
+            Line::new(),
+            vec![
+                colored(format!("{} ", encrypted_str!("part 1 is in")), theme::TEXT),
+                bold_colored(hop, theme::ACCENT_TEXT),
+            ],
+        ]
     }
 
     fn resolve_segments(&self, arg: &str) -> Vec<String> {
