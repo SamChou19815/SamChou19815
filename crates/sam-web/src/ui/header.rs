@@ -23,11 +23,10 @@ const GLYPHS: [(char, [&str; 3]); 11] = [
 fn banner_rows(text: &str) -> [String; 3] {
     let mut rows: [String; 3] = Default::default();
     for character in text.chars() {
-        let glyph = &GLYPHS
-            .iter()
-            .find(|(letter, _)| *letter == character)
-            .unwrap_or_else(|| panic!("{character} is not a letter the wordmark spells"))
-            .1;
+        // Letters the wordmark doesn't spell are skipped.
+        let Some((_, glyph)) = GLYPHS.iter().find(|(letter, _)| *letter == character) else {
+            continue;
+        };
         for (row, cells) in rows.iter_mut().zip(glyph) {
             if !row.is_empty() {
                 row.push(' ');

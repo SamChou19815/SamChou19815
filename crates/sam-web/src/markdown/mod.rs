@@ -222,26 +222,22 @@ fn span_color(color: SpanColor) -> TextStyle {
 /// `"3. foo"` -> `("3.", "foo")`
 fn numbered_item(line: &str) -> Option<(&str, &str)> {
     let digits = line.chars().take_while(char::is_ascii_digit).count();
-    if digits == 0 || !line[digits..].starts_with(". ") {
+    if digits == 0 {
         return None;
     }
-    Some((&line[..digits + 1], &line[digits + 2..]))
+    let item = line.get(digits..)?.strip_prefix(". ")?;
+    Some((line.get(..=digits)?, item))
 }
 
 /// `"![alt](url) rest"` -> `("url", " rest")`
 fn leading_image(line: &str) -> Option<(&str, &str)> {
-    let after_marker = line.strip_prefix("![")?;
-    let close = after_marker.find("](")?;
-    let after_url_open = &after_marker[close + 2..];
-    let end = after_url_open.find(')')?;
-    Some((&after_url_open[..end], &after_url_open[end + 1..]))
+    let (_, after_url_open) = line.strip_prefix("![")?.split_once("](")?;
+    after_url_open.split_once(')')
 }
 
 fn html_src(html: &str) -> Option<&str> {
-    let start = html.find("src=\"")? + 5;
-    let rest = &html[start..];
-    let end = rest.find('"')?;
-    Some(&rest[..end])
+    let (_, rest) = html.split_once("src=\"")?;
+    rest.split_once('"').map(|(src, _)| src)
 }
 
 fn heading(text: &str, color: theme::Color) -> Line {
@@ -277,12 +273,12 @@ fn inline(text: &str, base: Option<theme::Color>) -> Line {
     let mut last: Option<char> = None;
     while !rest.is_empty() {
         let cut = rest.find(['*', '`', '[', '_']).unwrap_or(rest.len());
-        if cut > 0 {
-            let run = &rest[..cut];
+        let (run, marked) = rest.split_at_checked(cut).unwrap_or((rest, ""));
+        if !run.is_empty() {
             last = run.chars().next_back();
             contents.push(styled(run.to_string(), base_color, bold, italic));
         }
-        rest = &rest[cut..];
+        rest = marked;
         if rest.is_empty() {
             break;
         }
@@ -290,13 +286,13 @@ fn inline(text: &str, base: Option<theme::Color>) -> Line {
             bold = !bold;
             rest = tail;
         } else if let Some(tail) = rest.strip_prefix('`') {
-            match tail.find('`') {
-                Some(end) => {
+            match tail.split_once('`') {
+                Some((code, after)) => {
                     contents.push(Span::styled(
-                        tail[..end].to_string(),
+                        code.to_string(),
                         TextStyle::new().color(theme::ACCENT_TEXT),
                     ));
-                    rest = &tail[end + 1..];
+                    rest = after;
                 }
                 None => {
                     contents.push(Span::styled(
@@ -308,12 +304,10 @@ fn inline(text: &str, base: Option<theme::Color>) -> Line {
             }
             last = None;
         } else if let Some(tail) = rest.strip_prefix('[') {
-            if let Some(close) = tail.find("](") {
-                if let Some(end) = tail[close + 2..].find(')').map(|index| close + 2 + index) {
-                    let name = &tail[..close];
-                    let url = &tail[close + 2..end];
+            if let Some((name, after_name)) = tail.split_once("](") {
+                if let Some((url, after_url)) = after_name.split_once(')') {
                     contents.push(link(name, theme::ACCENT_TEXT, url));
-                    rest = &tail[end + 1..];
+                    rest = after_url;
                     last = None;
                     continue;
                 }
@@ -338,15 +332,11 @@ fn inline(text: &str, base: Option<theme::Color>) -> Line {
             italic = !italic;
             rest = tail;
         } else {
-            let first = rest.chars().next().unwrap_or_default();
-            contents.push(styled(
-                rest[..first.len_utf8()].to_string(),
-                base_color,
-                bold,
-                italic,
-            ));
+            let mut chars = rest.chars();
+            let first = chars.next().unwrap_or_default();
+            contents.push(styled(first.to_string(), base_color, bold, italic));
             last = Some(first);
-            rest = &rest[first.len_utf8()..];
+            rest = chars.as_str();
         }
     }
     contents

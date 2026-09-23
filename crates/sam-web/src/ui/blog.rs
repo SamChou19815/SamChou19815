@@ -27,8 +27,12 @@ pub(super) fn Blog() -> impl IntoView {
         }
         match key {
             Key::Enter => {
-                let post = &posts::POSTS[selected.get_untracked().min(posts::POSTS.len() - 1)];
-                open_link(&post.url());
+                let post = posts::POSTS
+                    .get(selected.get_untracked())
+                    .or(posts::POSTS.last());
+                if let Some(post) = post {
+                    open_link(&post.url());
+                }
                 true
             }
             _ => false,
@@ -37,9 +41,9 @@ pub(super) fn Blog() -> impl IntoView {
 
     let cards = posts::POSTS
         .iter()
+        .zip(options.iter().copied())
         .enumerate()
-        .map(|(index, post)| {
-            let option = options[index];
+        .map(|(index, (post, option))| {
             view! { <PostCard post index option /> }
         })
         .collect_view();

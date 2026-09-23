@@ -9,6 +9,9 @@
 
 include!("cipher.rs");
 
+// `pub(crate) const KEY: u64`, rolled by build.rs.
+include!(concat!(env!("OUT_DIR"), "/key.rs"));
+
 /// Build one with [`encrypted_str!`].
 /// Read it with [`EncryptedString::decrypt`], or through [`std::fmt::Display`] with padding done.
 #[derive(Clone, Copy)]
@@ -27,7 +30,7 @@ impl EncryptedString {
             .cipher
             .iter()
             .enumerate()
-            .map(|(index, byte)| unscramble(*byte, self.seed, index))
+            .map(|(index, byte)| unscramble(*byte, KEY, self.seed, index))
             .collect();
         String::from_utf8(plain).unwrap_or_default()
     }
@@ -52,7 +55,10 @@ impl EncryptedRun {
 
     pub(crate) fn of(self, blob: &'static [u8]) -> EncryptedString {
         let start = self.start as usize;
-        EncryptedString::new(self.seed, &blob[start..start + self.len as usize])
+        let cipher = blob
+            .get(start..start + self.len as usize)
+            .unwrap_or_default();
+        EncryptedString::new(self.seed, cipher)
     }
 }
 
@@ -68,7 +74,7 @@ macro_rules! encrypted_str {
         const PLAIN: &str = $text;
         const SEED: u32 = $crate::crypt::seed_of(PLAIN);
         const LEN: usize = PLAIN.len();
-        const CIPHER: [u8; LEN] = $crate::crypt::encrypt::<LEN>(PLAIN, SEED);
+        const CIPHER: [u8; LEN] = $crate::crypt::encrypt::<LEN>(PLAIN, $crate::crypt::KEY, SEED);
         $crate::crypt::EncryptedString::new(SEED, &CIPHER)
     }};
 }

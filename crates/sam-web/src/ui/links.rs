@@ -48,6 +48,8 @@ pub(super) fn link_keys(pane: NodeRef<html::Div>, key: Key) -> bool {
         None if step > 0 => 0,
         None => last,
     };
-    let _ = links[next].focus();
+    if let Some(link) = links.get(next) {
+        let _ = link.focus();
+    }
     true
 }

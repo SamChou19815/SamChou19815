@@ -32,8 +32,10 @@ pub(super) fn Timeline() -> impl IntoView {
         let Key::Char(c @ '1'..='9') = key else {
             return false;
         };
-        let event = &data::TIMELINE[selected.get_untracked().min(data::TIMELINE.len() - 1)];
-        if let Some(link) = event.links.get(c as usize - '1' as usize) {
+        let event = data::TIMELINE
+            .get(selected.get_untracked())
+            .or(data::TIMELINE.last());
+        if let Some(link) = event.and_then(|event| event.links.get(c as usize - '1' as usize)) {
             open_link(&link.url.decrypt());
         }
         true
@@ -41,9 +43,9 @@ pub(super) fn Timeline() -> impl IntoView {
 
     let cards = data::TIMELINE
         .iter()
+        .zip(options.iter().copied())
         .enumerate()
-        .map(|(index, event)| {
-            let option = options[index];
+        .map(|(index, (event, option))| {
             view! { <TimelineCard event index option /> }
         })
         .collect_view();
@@ -74,7 +76,11 @@ fn TimelineCard(
         event.stop_propagation();
         selected.set(index);
     };
-    let tag_style = format!("--tag:{};", event.category.color().css());
+    let tag_style = format!(
+        "{}{};",
+        encrypted_str!("--tag:"),
+        event.category.color().css()
+    );
     let tag = format!("[{}]", event.category.label());
 
     let image = event.image.map(|image| {

@@ -27,7 +27,7 @@ const INDENT: usize = 2;
 fn hang_of(line: &Line) -> usize {
     let text: String = line.iter().map(|span| span.text.as_str()).collect();
     let indent = text.len() - text.trim_start().len();
-    let gutter = if text[indent..].starts_with("* ") {
+    let gutter = if text.trim_start().starts_with("* ") {
         2
     } else {
         0

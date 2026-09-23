@@ -18,6 +18,7 @@ use super::text::{runs, style_of};
 
 const CLOSE_LABEL: EncryptedString = encrypted_str!("Close");
 const DISCUSSION_LABEL: EncryptedString = encrypted_str!("Discussion");
+const DISCUSSION_ARIA_LABEL: EncryptedString = encrypted_str!("Discussion on GitHub");
 const NEWER_LABEL: EncryptedString = encrypted_str!("Newer Post");
 const OLDER_LABEL: EncryptedString = encrypted_str!("Older Post");
 const POST_NAV_LABEL: EncryptedString = encrypted_str!("Blog post page navigation");
@@ -26,8 +27,11 @@ const POST_NAV_LABEL: EncryptedString = encrypted_str!("Blog post page navigatio
 pub(super) fn Reader() -> impl IntoView {
     let path = use_path();
     let post = Memo::new(move |_| posts::find(&path.get()));
-    move || match post.get() {
-        Some(post) => view! { <Post post /> }.into_any(),
+    move || match post
+        .get()
+        .and_then(|index| Some((index, posts::POSTS.get(index)?)))
+    {
+        Some((index, post)) => view! { <Post index post /> }.into_any(),
         None => {
             view! { <Redirect path=Tab::Blog.route().to_string() options=replacing() /> }.into_any()
         }
@@ -35,10 +39,10 @@ pub(super) fn Reader() -> impl IntoView {
 }
 
 #[component]
-fn Post(post: usize) -> impl IntoView {
+fn Post(index: usize, post: &'static posts::Post) -> impl IntoView {
     // So closing the reader lands on this post's card.
     let Lists { blog, .. } = expect_context::<Lists>();
-    Effect::new(move |_| blog.set(post));
+    Effect::new(move |_| blog.set(index));
 
     let pane = NodeRef::<html::Div>::new();
     // Navigating to a neighbor post reuses the pane, so reset scroll.
@@ -65,7 +69,7 @@ fn Post(post: usize) -> impl IntoView {
         true
     });
 
-    let blocks = markdown::post_blocks(&posts::POSTS[post])
+    let blocks = markdown::post_blocks(post)
         .into_iter()
         .filter(|block| !matches!(block, Block::Line(line) if line.is_empty()))
         .map(|block| view! { <BlockView block /> })
@@ -77,32 +81,33 @@ fn Post(post: usize) -> impl IntoView {
                     <PostHeader post />
                     {blocks}
                 </div>
-                <PostNav post />
+                <PostNav index />
             </div>
         </Pane>
     }
 }
 
 #[component]
-fn PostNav(post: usize) -> impl IntoView {
-    let newer = post.checked_sub(1);
-    let older = (post + 1 < posts::POSTS.len()).then_some(post + 1);
+fn PostNav(index: usize) -> impl IntoView {
+    let newer = index
+        .checked_sub(1)
+        .and_then(|index| posts::POSTS.get(index));
+    let older = posts::POSTS.get(index + 1);
     let half = "flex min-w-0 flex-1 @max-[56ch]:empty:hidden";
     view! {
         <nav class="mt-[2ch] flex gap-[1rem] @max-[56ch]:flex-col" aria-label=POST_NAV_LABEL.decrypt()>
             <div class=half>
-                {newer.map(|index| view! { <NeighborCard index newer=true /> })}
+                {newer.map(|post| view! { <NeighborCard post newer=true /> })}
             </div>
             <div class=format!("{half} text-right")>
-                {older.map(|index| view! { <NeighborCard index newer=false /> })}
+                {older.map(|post| view! { <NeighborCard post newer=false /> })}
             </div>
         </nav>
     }
 }
 
 #[component]
-fn NeighborCard(index: usize, newer: bool) -> impl IntoView {
-    let post = &posts::POSTS[index];
+fn NeighborCard(post: &'static posts::Post, newer: bool) -> impl IntoView {
     let label = if newer { NEWER_LABEL } else { OLDER_LABEL }.decrypt();
     let title = post.title();
     let mut title = if newer {
@@ -129,17 +134,17 @@ fn NeighborCard(index: usize, newer: bool) -> impl IntoView {
 }
 
 #[component]
-fn PostHeader(post: usize) -> impl IntoView {
-    let title = posts::POSTS[post].title().decrypt();
-    let date = posts::POSTS[post].formatted_date();
-    let discussion = posts::POSTS[post].discussion_url().map(|url| {
+fn PostHeader(post: &'static posts::Post) -> impl IntoView {
+    let title = post.title().decrypt();
+    let date = post.formatted_date();
+    let discussion = post.discussion_url().map(|url| {
         view! {
             <span style=style_of(theme::MUTED)>" · "</span>
             <Link
                 url
                 class="font-bold text-[#2563eb] hover:text-[#1e3a8a]"
                 {..}
-                aria-label=format!("{} on GitHub", DISCUSSION_LABEL.decrypt())
+                aria-label=DISCUSSION_ARIA_LABEL.decrypt()
             >
                 {format!("{} ↗", DISCUSSION_LABEL.decrypt())}
             </Link>
