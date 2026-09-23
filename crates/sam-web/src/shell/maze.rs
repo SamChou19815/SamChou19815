@@ -10,6 +10,7 @@ use crate::crypt::{encrypted_str, seed_of, EncryptedString};
 use crate::style::{bold_colored, colored, Line};
 use crate::theme;
 
+use super::fs::HOME_DIR;
 use super::one;
 
 pub(in crate::shell) const ARCHIVE_DIR: EncryptedString = encrypted_str!("archive");
@@ -123,11 +124,33 @@ pub(in crate::shell) fn read(path: &[String]) -> Option<Vec<Line>> {
         .then(|| file_lines(dir, &here, file))
 }
 
-/// A path relative to `dir` that `cat` accepts, leading deeper in. `salt` varies the pick.
-pub(in crate::shell) fn next_hop(dir: &[String], salt: &str) -> Option<String> {
-    let here = room_at(dir)?;
-    let mut rng = Rng::new(seed_of(&format!("{}{salt}", joined(dir))));
-    target(&mut rng, dir, &here)
+/// Where part `part` of `everything.txt` is: an absolute path (`/home/sam/archive/...`), so it
+/// works from any directory, two or three directories in, so it never grows long enough to look
+/// odd. The tree is small that shallow, so paths repeat, but never one in `recent`. It exists.
+pub(in crate::shell) fn part_path(part: usize, recent: &[String]) -> String {
+    (0..32)
+        .map(|attempt| part_path_candidate(part, attempt))
+        .find(|path| !recent.contains(path))
+        .unwrap_or_else(|| part_path_candidate(part, 0))
+}
+
+fn part_path_candidate(part: usize, attempt: usize) -> String {
+    let mut rng = Rng::new(seed_of(&format!("{part}.{attempt}")));
+    let mut dir: Vec<String> = Vec::new();
+    for _ in 0..2 + rng.below(2) {
+        let Some(next) = rng.pick(&room(&dir).dirs).cloned() else {
+            break;
+        };
+        dir.push(next);
+    }
+    let file = rng.pick(&room(&dir).files).cloned().unwrap_or_default();
+    format!("{HOME_DIR}/{}/{file}", joined(&dir))
+}
+
+/// Whether `path` (relative to the archive root) is a file in it.
+pub(in crate::shell) fn is_file(path: &[String]) -> bool {
+    path.split_last()
+        .is_some_and(|(file, dir)| room_at(dir).is_some_and(|here| here.files.contains(file)))
 }
 
 /// xorshift32. Only has to be deterministic.

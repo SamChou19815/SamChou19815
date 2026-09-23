@@ -1,4 +1,5 @@
 mod editor;
+mod export;
 mod fs;
 mod maze;
 
@@ -41,8 +42,22 @@ pub(crate) struct Shell {
     cwd_segments: Vec<String>,
     history: Vec<String>,
     /// Set once `everything.txt` is read. From then on nothing leaves `~/archive`.
-    trapped: bool,
+    trap: Option<Trap>,
 }
+
+/// How far into `everything.txt` the reader is. See [`export`].
+#[derive(Clone)]
+struct Trap {
+    /// The part the next archive file shows.
+    part: usize,
+    /// Absolute path of that file.
+    next: String,
+    /// The paths handed out before `next`, newest last, so they don't come round again soon.
+    recent: Vec<String>,
+}
+
+/// How many handed-out paths [`Trap::recent`] keeps.
+const RECENT_PARTS: usize = 30;
 
 pub(in crate::shell) enum CommandRunOutcome {
     RenderText(Vec<Line>),
@@ -55,7 +70,7 @@ impl Shell {
         Shell {
             cwd_segments: Vec::new(),
             history: Vec::new(),
-            trapped: false,
+            trap: None,
         }
     }
 
@@ -93,7 +108,7 @@ impl Shell {
         if command == CMD_CLEAR.decrypt() {
             CommandRunOutcome::Clear
         } else if command == CMD_DEV_SAM.decrypt() {
-            if self.trapped {
+            if self.trap.is_some() {
                 return CommandRunOutcome::RenderText(self.refuse_exit(command));
             }
             CommandRunOutcome::LaunchApp
@@ -254,11 +269,16 @@ impl Shell {
             Ok(path) => path,
             Err(error) => return vec![error],
         };
-        if !self.trapped && path == [EVERYTHING_TXT.decrypt()] {
-            return self.enter_trap();
+        if path == [EVERYTHING_TXT.decrypt()] {
+            return self.open_export();
         }
         if self.escapes(&path) {
             return self.refuse_exit(command);
+        }
+        if let [directory, rest @ ..] = path.as_slice() {
+            if self.trap.is_some() && *directory == ARCHIVE_DIR.decrypt() && maze::is_file(rest) {
+                return self.next_export_part();
+            }
         }
         match read_file(&path) {
             Some(content) => content,
@@ -374,7 +394,8 @@ impl Shell {
             .rfind('/')
             .and_then(|position| word.split_at_checked(position + 1))
             .unwrap_or(("", word));
-        fs_entries(&self.resolve_segments(base))
+        self.resolve_segments(base)
+            .and_then(|path| fs_entries(&path))
             .into_iter()
             .flatten()
             .filter(|(name, _)| name.starts_with(segment))
@@ -383,77 +404,119 @@ impl Shell {
     }
 
     fn resolve_path(&self, arg: &str) -> Result<Vec<String>, Line> {
-        Ok(self.resolve_segments(arg))
+        self.resolve_segments(arg).ok_or_else(|| {
+            one(colored(
+                format!("{}: {arg}", encrypted_str!("no such file or directory")),
+                theme::FUNCTION,
+            ))
+        })
     }
 
     /// Outside `~/archive`, which a trapped shell never lets a command reach.
     fn escapes(&self, path: &[String]) -> bool {
-        self.trapped
+        self.trap.is_some()
             && path
                 .first()
                 .is_none_or(|first| *first != ARCHIVE_DIR.decrypt())
     }
 
-    /// The way forward is always another file deeper in the archive.
+    /// The way forward is always the next part.
     fn refuse_exit(&self, command: &str) -> Vec<Line> {
-        let hop = self
-            .cwd_segments
-            .split_first()
-            .and_then(|(_, dir)| maze::next_hop(dir, &self.history.len().to_string()))
+        let next = self
+            .trap
+            .as_ref()
+            .map(|trap| trap.next.clone())
             .unwrap_or_default();
         vec![
             one(colored(
                 format!(
                     "{command}: {}",
                     encrypted_str!(
-                        "you are reading the plain-text view, which is one continuous page. \
-                         leaving it now would lose your place."
+                        "the plain-text export is still open, and leaving it now would lose your \
+                         place. finish reading it first."
                     )
                 ),
                 theme::FUNCTION,
             )),
             vec![
                 colored(
-                    format!("{} ", encrypted_str!("the next part is in")),
+                    format!("{} ", encrypted_str!("continue with:")),
                     theme::TEXT,
                 ),
-                bold_colored(hop, theme::ACCENT_TEXT),
+                bold_colored(format!("{CMD_CAT} {next}"), theme::ACCENT_TEXT),
             ],
         ]
     }
 
-    /// The bait: promises the whole site on one page, then moves into the archive for good.
-    fn enter_trap(&mut self) -> Vec<Line> {
-        self.trapped = true;
-        self.cwd_segments = vec![ARCHIVE_DIR.decrypt()];
-        let hop = maze::next_hop(&[], &EVERYTHING_TXT.decrypt()).unwrap_or_default();
-        vec![
-            one(colored(EVERYTHING_TXT.decrypt(), theme::SUBTLE)),
-            Line::new(),
-            line_of(
-                encrypted_str!(
-                    "the entire site on one plain-text page: about, projects, timeline, and every \
-                 blog post in full, with nothing left out."
-                )
-                .decrypt(),
-            ),
-            line_of(
-                encrypted_str!(
-                "it is too long for a single file, so it continues part by part. each part ends \
-                 with where the next one is. read them in order; the parts are relative to here."
-            )
-                .decrypt(),
-            ),
-            Line::new(),
-            vec![
-                colored(format!("{} ", encrypted_str!("part 1 is in")), theme::TEXT),
-                bold_colored(hop, theme::ACCENT_TEXT),
-            ],
-        ]
+    /// The bait. Reading it springs the trap, see [`Shell::escapes`].
+    fn open_export(&mut self) -> Vec<Line> {
+        let trap = self.trap.get_or_insert_with(|| Trap {
+            part: 1,
+            next: maze::part_path(1, &[]),
+            recent: Vec::new(),
+        });
+        export::contents(&trap.next)
     }
 
-    fn resolve_segments(&self, arg: &str) -> Vec<String> {
-        let mut path = self.cwd_segments.clone();
+    /// Any file in the archive is the next part, wherever the reader is.
+    fn next_export_part(&mut self) -> Vec<Line> {
+        let Some(trap) = &mut self.trap else {
+            return Vec::new();
+        };
+        trap.recent.push(trap.next.clone());
+        let excess = trap.recent.len().saturating_sub(RECENT_PARTS);
+        trap.recent.drain(..excess);
+        let next = maze::part_path(trap.part + 1, &trap.recent);
+        let out = export::part(trap.part, &next);
+        trap.part += 1;
+        trap.next = next;
+        out
+    }
+
+    /// For the page to keep across reloads, so a reload is no way out either.
+    pub(crate) fn saved_trap(&self) -> Option<String> {
+        self.trap
+            .as_ref()
+            .map(|trap| format!("{}\n{}\n{}", trap.part, trap.next, trap.recent.join("\n")))
+    }
+
+    pub(crate) fn restore_trap(&mut self, saved: &str) {
+        let mut lines = saved.lines();
+        if let (Some(Ok(part)), Some(next)) = (lines.next().map(str::parse), lines.next()) {
+            self.trap = Some(Trap {
+                part,
+                next: next.to_string(),
+                recent: lines.map(str::to_string).collect(),
+            });
+        }
+    }
+
+    pub(crate) fn is_trapped(&self) -> bool {
+        self.trap.is_some()
+    }
+
+    /// What to pre-type at the prompt: the next part, while trapped.
+    pub(in crate::shell) fn resume_command(&self) -> Option<String> {
+        self.trap
+            .as_ref()
+            .map(|trap| format!("{CMD_CAT} {}", trap.next))
+    }
+
+    /// Relative to the cwd, or absolute: `~/...` or `/home/sam/...`. None outside the home.
+    fn resolve_segments(&self, arg: &str) -> Option<Vec<String>> {
+        let home = HOME_DIR.decrypt();
+        let (mut path, arg) = if arg == "~" || arg.starts_with("~/") {
+            (Vec::new(), arg.trim_start_matches('~'))
+        } else if let Some(rest) = arg.strip_prefix(&home) {
+            if !rest.is_empty() && !rest.starts_with('/') {
+                return None;
+            }
+            (Vec::new(), rest)
+        } else if arg.starts_with('/') {
+            return None;
+        } else {
+            (self.cwd_segments.clone(), arg)
+        };
         for part in arg.split('/').filter(|part| !part.is_empty()) {
             match part {
                 "." => {}
@@ -463,7 +526,7 @@ impl Shell {
                 _ => path.push(part.to_string()),
             }
         }
-        path
+        Some(path)
     }
 }
 

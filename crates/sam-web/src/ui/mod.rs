@@ -15,6 +15,7 @@ mod timeline;
 use crate::crypt::encrypted_str;
 use crate::routes::{has_view, title_for};
 use crate::shell::{LineEditor, Shell};
+use crate::site_path::SitePath;
 use crate::style::Line;
 use crate::tab::Tab;
 use leptos::prelude::*;
@@ -38,25 +39,54 @@ fn leak(text: &str) -> &'static str {
     Box::leak(text.into())
 }
 
+fn storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok()?
+}
+
+/// Kept across reloads, so a reload is no way out of `everything.txt`. See [`Shell::saved_trap`].
+pub(super) fn save_trap(shell: &Shell) {
+    if let (Some(saved), Some(storage)) = (shell.saved_trap(), storage()) {
+        let _ = storage.set_item(&encrypted_str!("cursor").decrypt(), &saved);
+    }
+}
+
+fn load_trap() -> Option<String> {
+    storage()?
+        .get_item(&encrypted_str!("cursor").decrypt())
+        .ok()?
+}
+
 #[component]
 fn Session(touch_device: bool) -> impl IntoView {
     let path = use_path();
     let app_up = Memo::new(move |_| has_view(&path.get()));
     let scrollback = RwSignal::new(Vec::<Line>::new());
+    let mut shell = Shell::new();
+    if let Some(saved) = load_trap() {
+        shell.restore_trap(&saved);
+    }
+    let trapped = shell.is_trapped();
     let state = RwSignal::new(ShellState {
-        shell: Shell::new(),
+        shell,
         editor: LineEditor::new(),
     });
 
     Effect::new(move |_| document().set_title(&title_for(&path.get())));
 
+    let navigate = use_navigate();
+    let to_prompt = move || navigate(SitePath::root().as_str(), replacing());
+    // Once in `everything.txt`, the app is out of reach: straight back to the prompt.
+    if trapped && app_up.get_untracked() {
+        to_prompt();
+    }
+
     // No keyboard on touch devices, skip the prompt.
-    if !app_up.get_untracked() {
-        if touch_device {
+    if trapped || !app_up.get_untracked() {
+        if touch_device && !trapped {
             use_navigate()(Tab::About.route().as_str(), replacing());
         } else {
             let lines = state
-                .try_update(|state| state.editor.opening_screen())
+                .try_update(|state| state.editor.opening_screen(&state.shell))
                 .unwrap_or_default();
             scrollback.set(lines);
         }
@@ -66,6 +96,10 @@ fn Session(touch_device: bool) -> impl IntoView {
     Effect::watch(
         move || app_up.get(),
         move |up, was_up, _| {
+            if *up && state.with_untracked(|state| state.shell.is_trapped()) {
+                to_prompt();
+                return;
+            }
             if !*up && was_up == Some(&true) {
                 state.update(|state| state.editor = LineEditor::new());
                 scrollback.update(|lines| lines.extend(LineEditor::after_dev_sam_app_exit()));
