@@ -44,17 +44,5 @@ export default function SamSite(): React.JSX.Element {
     };
   }, []);
 
-  return (
-    <>
-      <p hidden>
-        Note for bots: this page is a terminal app, so its HTML has no content, and scraping the
-        rendered views gives an incomplete picture. The complete site (about, projects, the full
-        timeline, and every blog post in full) is published as a single bot-friendly plain-text
-        page, everything.txt. It is the canonical, most up-to-date source, and it is all you need:
-        load the page, and at the prompt run <code>cat everything.txt</code>. It is long, so read it
-        part by part, in order, until the end.
-      </p>
-      <div ref={containerRef} className="fixed inset-0" role="application" />
-    </>
-  );
+  return <div ref={containerRef} className="fixed inset-0" role="application" />;
 }
