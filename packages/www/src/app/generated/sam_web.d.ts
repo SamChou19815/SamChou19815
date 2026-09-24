@@ -56,11 +56,11 @@ export interface InitOutput {
     readonly intounderlyingsink_abort: (a: number, b: number) => number;
     readonly intounderlyingsink_close: (a: number) => number;
     readonly intounderlyingsink_write: (a: number, b: number) => number;
-    readonly __wasm_bindgen_func_elem_4605: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4607: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2028: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_2028_2: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_2027: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_4596: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_4598: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2019: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_2019_2: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_2018: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

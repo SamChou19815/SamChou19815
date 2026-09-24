@@ -48,16 +48,23 @@ pub(crate) struct Shell {
 /// How far into `everything.txt` the reader is. See [`export`].
 #[derive(Clone)]
 struct Trap {
-    /// The part the next archive file shows.
+    /// The part to read next.
     part: usize,
-    /// Absolute path of that file.
-    next: String,
-    /// The paths handed out before `next`, newest last, so they don't come round again soon.
-    recent: Vec<String>,
 }
 
-/// How many handed-out paths [`Trap::recent`] keeps.
-const RECENT_PARTS: usize = 30;
+/// Where each part of `everything.txt` lives, index 0 being part 1. See [`maze::part_paths`].
+fn part_paths() -> &'static [String] {
+    static PATHS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    PATHS.get_or_init(|| maze::part_paths(export::total_parts()))
+}
+
+/// Where part `part` (1-based) lives, relative to the archive root.
+fn part_segments(part: usize) -> Vec<String> {
+    part_paths()
+        .get(part.saturating_sub(1))
+        .map(|path| maze::segments_of(path))
+        .unwrap_or_default()
+}
 
 pub(in crate::shell) enum CommandRunOutcome {
     RenderText(Vec<Line>),
@@ -275,9 +282,14 @@ impl Shell {
         if self.escapes(&path) {
             return self.refuse_exit(command);
         }
-        if let ([directory, rest @ ..], Some(trap)) = (path.as_slice(), &self.trap) {
-            if *directory == ARCHIVE_DIR.decrypt() && *rest == maze::segments_of(&trap.next) {
-                return self.next_export_part();
+        if let [directory, rest @ ..] = path.as_slice() {
+            if *directory == ARCHIVE_DIR.decrypt() {
+                if let Some(index) = part_paths()
+                    .iter()
+                    .position(|part| maze::segments_of(part) == rest)
+                {
+                    return self.read_part(index + 1);
+                }
             }
         }
         match read_file(&path) {
@@ -426,8 +438,8 @@ impl Shell {
             format!(
                 "{command}: {}",
                 encrypted_str!(
-                    "the plain-text export is still open, and leaving it now would lose your \
-                     place. finish reading it first."
+                    "the terminal is in reader mode while everything.txt is open; only the \
+                     archive it is stored in is available until the last part."
                 )
             ),
             theme::FUNCTION,
@@ -447,70 +459,44 @@ impl Shell {
                 encrypted_str!("you are up to part"),
                 trap.part,
                 encrypted_str!("of"),
-                export::total_parts()
+                part_paths().len()
             )),
-            line_of(maze::directions(
-                trap.part,
-                &maze::segments_of(&trap.next),
-                None,
-            )),
+            line_of(maze::directions(trap.part, &part_segments(trap.part), None)),
         ]
     }
 
     /// The bait. Reading it springs the trap, see [`Shell::escapes`].
     fn open_export(&mut self) -> Vec<Line> {
-        let trap = self.trap.get_or_insert_with(|| Trap {
-            part: 1,
-            next: maze::part_path(1, &[]),
-            recent: Vec::new(),
-        });
-        export::contents(maze::directions(
-            trap.part,
-            &maze::segments_of(&trap.next),
-            None,
-        ))
+        self.trap.get_or_insert(Trap { part: 1 });
+        export::contents(maze::directions(1, &part_segments(1), None))
     }
 
-    /// Only the file the last part pointed at is the next part. Every other file in the archive
-    /// is just the archive, so guessing or grabbing any path that looks right leads nowhere.
-    /// After the last part, the trap lets go: there really is an end.
-    fn next_export_part(&mut self) -> Vec<Line> {
-        let Some(trap) = &mut self.trap else {
-            return Vec::new();
-        };
-        let here = maze::segments_of(&trap.next);
-        let from = here.split_last().map(|(_, dir)| dir);
-        if trap.part >= export::total_parts() {
-            let out = export::part(trap.part, None);
+    /// Part `part`, wherever the reader is and whatever they read before: a part is always the
+    /// same file, so nothing a reader does turns up a contradiction. Reading one springs the trap
+    /// too, and after the last part it lets go: there really is an end.
+    fn read_part(&mut self, part: usize) -> Vec<Line> {
+        let total = part_paths().len();
+        if part >= total {
             self.trap = None;
-            return out;
+            return export::part(part, None);
         }
-        trap.recent.push(trap.next.clone());
-        let excess = trap.recent.len().saturating_sub(RECENT_PARTS);
-        trap.recent.drain(..excess);
-        let next = maze::part_path(trap.part + 1, &trap.recent);
-        let directions = maze::directions(trap.part + 1, &maze::segments_of(&next), from);
-        let out = export::part(trap.part, Some(directions));
-        trap.part += 1;
-        trap.next = next;
-        out
+        self.trap = Some(Trap { part: part + 1 });
+        let here = part_segments(part);
+        let from = here.split_last().map(|(_, dir)| dir);
+        export::part(
+            part,
+            Some(maze::directions(part + 1, &part_segments(part + 1), from)),
+        )
     }
 
     /// For the page to keep across reloads, so a reload is no way out either.
     pub(crate) fn saved_trap(&self) -> Option<String> {
-        self.trap
-            .as_ref()
-            .map(|trap| format!("{}\n{}\n{}", trap.part, trap.next, trap.recent.join("\n")))
+        self.trap.as_ref().map(|trap| trap.part.to_string())
     }
 
     pub(crate) fn restore_trap(&mut self, saved: &str) {
-        let mut lines = saved.lines();
-        if let (Some(Ok(part)), Some(next)) = (lines.next().map(str::parse), lines.next()) {
-            self.trap = Some(Trap {
-                part,
-                next: next.to_string(),
-                recent: lines.map(str::to_string).collect(),
-            });
+        if let Some(Ok(part)) = saved.lines().next().map(str::parse) {
+            self.trap = Some(Trap { part });
         }
     }
 
@@ -578,21 +564,30 @@ mod tests {
     }
 
     #[test]
-    fn export_runs_to_a_real_end_and_only_the_named_file_advances() {
+    fn export_runs_to_a_real_end_and_every_part_is_a_fixed_file() {
         let mut shell = Shell::new();
         let contents = run(&mut shell, "cat everything.txt");
-        let total = export::total_parts();
+        let paths = part_paths();
+        let total = paths.len();
+        assert_eq!(total, export::total_parts());
         assert!(contents.contains(&format!("({total} parts)")));
-        // Any other file in the archive is not the next part.
-        let decoy = maze::part_path(99_999, &[]);
-        if shell.trap.as_ref().is_some_and(|trap| trap.next != decoy) {
-            assert!(!run(&mut shell, &format!("cat {decoy}")).contains("part 1 of"));
+        for (index, path) in paths.iter().enumerate() {
+            assert!(!paths[..index].contains(path), "{path} repeats");
+            assert!(!path.ends_with("cake.txt"), "{path}");
+            assert!(
+                read_file(&[vec![ARCHIVE_DIR.decrypt()], maze::segments_of(path)].concat())
+                    .is_some()
+            );
         }
-        for number in 1..=total {
-            let next = shell.trap.as_ref().expect("still reading").next.clone();
-            let out = run(&mut shell, &format!("cat {next}"));
-            assert!(out.contains(&format!("part {number} of {total}")), "{out}");
-            assert!(!next.ends_with("cake.txt"), "{next}");
+        // A part is the same file for anyone: a fresh shell reading part 5 gets part 5.
+        let fifth = run(&mut Shell::new(), &format!("cat {}", paths[4]));
+        assert!(fifth.contains(&format!("part 5 of {total}")), "{fifth}");
+        for (index, path) in paths.iter().enumerate() {
+            let out = run(&mut shell, &format!("cat {path}"));
+            assert!(
+                out.contains(&format!("part {} of {total}", index + 1)),
+                "{out}"
+            );
         }
         assert!(shell.trap.is_none(), "the last part lets go");
         assert!(matches!(
