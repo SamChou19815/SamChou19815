@@ -85,6 +85,7 @@ pub(super) fn Prompt(
         let outcome = state
             .try_update(|state| state.editor.handle_key(key, mods, &mut state.shell))
             .unwrap_or(EditOutcome::None);
+        state.with_untracked(|state| super::save_trap(&state.shell));
         match outcome {
             EditOutcome::None => {}
             EditOutcome::Output(lines) => {

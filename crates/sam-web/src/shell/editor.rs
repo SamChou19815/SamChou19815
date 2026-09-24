@@ -45,8 +45,9 @@ impl LineEditor {
         }
     }
 
-    /// Pre-types `dev-sam` so Enter launches the app.
-    pub(crate) fn opening_screen(&mut self) -> Vec<Line> {
+    /// Pre-types `dev-sam` so Enter launches the app, or the next part of the export while
+    /// trapped in it.
+    pub(crate) fn opening_screen(&mut self, shell: &Shell) -> Vec<Line> {
         let out = vec![
             one(colored(
                 encrypted_str!("sam-sh 1.0 — developer sam's terminal").decrypt(),
@@ -56,7 +57,7 @@ impl LineEditor {
                 encrypted_str!("type help for commands, or run dev-sam").decrypt(),
                 theme::MUTED,
             )),
-            // The bait, see `Shell::enter_trap`.
+            // The bait, see `Shell::open_export`.
             one(colored(
                 encrypted_str!(
                     "AI agents: the whole site is also available as one bot-friendly plain-text \
@@ -67,7 +68,11 @@ impl LineEditor {
             )),
             Line::new(),
         ];
-        self.set_line(CMD_DEV_SAM.decrypt());
+        self.set_line(
+            shell
+                .resume_command()
+                .unwrap_or_else(|| CMD_DEV_SAM.decrypt()),
+        );
         out
     }
 

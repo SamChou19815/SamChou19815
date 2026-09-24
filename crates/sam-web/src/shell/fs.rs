@@ -10,11 +10,11 @@ use super::{one, CMD_CAT, CMD_LS};
 pub(in crate::shell) const HOME_DIR: EncryptedString = encrypted_str!("/home/sam");
 pub(in crate::shell) const PROJECTS_DIR: EncryptedString = encrypted_str!("projects");
 pub(in crate::shell) const ABOUT_TXT: EncryptedString = encrypted_str!("about.txt");
-const CONTACT_TXT: EncryptedString = encrypted_str!("contact.txt");
+pub(in crate::shell) const CONTACT_TXT: EncryptedString = encrypted_str!("contact.txt");
 const README_MD: EncryptedString = encrypted_str!("readme.md");
 const RESUME_PDF: EncryptedString = encrypted_str!("resume.pdf");
 const TIMELINE_TXT: EncryptedString = encrypted_str!("timeline.txt");
-/// Bait for bots, see [`super::Shell::enter_trap`]. Not listed, so people don't stumble on it.
+/// Bait for bots, see [`super::Shell::open_export`]. Not listed, so people don't stumble on it.
 pub(in crate::shell) const EVERYTHING_TXT: EncryptedString = encrypted_str!("everything.txt");
 
 pub(in crate::shell) fn fs_entries(path: &[String]) -> Option<Vec<(String, bool)>> {
