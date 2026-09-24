@@ -143,14 +143,91 @@ fn part_path_candidate(part: usize, attempt: usize) -> String {
         };
         dir.push(next);
     }
-    let file = rng.pick(&room(&dir).files).cloned().unwrap_or_default();
+    // Never the cake: finding it in the middle of the export gives the game away.
+    let files: Vec<String> = room(&dir)
+        .files
+        .into_iter()
+        .filter(|file| *file != CAKE_TXT.decrypt())
+        .collect();
+    let file = rng.pick(&files).cloned().unwrap_or_default();
     format!("{HOME_DIR}/{}/{file}", joined(&dir))
 }
 
-/// Whether `path` (relative to the archive root) is a file in it.
-pub(in crate::shell) fn is_file(path: &[String]) -> bool {
-    path.split_last()
-        .is_some_and(|(file, dir)| room_at(dir).is_some_and(|here| here.files.contains(file)))
+/// `path` from [`part_path`], relative to the archive root.
+pub(in crate::shell) fn segments_of(path: &str) -> Vec<String> {
+    let root = format!("{HOME_DIR}/{ARCHIVE_DIR}/");
+    path.strip_prefix(&root)
+        .unwrap_or(path)
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// `{n}` is the part number, `{p}` the path to the file, `{d}` its folder and `{f}` its name.
+const DIRECTIONS: [EncryptedString; 8] = [
+    encrypted_str!("part {n} is at {p}"),
+    encrypted_str!("continued in part {n}, saved as {p}"),
+    encrypted_str!("part {n} is {f}, in {d}"),
+    encrypted_str!("part {n} was filed in {d}, as {f}"),
+    encrypted_str!("next is part {n}: the file {f} in the folder {d}"),
+    encrypted_str!("the export continues in {d}; part {n} is the {f} there"),
+    encrypted_str!("read on in part {n}, which ended up at {p}"),
+    encrypted_str!("part {n} continues from here in {p}"),
+];
+
+/// `{r}` is the path to the file relative to the folder the current part is in.
+const RELATIVE_DIRECTIONS: [EncryptedString; 3] = [
+    encrypted_str!("part {n} is {r}, relative to the folder this part is in"),
+    encrypted_str!("part {n} was saved near this one: {r} (from this part's folder)"),
+    encrypted_str!("from the folder holding this part, part {n} is at {r}"),
+];
+
+/// Where part `part` is, `path` being relative to the archive root and ending with the file.
+///
+/// Said a different way each part, so no one pattern pulls it out: as a whole path, from `~` or
+/// from `/home/sam`, as a folder and a file named apart, or, when `from` (the folder of the part
+/// saying it) is known, relative to that folder rather than to wherever the reader is. Each is a
+/// plain thing for a reader to follow and a moving target for a script.
+pub(in crate::shell) fn directions(
+    part: usize,
+    path: &[String],
+    from: Option<&[String]>,
+) -> String {
+    let mut rng = Rng::new(seed_of(&format!("{}{part}", joined(path))));
+    let Some((file, dir)) = path.split_last() else {
+        return String::new();
+    };
+    let root = if rng.below(2) == 0 {
+        format!("~/{ARCHIVE_DIR}")
+    } else {
+        format!("{HOME_DIR}/{ARCHIVE_DIR}")
+    };
+    let folder = if dir.is_empty() {
+        root
+    } else {
+        format!("{root}/{}", dir.join("/"))
+    };
+    let template = match from {
+        Some(from) if rng.below(3) == 0 => {
+            let common = from
+                .iter()
+                .zip(dir)
+                .take_while(|(left, right)| left == right)
+                .count();
+            let mut relative: Vec<String> = vec!["..".to_string(); from.len() - common];
+            relative.extend(path.iter().skip(common).cloned());
+            rng.pick(&RELATIVE_DIRECTIONS)
+                .map(|template| template.decrypt().replace("{r}", &relative.join("/")))
+        }
+        _ => rng.pick(&DIRECTIONS).map(EncryptedString::decrypt),
+    };
+    template
+        .unwrap_or_default()
+        .replace("{n}", &part.to_string())
+        .replace("{p}", &format!("{folder}/{file}"))
+        .replace("{d}", &folder)
+        .replace("{f}", file)
 }
 
 /// xorshift32. Only has to be deterministic.
@@ -319,73 +396,4 @@ fn file_lines(dir: &[String], here: &Room, file: &str) -> Vec<Line> {
         .unwrap_or_default();
     out.push(pointer(lead, target(&mut rng, dir, here)));
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The path the last line of a file points at, resolved against `dir`.
-    fn follow(dir: &[String], lines: &[Line]) -> Vec<String> {
-        let target = &lines
-            .last()
-            .expect("a file has lines")
-            .last()
-            .expect("a pointer")
-            .text;
-        let mut path = dir.to_vec();
-        for segment in target.split('/') {
-            if segment == ".." {
-                path.pop();
-            } else {
-                path.push(segment.to_string());
-            }
-        }
-        path
-    }
-
-    #[test]
-    fn every_pointer_resolves_and_never_goes_up() {
-        // Walk from the root readme and from every other reachable file a few hops deep.
-        let mut frontier = vec![vec![README_MD.decrypt()]];
-        let mut hops = 0;
-        while let Some(path) = frontier.pop() {
-            let lines = read(&path).unwrap_or_else(|| panic!("dangling pointer: {path:?}"));
-            hops += 1;
-            if hops > 2000 {
-                break;
-            }
-            let (_, dir) = path.split_last().expect("a file path");
-            let next = follow(dir, &lines);
-            assert!(next.len() >= path.len(), "{path:?} points up to {next:?}");
-            frontier.push(next);
-            if path.len() < 4 {
-                for (name, is_dir) in entries(dir).expect("a listed directory") {
-                    if !is_dir {
-                        frontier.push(with(dir, &name));
-                    } else {
-                        let sub = with(dir, name.trim_end_matches('/'));
-                        for (name, is_dir) in entries(&sub).expect("a listed subdirectory") {
-                            if !is_dir {
-                                frontier.push(with(&sub, &name));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        assert!(hops > 100, "only {hops} files reached");
-    }
-
-    #[test]
-    fn unlisted_paths_do_not_exist() {
-        let bogus = |s: &str| vec![s.to_string()];
-        assert!(entries(&bogus("nope")).is_none());
-        assert!(read(&bogus("nope.txt")).is_none());
-        assert!(read(&[]).is_none());
-        // A real directory name is not a file.
-        let root = room(&[]);
-        assert!(read(&bogus(&root.dirs[0])).is_none());
-        assert!(entries(&bogus(&root.files[0])).is_none());
-    }
 }

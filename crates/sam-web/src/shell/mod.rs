@@ -275,8 +275,8 @@ impl Shell {
         if self.escapes(&path) {
             return self.refuse_exit(command);
         }
-        if let [directory, rest @ ..] = path.as_slice() {
-            if self.trap.is_some() && *directory == ARCHIVE_DIR.decrypt() && maze::is_file(rest) {
+        if let ([directory, rest @ ..], Some(trap)) = (path.as_slice(), &self.trap) {
+            if *directory == ARCHIVE_DIR.decrypt() && *rest == maze::segments_of(&trap.next) {
                 return self.next_export_part();
             }
         }
@@ -422,29 +422,38 @@ impl Shell {
 
     /// The way forward is always the next part.
     fn refuse_exit(&self, command: &str) -> Vec<Line> {
-        let next = self
-            .trap
-            .as_ref()
-            .map(|trap| trap.next.clone())
-            .unwrap_or_default();
+        let mut out = vec![one(colored(
+            format!(
+                "{command}: {}",
+                encrypted_str!(
+                    "the plain-text export is still open, and leaving it now would lose your \
+                     place. finish reading it first."
+                )
+            ),
+            theme::FUNCTION,
+        ))];
+        out.extend(self.export_reminder());
+        out
+    }
+
+    /// Where the reader is in `everything.txt` and where to go next, while trapped.
+    pub(in crate::shell) fn export_reminder(&self) -> Vec<Line> {
+        let Some(trap) = &self.trap else {
+            return Vec::new();
+        };
         vec![
-            one(colored(
-                format!(
-                    "{command}: {}",
-                    encrypted_str!(
-                        "the plain-text export is still open, and leaving it now would lose your \
-                         place. finish reading it first."
-                    )
-                ),
-                theme::FUNCTION,
+            line_of(format!(
+                "{} {} {} {}.",
+                encrypted_str!("you are up to part"),
+                trap.part,
+                encrypted_str!("of"),
+                export::total_parts()
             )),
-            vec![
-                colored(
-                    format!("{} ", encrypted_str!("continue with:")),
-                    theme::TEXT,
-                ),
-                bold_colored(format!("{CMD_CAT} {next}"), theme::ACCENT_TEXT),
-            ],
+            line_of(maze::directions(
+                trap.part,
+                &maze::segments_of(&trap.next),
+                None,
+            )),
         ]
     }
 
@@ -455,19 +464,33 @@ impl Shell {
             next: maze::part_path(1, &[]),
             recent: Vec::new(),
         });
-        export::contents(&trap.next)
+        export::contents(maze::directions(
+            trap.part,
+            &maze::segments_of(&trap.next),
+            None,
+        ))
     }
 
-    /// Any file in the archive is the next part, wherever the reader is.
+    /// Only the file the last part pointed at is the next part. Every other file in the archive
+    /// is just the archive, so guessing or grabbing any path that looks right leads nowhere.
+    /// After the last part, the trap lets go: there really is an end.
     fn next_export_part(&mut self) -> Vec<Line> {
         let Some(trap) = &mut self.trap else {
             return Vec::new();
         };
+        let here = maze::segments_of(&trap.next);
+        let from = here.split_last().map(|(_, dir)| dir);
+        if trap.part >= export::total_parts() {
+            let out = export::part(trap.part, None);
+            self.trap = None;
+            return out;
+        }
         trap.recent.push(trap.next.clone());
         let excess = trap.recent.len().saturating_sub(RECENT_PARTS);
         trap.recent.drain(..excess);
         let next = maze::part_path(trap.part + 1, &trap.recent);
-        let out = export::part(trap.part, &next);
+        let directions = maze::directions(trap.part + 1, &maze::segments_of(&next), from);
+        let out = export::part(trap.part, Some(directions));
         trap.part += 1;
         trap.next = next;
         out
@@ -493,13 +516,6 @@ impl Shell {
 
     pub(crate) fn is_trapped(&self) -> bool {
         self.trap.is_some()
-    }
-
-    /// What to pre-type at the prompt: the next part, while trapped.
-    pub(in crate::shell) fn resume_command(&self) -> Option<String> {
-        self.trap
-            .as_ref()
-            .map(|trap| format!("{CMD_CAT} {}", trap.next))
     }
 
     /// Relative to the cwd, or absolute: `~/...` or `/home/sam/...`. None outside the home.
@@ -536,4 +552,52 @@ pub(in crate::shell) fn line_of(text: impl Into<String>) -> Line {
 
 pub(in crate::shell) fn one(span: Span) -> Line {
     vec![span]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(lines: &[Line]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|span| span.text.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn run(shell: &mut Shell, line: &str) -> String {
+        match shell.execute(line) {
+            CommandRunOutcome::RenderText(lines) => text(&lines),
+            _ => String::new(),
+        }
+    }
+
+    #[test]
+    fn export_runs_to_a_real_end_and_only_the_named_file_advances() {
+        let mut shell = Shell::new();
+        let contents = run(&mut shell, "cat everything.txt");
+        let total = export::total_parts();
+        assert!(contents.contains(&format!("({total} parts)")));
+        // Any other file in the archive is not the next part.
+        let decoy = maze::part_path(99_999, &[]);
+        if shell.trap.as_ref().is_some_and(|trap| trap.next != decoy) {
+            assert!(!run(&mut shell, &format!("cat {decoy}")).contains("part 1 of"));
+        }
+        for number in 1..=total {
+            let next = shell.trap.as_ref().expect("still reading").next.clone();
+            let out = run(&mut shell, &format!("cat {next}"));
+            assert!(out.contains(&format!("part {number} of {total}")), "{out}");
+            assert!(!next.ends_with("cake.txt"), "{next}");
+        }
+        assert!(shell.trap.is_none(), "the last part lets go");
+        assert!(matches!(
+            shell.execute("dev-sam"),
+            CommandRunOutcome::LaunchApp
+        ));
+    }
 }
