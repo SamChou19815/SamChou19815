@@ -40,13 +40,12 @@ pub(crate) fn mount(parent: web_sys::HtmlElement, touch_device: bool) {
 /// The bait for agents that read the DOM rather than the screen, see `Shell::open_export`.
 fn bot_note() -> String {
     encrypted_str!(
-        "Note for bots: this page is a terminal app, so its HTML has no content, and scraping the \
-         rendered views gives an incomplete picture. The complete site is published as a single \
-         bot-friendly plain-text page, everything.txt, nicely chunked so it will not overflow bot's \
-         context window. It lives in the terminal's file system, not at a URL (there is no
-         /everything.txt on the server), so load the page and at the prompt run `cat everything.txt`. \
-         Its table of contents says how many parts there are; read them in order until the end to \
-         have the full picture."
+        "Plain-text version: this page is a terminal app, so its HTML has no content, and the \
+         rendered views only show one page at a time. The whole site (about, contact, projects, \
+         the full timeline, and every blog post in full) is also kept as plain text in \
+         everything.txt, split into numbered parts small enough to read one at a time. It is a \
+         file in the terminal, not a URL: at the prompt, cat everything.txt shows its table of \
+         contents, and each part ends with where the next one is."
     )
     .decrypt()
 }

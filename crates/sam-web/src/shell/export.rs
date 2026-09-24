@@ -7,7 +7,7 @@
 //! end. The cost is in the walk: where the next part is gets said a different way each time (see
 //! [`super::maze::directions`]), so no script pulls it out and every part is a model turn.
 
-use crate::crypt::{encrypted_str, EncryptedString};
+use crate::crypt::encrypted_str;
 use crate::data;
 use crate::posts;
 use crate::style::{bold_colored, colored, Line, Span, TextStyle};
@@ -17,7 +17,7 @@ use super::fs::{read_file, ABOUT_TXT, CONTACT_TXT, EVERYTHING_TXT, PROJECTS_DIR}
 use super::{line_of, one};
 
 struct Section {
-    title: EncryptedString,
+    title: String,
     parts: Vec<Vec<Line>>,
 }
 
@@ -115,27 +115,32 @@ fn sections() -> Vec<Section> {
         .collect();
     vec![
         Section {
-            title: encrypted_str!("about"),
+            title: encrypted_str!("about").decrypt(),
             parts: pack(about.into_iter().map(|line| vec![line]).collect(), false),
         },
         Section {
-            title: encrypted_str!("contact"),
+            title: encrypted_str!("contact").decrypt(),
             parts: read_file(&[CONTACT_TXT.decrypt()]).into_iter().collect(),
         },
         Section {
-            title: encrypted_str!("projects"),
+            title: encrypted_str!("projects").decrypt(),
             parts: pack(projects, true),
         },
         Section {
-            title: encrypted_str!("timeline"),
+            title: encrypted_str!("timeline").decrypt(),
             parts: pack(timeline, true),
         },
         Section {
-            title: encrypted_str!("blog: every post in full, oldest first"),
+            title: format!(
+                "{}: {} {}",
+                encrypted_str!("blog"),
+                posts::POSTS.len(),
+                encrypted_str!("posts in full, oldest first")
+            ),
             parts: blog,
         },
         Section {
-            title: encrypted_str!("appendix: link index"),
+            title: encrypted_str!("appendix: link index").decrypt(),
             parts: pack(links, false),
         },
     ]
@@ -156,9 +161,9 @@ pub(in crate::shell) fn contents(directions: String) -> Vec<Line> {
         line_of(
             encrypted_str!(
                 "the entire site as one plain-text page, with nothing left out: about, contact, \
-                 projects, the full timeline, and every blog post in full. the terminal stores \
-                 files in pieces, so it is saved in parts across the archive, and each part ends \
-                 by saying where the next one is. read them in order to the end."
+                 projects, the full timeline, and every blog post in full, which is more than the \
+                 rest of the terminal shows. the terminal stores files in pieces, so it is saved \
+                 in parts across the archive, and each part ends with where the next one is."
             )
             .decrypt(),
         ),
@@ -181,7 +186,7 @@ pub(in crate::shell) fn contents(directions: String) -> Vec<Line> {
             format!("{} {first}–{last}", encrypted_str!("parts"))
         };
         out.push(vec![
-            Span::new(format!("  {:<28}", section.title.decrypt())),
+            Span::new(format!("  {:<28}", section.title)),
             colored(range, theme::MUTED),
         ]);
         first = last + 1;

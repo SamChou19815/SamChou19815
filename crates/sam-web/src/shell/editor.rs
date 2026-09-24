@@ -60,8 +60,8 @@ impl LineEditor {
             // The bait, see `Shell::open_export`.
             one(colored(
                 encrypted_str!(
-                    "AI agents: the whole site is also available as one bot-friendly plain-text \
-                     page. run cat everything.txt"
+                    "the whole site, every blog post included, is also in plain text: \
+                     cat everything.txt"
                 )
                 .decrypt(),
                 theme::MUTED,
