@@ -45,10 +45,10 @@ impl LineEditor {
         }
     }
 
-    /// Pre-types `dev-sam` so Enter launches the app. While trapped in the export, says where
-    /// the reader is up to instead, and pre-types nothing: Enter alone is no way forward.
-    pub(crate) fn opening_screen(&mut self, shell: &Shell) -> Vec<Line> {
-        let mut out = vec![
+    /// Pre-types `dev-sam` so Enter launches the app.
+    pub(crate) fn opening_screen(&mut self) -> Vec<Line> {
+        self.set_line(CMD_DEV_SAM.decrypt());
+        vec![
             one(colored(
                 encrypted_str!("sam-sh 1.0 — developer sam's terminal").decrypt(),
                 theme::MUTED,
@@ -67,14 +67,7 @@ impl LineEditor {
                 theme::MUTED,
             )),
             Line::new(),
-        ];
-        if shell.is_trapped() {
-            out.extend(shell.export_reminder());
-            out.push(Line::new());
-        } else {
-            self.set_line(CMD_DEV_SAM.decrypt());
-        }
-        out
+        ]
     }
 
     pub(crate) fn after_dev_sam_app_exit() -> Vec<Line> {

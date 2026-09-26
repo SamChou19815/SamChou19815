@@ -55,7 +55,7 @@ struct Trap {
 /// Where each part of `everything.txt` lives, index 0 being part 1. See [`maze::part_paths`].
 fn part_paths() -> &'static [String] {
     static PATHS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    PATHS.get_or_init(|| maze::part_paths(export::total_parts()))
+    PATHS.get_or_init(|| maze::part_paths(export::PARTS))
 }
 
 /// Where part `part` (1-based) lives, relative to the archive root.
@@ -489,17 +489,6 @@ impl Shell {
         )
     }
 
-    /// For the page to keep across reloads, so a reload is no way out either.
-    pub(crate) fn saved_trap(&self) -> Option<String> {
-        self.trap.as_ref().map(|trap| trap.part.to_string())
-    }
-
-    pub(crate) fn restore_trap(&mut self, saved: &str) {
-        if let Some(Ok(part)) = saved.lines().next().map(str::parse) {
-            self.trap = Some(Trap { part });
-        }
-    }
-
     pub(crate) fn is_trapped(&self) -> bool {
         self.trap.is_some()
     }
@@ -569,7 +558,7 @@ mod tests {
         let contents = run(&mut shell, "cat everything.txt");
         let paths = part_paths();
         let total = paths.len();
-        assert_eq!(total, export::total_parts());
+        assert_eq!(total, export::PARTS);
         assert!(contents.contains(&format!("({total} parts)")));
         for (index, path) in paths.iter().enumerate() {
             assert!(!paths[..index].contains(path), "{path} repeats");
@@ -582,13 +571,16 @@ mod tests {
         // A part is the same file for anyone: a fresh shell reading part 5 gets part 5.
         let fifth = run(&mut Shell::new(), &format!("cat {}", paths[4]));
         assert!(fifth.contains(&format!("part 5 of {total}")), "{fifth}");
+        let mut last = String::new();
         for (index, path) in paths.iter().enumerate() {
-            let out = run(&mut shell, &format!("cat {path}"));
+            last = run(&mut shell, &format!("cat {path}"));
             assert!(
-                out.contains(&format!("part {} of {total}", index + 1)),
-                "{out}"
+                last.contains(&format!("part {} of {total}", index + 1)),
+                "{last}"
             );
         }
+        assert_eq!(total, 20);
+        assert!(last.contains("this is a maze."), "{last}");
         assert!(shell.trap.is_none(), "the last part lets go");
         assert!(matches!(
             shell.execute("dev-sam"),
