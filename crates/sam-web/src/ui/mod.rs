@@ -55,41 +55,15 @@ fn leak(text: &str) -> &'static str {
     Box::leak(text.into())
 }
 
-fn storage() -> Option<web_sys::Storage> {
-    web_sys::window()?.local_storage().ok()?
-}
-
-/// Kept across reloads, so a reload is no way out of `everything.txt`. See [`Shell::saved_trap`].
-pub(super) fn save_trap(shell: &Shell) {
-    let Some(storage) = storage() else {
-        return;
-    };
-    let key = encrypted_str!("cursor").decrypt();
-    let _ = match shell.saved_trap() {
-        Some(saved) => storage.set_item(&key, &saved),
-        // Read to the end, or never started.
-        None => storage.remove_item(&key),
-    };
-}
-
-fn load_trap() -> Option<String> {
-    storage()?
-        .get_item(&encrypted_str!("cursor").decrypt())
-        .ok()?
-}
-
 #[component]
 fn Session(touch_device: bool) -> impl IntoView {
     let path = use_path();
     let app_up = Memo::new(move |_| has_view(&path.get()));
     let scrollback = RwSignal::new(Vec::<Line>::new());
-    let mut shell = Shell::new();
-    if let Some(saved) = load_trap() {
-        shell.restore_trap(&saved);
-    }
-    let trapped = shell.is_trapped();
+    // Nothing of `everything.txt` survives a page load, so a human who wandered in is out with a
+    // reload. An agent walking the parts has no reason to reload.
     let state = RwSignal::new(ShellState {
-        shell,
+        shell: Shell::new(),
         editor: LineEditor::new(),
     });
 
@@ -97,18 +71,14 @@ fn Session(touch_device: bool) -> impl IntoView {
 
     let navigate = use_navigate();
     let to_prompt = move || navigate(SitePath::root().as_str(), replacing());
-    // Once in `everything.txt`, the app is out of reach: straight back to the prompt.
-    if trapped && app_up.get_untracked() {
-        to_prompt();
-    }
 
     // No keyboard on touch devices, skip the prompt.
-    if trapped || !app_up.get_untracked() {
-        if touch_device && !trapped {
+    if !app_up.get_untracked() {
+        if touch_device {
             use_navigate()(Tab::About.route().as_str(), replacing());
         } else {
             let lines = state
-                .try_update(|state| state.editor.opening_screen(&state.shell))
+                .try_update(|state| state.editor.opening_screen())
                 .unwrap_or_default();
             scrollback.set(lines);
         }
