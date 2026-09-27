@@ -14,7 +14,7 @@ use crate::theme;
 use super::{line_of, one};
 
 pub(in crate::shell) const ARCHIVE_DIR: EncryptedString = encrypted_str!("archive");
-/// Not listed by `ls`: only the hidden note for agents (`bot_note` in `ui`) mentions it.
+/// Not listed by `ls`: only the note for agents on the opening screen mentions it.
 pub(in crate::shell) const TABLE_OF_CONTENTS_TXT: EncryptedString =
     encrypted_str!("table-of-contents.txt");
 const POSTS_DIR: EncryptedString = encrypted_str!("posts");
