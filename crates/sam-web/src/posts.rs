@@ -70,6 +70,15 @@ impl Post {
         self.external_url.is_some()
     }
 
+    pub(crate) fn year(&self) -> EncryptedString {
+        self.year.of(POSTS_BLOB)
+    }
+
+    /// Empty for external posts.
+    pub(crate) fn slug(&self) -> EncryptedString {
+        self.slug.of(POSTS_BLOB)
+    }
+
     pub(crate) fn formatted_date(&self) -> String {
         format!(
             "{}-{}-{}",

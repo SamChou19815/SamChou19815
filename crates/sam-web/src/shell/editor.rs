@@ -57,15 +57,6 @@ impl LineEditor {
                 encrypted_str!("type help for commands, or run dev-sam").decrypt(),
                 theme::MUTED,
             )),
-            // The bait, see `Shell::open_export`.
-            one(colored(
-                encrypted_str!(
-                    "the whole site, every blog post included, is also in plain text: \
-                     cat everything.txt"
-                )
-                .decrypt(),
-                theme::MUTED,
-            )),
             Line::new(),
         ]
     }

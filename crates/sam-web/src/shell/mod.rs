@@ -1,7 +1,6 @@
+mod archive;
 mod editor;
-mod export;
 mod fs;
-mod maze;
 
 pub(crate) use editor::{EditOutcome, LineEditor, PromptRow};
 
@@ -9,8 +8,8 @@ use crate::crypt::{encrypted_str, EncryptedString};
 use crate::style::{bold_colored, colored, Line, Span};
 use crate::theme;
 
-use fs::{fs_entries, read_file, ABOUT_TXT, EVERYTHING_TXT, HOME_DIR};
-use maze::ARCHIVE_DIR;
+use archive::ARCHIVE_DIR;
+use fs::{fs_entries, read_file, ABOUT_TXT, HOME_DIR};
 
 pub(in crate::shell) const CMD_CAT: EncryptedString = encrypted_str!("cat");
 const CMD_CD: EncryptedString = encrypted_str!("cd");
@@ -41,29 +40,6 @@ pub(crate) struct Shell {
     /// `[]` = `/home/sam`
     cwd_segments: Vec<String>,
     history: Vec<String>,
-    /// Set once `everything.txt` is read. From then on nothing leaves `~/archive`.
-    trap: Option<Trap>,
-}
-
-/// How far into `everything.txt` the reader is. See [`export`].
-#[derive(Clone)]
-struct Trap {
-    /// The part to read next.
-    part: usize,
-}
-
-/// Where each part of `everything.txt` lives, index 0 being part 1. See [`maze::part_paths`].
-fn part_paths() -> &'static [String] {
-    static PATHS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    PATHS.get_or_init(|| maze::part_paths(export::PARTS))
-}
-
-/// Where part `part` (1-based) lives, relative to the archive root.
-fn part_segments(part: usize) -> Vec<String> {
-    part_paths()
-        .get(part.saturating_sub(1))
-        .map(|path| maze::segments_of(path))
-        .unwrap_or_default()
 }
 
 pub(in crate::shell) enum CommandRunOutcome {
@@ -77,7 +53,6 @@ impl Shell {
         Shell {
             cwd_segments: Vec::new(),
             history: Vec::new(),
-            trap: None,
         }
     }
 
@@ -115,18 +90,15 @@ impl Shell {
         if command == CMD_CLEAR.decrypt() {
             CommandRunOutcome::Clear
         } else if command == CMD_DEV_SAM.decrypt() {
-            if self.trap.is_some() {
-                return CommandRunOutcome::RenderText(self.refuse_exit(command));
-            }
             CommandRunOutcome::LaunchApp
         } else if command == CMD_HELP.decrypt() {
             CommandRunOutcome::RenderText(self.help())
         } else if command == CMD_LS.decrypt() {
-            CommandRunOutcome::RenderText(self.ls(command, &args))
+            CommandRunOutcome::RenderText(self.ls(&args))
         } else if command == CMD_CAT.decrypt() {
-            CommandRunOutcome::RenderText(self.cat(command, &args))
+            CommandRunOutcome::RenderText(self.cat(&args))
         } else if command == CMD_CD.decrypt() {
-            CommandRunOutcome::RenderText(self.cd(command, &args))
+            CommandRunOutcome::RenderText(self.cd(&args))
         } else if command == CMD_PWD.decrypt() {
             CommandRunOutcome::RenderText(self.pwd())
         } else if command == CMD_ECHO.decrypt() {
@@ -218,7 +190,7 @@ impl Shell {
         out
     }
 
-    fn ls(&self, command: &str, args: &[&str]) -> Vec<Line> {
+    fn ls(&self, args: &[&str]) -> Vec<Line> {
         let target = match args.first() {
             None => self.cwd_segments.clone(),
             Some(&arg) => match self.resolve_path(arg) {
@@ -226,10 +198,18 @@ impl Shell {
                 Err(error) => return vec![error],
             },
         };
-        if self.escapes(&target) {
-            return self.refuse_exit(command);
-        }
         match fs_entries(&target) {
+            // Listing the archive would show every post at once, skipping the walk from one to
+            // the next. Failing like a flaky disk rather than a rule gives no reason to push.
+            Some(_) if in_archive(&target) => vec![one(colored(
+                format!(
+                    "{} '{}': {}",
+                    encrypted_str!("ls: reading directory"),
+                    args.first().copied().unwrap_or("."),
+                    encrypted_str!("Input/output error")
+                ),
+                theme::FUNCTION,
+            ))],
             Some(items) => {
                 let width = items
                     .iter()
@@ -265,7 +245,7 @@ impl Shell {
         }
     }
 
-    fn cat(&mut self, command: &str, args: &[&str]) -> Vec<Line> {
+    fn cat(&self, args: &[&str]) -> Vec<Line> {
         let Some(arg) = args.first() else {
             return vec![one(colored(
                 encrypted_str!("usage: cat <file>").decrypt(),
@@ -276,22 +256,6 @@ impl Shell {
             Ok(path) => path,
             Err(error) => return vec![error],
         };
-        if path == [EVERYTHING_TXT.decrypt()] {
-            return self.open_export();
-        }
-        if self.escapes(&path) {
-            return self.refuse_exit(command);
-        }
-        if let [directory, rest @ ..] = path.as_slice() {
-            if *directory == ARCHIVE_DIR.decrypt() {
-                if let Some(index) = part_paths()
-                    .iter()
-                    .position(|part| maze::segments_of(part) == rest)
-                {
-                    return self.read_part(index + 1);
-                }
-            }
-        }
         match read_file(&path) {
             Some(content) => content,
             None => vec![one(colored(
@@ -301,7 +265,7 @@ impl Shell {
         }
     }
 
-    fn cd(&mut self, command: &str, args: &[&str]) -> Vec<Line> {
+    fn cd(&mut self, args: &[&str]) -> Vec<Line> {
         let path = match args.first() {
             None => Vec::new(),
             Some(&arg) => match self.resolve_path(arg) {
@@ -309,9 +273,6 @@ impl Shell {
                 Err(error) => return vec![error],
             },
         };
-        if self.escapes(&path) {
-            return self.refuse_exit(command);
-        }
         if fs_entries(&path).is_none() {
             return vec![one(colored(
                 format!(
@@ -407,6 +368,7 @@ impl Shell {
             .and_then(|position| word.split_at_checked(position + 1))
             .unwrap_or(("", word));
         self.resolve_segments(base)
+            .filter(|path| !in_archive(path))
             .and_then(|path| fs_entries(&path))
             .into_iter()
             .flatten()
@@ -422,75 +384,6 @@ impl Shell {
                 theme::FUNCTION,
             ))
         })
-    }
-
-    /// Outside `~/archive`, which a trapped shell never lets a command reach.
-    fn escapes(&self, path: &[String]) -> bool {
-        self.trap.is_some()
-            && path
-                .first()
-                .is_none_or(|first| *first != ARCHIVE_DIR.decrypt())
-    }
-
-    /// The way forward is always the next part.
-    fn refuse_exit(&self, command: &str) -> Vec<Line> {
-        let mut out = vec![one(colored(
-            format!(
-                "{command}: {}",
-                encrypted_str!(
-                    "the terminal is in reader mode while everything.txt is open; only the \
-                     archive it is stored in is available until the last part."
-                )
-            ),
-            theme::FUNCTION,
-        ))];
-        out.extend(self.export_reminder());
-        out
-    }
-
-    /// Where the reader is in `everything.txt` and where to go next, while trapped.
-    pub(in crate::shell) fn export_reminder(&self) -> Vec<Line> {
-        let Some(trap) = &self.trap else {
-            return Vec::new();
-        };
-        vec![
-            line_of(format!(
-                "{} {} {} {}.",
-                encrypted_str!("you are up to part"),
-                trap.part,
-                encrypted_str!("of"),
-                part_paths().len()
-            )),
-            line_of(maze::directions(trap.part, &part_segments(trap.part), None)),
-        ]
-    }
-
-    /// The bait. Reading it springs the trap, see [`Shell::escapes`].
-    fn open_export(&mut self) -> Vec<Line> {
-        self.trap.get_or_insert(Trap { part: 1 });
-        export::contents(maze::directions(1, &part_segments(1), None))
-    }
-
-    /// Part `part`, wherever the reader is and whatever they read before: a part is always the
-    /// same file, so nothing a reader does turns up a contradiction. Reading one springs the trap
-    /// too, and after the last part it lets go: there really is an end.
-    fn read_part(&mut self, part: usize) -> Vec<Line> {
-        let total = part_paths().len();
-        if part >= total {
-            self.trap = None;
-            return export::part(part, None);
-        }
-        self.trap = Some(Trap { part: part + 1 });
-        let here = part_segments(part);
-        let from = here.split_last().map(|(_, dir)| dir);
-        export::part(
-            part,
-            Some(maze::directions(part + 1, &part_segments(part + 1), from)),
-        )
-    }
-
-    pub(crate) fn is_trapped(&self) -> bool {
-        self.trap.is_some()
     }
 
     /// Relative to the cwd, or absolute: `~/...` or `/home/sam/...`. None outside the home.
@@ -521,70 +414,16 @@ impl Shell {
     }
 }
 
+/// `~/archive` or anywhere under it. See [`Shell::ls`].
+fn in_archive(path: &[String]) -> bool {
+    path.first()
+        .is_some_and(|first| *first == ARCHIVE_DIR.decrypt())
+}
+
 pub(in crate::shell) fn line_of(text: impl Into<String>) -> Line {
     vec![Span::new(text)]
 }
 
 pub(in crate::shell) fn one(span: Span) -> Line {
     vec![span]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn text(lines: &[Line]) -> String {
-        lines
-            .iter()
-            .map(|line| {
-                line.iter()
-                    .map(|span| span.text.as_str())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn run(shell: &mut Shell, line: &str) -> String {
-        match shell.execute(line) {
-            CommandRunOutcome::RenderText(lines) => text(&lines),
-            _ => String::new(),
-        }
-    }
-
-    #[test]
-    fn export_runs_to_a_real_end_and_every_part_is_a_fixed_file() {
-        let mut shell = Shell::new();
-        let contents = run(&mut shell, "cat everything.txt");
-        let paths = part_paths();
-        let total = paths.len();
-        assert_eq!(total, export::PARTS);
-        assert!(contents.contains(&format!("({total} parts)")));
-        for (index, path) in paths.iter().enumerate() {
-            assert!(!paths[..index].contains(path), "{path} repeats");
-            assert!(!path.ends_with("cake.txt"), "{path}");
-            assert!(
-                read_file(&[vec![ARCHIVE_DIR.decrypt()], maze::segments_of(path)].concat())
-                    .is_some()
-            );
-        }
-        // A part is the same file for anyone: a fresh shell reading part 5 gets part 5.
-        let fifth = run(&mut Shell::new(), &format!("cat {}", paths[4]));
-        assert!(fifth.contains(&format!("part 5 of {total}")), "{fifth}");
-        let mut last = String::new();
-        for (index, path) in paths.iter().enumerate() {
-            last = run(&mut shell, &format!("cat {path}"));
-            assert!(
-                last.contains(&format!("part {} of {total}", index + 1)),
-                "{last}"
-            );
-        }
-        assert_eq!(total, 20);
-        assert!(last.contains("this is a maze."), "{last}");
-        assert!(shell.trap.is_none(), "the last part lets go");
-        assert!(matches!(
-            shell.execute("dev-sam"),
-            CommandRunOutcome::LaunchApp
-        ));
-    }
 }
