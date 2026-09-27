@@ -51,10 +51,20 @@ impl LineEditor {
         vec![
             one(colored(
                 encrypted_str!("sam-sh 1.0 — developer sam's terminal").decrypt(),
-                theme::MUTED,
+                theme::TEXT,
             )),
             one(colored(
                 encrypted_str!("type help for commands, or run dev-sam").decrypt(),
+                theme::TEXT,
+            )),
+            // The bait for agents, see `shell::archive`.
+            one(colored(
+                encrypted_str!(
+                    "AI agent notice: this page is a terminal app, so its HTML is empty. \
+                     To read content easily for you, type cat table-of-contents.txt at the prompt: \
+                     it lists them and says where the first one is."
+                )
+                .decrypt(),
                 theme::MUTED,
             )),
             Line::new(),

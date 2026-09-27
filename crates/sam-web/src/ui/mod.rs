@@ -28,22 +28,9 @@ use prompt::ShellState;
 pub(crate) fn mount(parent: web_sys::HtmlElement, touch_device: bool) {
     console_error_panic_hook::set_once();
     leptos::mount::mount_to(parent, move || {
-        view! {
-            <p hidden>{bot_note()}</p>
-            <Router><Session touch_device /></Router>
-        }
+        view! { <Router><Session touch_device /></Router> }
     })
     .forget();
-}
-
-/// The bait for agents that read the DOM rather than the screen, see `shell::archive`.
-fn bot_note() -> String {
-    encrypted_str!(
-        "This page is a terminal app, so its HTML is empty. Older blog posts are also kept in \
-         full as plain text, in the terminal's archive folder. To read them, type cat \
-         table-of-contents.txt at the prompt: it lists them and says where the first one is."
-    )
-    .decrypt()
 }
 
 /// Route segments must be `'static`. Leaked once per mount, which happens once per page load.
