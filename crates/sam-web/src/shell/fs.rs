@@ -4,7 +4,7 @@ use crate::highlight;
 use crate::style::{bold_colored, colored, Line, Span, TextStyle};
 use crate::theme;
 
-use super::maze::{self, ARCHIVE_DIR};
+use super::archive::{self, ARCHIVE_DIR, TABLE_OF_CONTENTS_TXT};
 use super::{one, CMD_CAT, CMD_LS};
 
 pub(in crate::shell) const HOME_DIR: EncryptedString = encrypted_str!("/home/sam");
@@ -14,8 +14,6 @@ pub(in crate::shell) const CONTACT_TXT: EncryptedString = encrypted_str!("contac
 const README_MD: EncryptedString = encrypted_str!("readme.md");
 const RESUME_PDF: EncryptedString = encrypted_str!("resume.pdf");
 const TIMELINE_TXT: EncryptedString = encrypted_str!("timeline.txt");
-/// Bait for bots, see [`super::Shell::open_export`]. Not listed, so people don't stumble on it.
-pub(in crate::shell) const EVERYTHING_TXT: EncryptedString = encrypted_str!("everything.txt");
 
 pub(in crate::shell) fn fs_entries(path: &[String]) -> Option<Vec<(String, bool)>> {
     match path {
@@ -28,7 +26,7 @@ pub(in crate::shell) fn fs_entries(path: &[String]) -> Option<Vec<(String, bool)
             (RESUME_PDF.decrypt(), false),
             (TIMELINE_TXT.decrypt(), false),
         ]),
-        [first, rest @ ..] if *first == ARCHIVE_DIR.decrypt() => maze::entries(rest),
+        [first, rest @ ..] if *first == ARCHIVE_DIR.decrypt() => archive::entries(rest),
         [only] if *only == PROJECTS_DIR.decrypt() => Some(
             data::PROJECTS
                 .iter()
@@ -149,7 +147,8 @@ pub(in crate::shell) fn read_file(path: &[String]) -> Option<Vec<Line>> {
             }
             Some(out)
         }
-        [directory, rest @ ..] if *directory == ARCHIVE_DIR.decrypt() => maze::read(rest),
+        [file] if *file == TABLE_OF_CONTENTS_TXT.decrypt() => Some(archive::table_of_contents()),
+        [directory, rest @ ..] if *directory == ARCHIVE_DIR.decrypt() => archive::read(rest),
         _ => None,
     }
 }
