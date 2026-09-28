@@ -1,6 +1,7 @@
 mod about;
 mod app;
 mod blog;
+mod gate;
 mod header;
 mod keyboard;
 mod links;
@@ -47,32 +48,29 @@ fn Session(touch_device: bool) -> impl IntoView {
         shell: Shell::new(),
         editor: LineEditor::new(),
     });
+    // Set once an agent owns up at the gate. Then `/` is the terminal, for the rest of the visit.
+    let agent = RwSignal::new(false);
 
     Effect::new(move |_| document().set_title(&title_for(&path.get())));
 
-    // No keyboard on touch devices, skip the prompt.
-    if !app_up.get_untracked() {
-        if touch_device {
-            use_navigate()(Tab::About.route().as_str(), replacing());
-        } else {
-            let lines = state
-                .try_update(|state| state.editor.opening_screen())
-                .unwrap_or_default();
-            scrollback.set(lines);
-        }
+    let navigate = use_navigate();
+    let enter_app = move || navigate(Tab::About.route().as_str(), replacing());
+    // Phones and tablets are people: skip the gate.
+    if !app_up.get_untracked() && touch_device {
+        enter_app();
     }
-
-    // Covers q, Ctrl+C, and the back button.
-    Effect::watch(
-        move || app_up.get(),
-        move |up, was_up, _| {
-            if !*up && was_up == Some(&true) {
-                state.update(|state| state.editor = LineEditor::new());
-                scrollback.update(|lines| lines.extend(LineEditor::after_dev_sam_app_exit()));
-            }
-        },
-        false,
-    );
+    let on_human = Callback::new(move |()| enter_app());
+    let on_agent = Callback::new(move |()| {
+        scrollback.set(LineEditor::opening_screen());
+        agent.set(true);
+    });
+    let root = move || {
+        if agent.get() {
+            view! { <prompt::Prompt scrollback state /> }.into_any()
+        } else {
+            view! { <gate::Gate on_agent on_human /> }.into_any()
+        }
+    };
 
     let blog = move || Tab::Blog.route().to_string();
     // Not `path!`: its segments would sit in the wasm as plain text.
@@ -94,7 +92,7 @@ fn Session(touch_device: bool) -> impl IntoView {
     view! {
         <div class="terminal fixed inset-0 overflow-hidden bg-[#f7f7f7] font-terminal text-[15px] leading-[1.2] text-[#1c1e21]">
             <Routes fallback=|| view! { <Redirect path="/" options=replacing() /> }>
-                <Route path=path!("/") view=move || view! { <prompt::Prompt scrollback state /> } />
+                <Route path=path!("/") view=root />
                 <ParentRoute path=path!("") view=move || view! { <app::App /> }>
                     <Route path=(about,) view=about::About />
                     <Route path=(timeline,) view=timeline::Timeline />

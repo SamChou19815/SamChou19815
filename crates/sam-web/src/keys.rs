@@ -59,6 +59,7 @@ pub(crate) fn map_key(event: &web_sys::KeyboardEvent) -> Option<(Key, Mods)> {
 
 #[derive(Clone, Copy)]
 pub(crate) enum Keymap {
+    Gate,
     Prompt,
     App,
 }
@@ -72,6 +73,7 @@ pub(crate) fn claims(keymap: Keymap, key: Key, mods: Mods) -> bool {
         return true;
     }
     match keymap {
+        Keymap::Gate => false,
         Keymap::Prompt => matches!(key, Key::Char('c' | 'l' | 'a' | 'e' | 'u')),
         Keymap::App => matches!(key, Key::Char('c' | 'd')),
     }

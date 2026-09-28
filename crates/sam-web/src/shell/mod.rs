@@ -8,13 +8,12 @@ use crate::crypt::{encrypted_str, EncryptedString};
 use crate::style::{bold_colored, colored, Line, Span};
 use crate::theme;
 
-use archive::ARCHIVE_DIR;
-use fs::{fs_entries, read_file, ABOUT_TXT, HOME_DIR};
+use archive::{ARCHIVE_DIR, TABLE_OF_CONTENTS_TXT};
+use fs::{fs_entries, read_file, HOME_DIR};
 
 pub(in crate::shell) const CMD_CAT: EncryptedString = encrypted_str!("cat");
 const CMD_CD: EncryptedString = encrypted_str!("cd");
 const CMD_CLEAR: EncryptedString = encrypted_str!("clear");
-const CMD_DEV_SAM: EncryptedString = encrypted_str!("dev-sam");
 const CMD_ECHO: EncryptedString = encrypted_str!("echo");
 const CMD_HELP: EncryptedString = encrypted_str!("help");
 const CMD_HISTORY: EncryptedString = encrypted_str!("history");
@@ -22,11 +21,10 @@ pub(in crate::shell) const CMD_LS: EncryptedString = encrypted_str!("ls");
 const CMD_PWD: EncryptedString = encrypted_str!("pwd");
 const CMD_WHOAMI: EncryptedString = encrypted_str!("whoami");
 
-const COMMANDS: [EncryptedString; 10] = [
+const COMMANDS: [EncryptedString; 9] = [
     CMD_CAT,
     CMD_CD,
     CMD_CLEAR,
-    CMD_DEV_SAM,
     CMD_ECHO,
     CMD_HELP,
     CMD_HISTORY,
@@ -45,7 +43,6 @@ pub(crate) struct Shell {
 pub(in crate::shell) enum CommandRunOutcome {
     RenderText(Vec<Line>),
     Clear,
-    LaunchApp,
 }
 
 impl Shell {
@@ -89,8 +86,6 @@ impl Shell {
         let args: Vec<&str> = words.collect();
         if command == CMD_CLEAR.decrypt() {
             CommandRunOutcome::Clear
-        } else if command == CMD_DEV_SAM.decrypt() {
-            CommandRunOutcome::LaunchApp
         } else if command == CMD_HELP.decrypt() {
             CommandRunOutcome::RenderText(self.help())
         } else if command == CMD_LS.decrypt() {
@@ -140,14 +135,10 @@ impl Shell {
     fn help(&self) -> Vec<Line> {
         let mut out = Vec::new();
         let cat_hint = format!(
-            "{} {ABOUT_TXT})",
+            "{} {TABLE_OF_CONTENTS_TXT})",
             encrypted_str!("print a file (try").decrypt()
         );
         for (name, description) in [
-            (
-                format!("{CMD_DEV_SAM}"),
-                encrypted_str!("launch the developer sam app (q exits back here)").decrypt(),
-            ),
             (
                 format!("{CMD_LS} [dir]"),
                 encrypted_str!("list the file system").decrypt(),
