@@ -22,8 +22,6 @@ pub(crate) const ACCENT_TEXT: Color = Color::rgb(37, 99, 235);
 pub(crate) const TEXT: Color = Color::rgb(28, 30, 33);
 /// gray-600
 pub(crate) const MUTED: Color = Color::rgb(75, 85, 99);
-/// gray-700
-pub(crate) const SUBTLE: Color = Color::rgb(55, 65, 81);
 /// `STRING` darkened to pass 4.5:1 contrast.
 pub(crate) const PROMPT_USER: Color = Color::rgb(21, 122, 69);
 /// gray-500

@@ -3,7 +3,7 @@ use crate::keys::{Key, Mods};
 use crate::style::{colored, Line, Span};
 use crate::theme;
 
-use super::{one, CommandRunOutcome, Shell, CMD_DEV_SAM};
+use super::{one, CommandRunOutcome, Shell};
 
 /// The line split around the cursor so the UI can draw a block cursor.
 pub(crate) struct PromptRow {
@@ -19,8 +19,6 @@ pub(crate) enum EditOutcome {
     None,
     Output(Vec<Line>),
     ClearScreen,
-    /// `dev-sam` was run.
-    Launch,
     Completion(Vec<String>),
     /// Ctrl+C. Freeze the row with `^C` echoed at the cursor.
     Interrupt,
@@ -45,16 +43,15 @@ impl LineEditor {
         }
     }
 
-    /// Pre-types `dev-sam` so Enter launches the app.
-    pub(crate) fn opening_screen(&mut self) -> Vec<Line> {
-        self.set_line(CMD_DEV_SAM.decrypt());
+    /// What an agent sees after owning up at the gate.
+    pub(crate) fn opening_screen() -> Vec<Line> {
         vec![
             one(colored(
                 encrypted_str!("sam-sh 1.0 — developer sam's terminal").decrypt(),
                 theme::TEXT,
             )),
             one(colored(
-                encrypted_str!("type help for commands, or run dev-sam").decrypt(),
+                encrypted_str!("type help for commands").decrypt(),
                 theme::TEXT,
             )),
             // The bait for agents, see `shell::archive`.
@@ -69,13 +66,6 @@ impl LineEditor {
             )),
             Line::new(),
         ]
-    }
-
-    pub(crate) fn after_dev_sam_app_exit() -> Vec<Line> {
-        vec![one(colored(
-            encrypted_str!("dev-sam exited — type dev-sam to run it again, or help").decrypt(),
-            theme::MUTED,
-        ))]
     }
 
     pub(crate) fn handle_key(&mut self, key: Key, mods: Mods, shell: &mut Shell) -> EditOutcome {
@@ -158,7 +148,6 @@ impl LineEditor {
         let outcome = shell.execute(&line);
         self.history_index = shell.history().len();
         match outcome {
-            CommandRunOutcome::LaunchApp => EditOutcome::Launch,
             CommandRunOutcome::Clear => EditOutcome::ClearScreen,
             CommandRunOutcome::RenderText(lines) => EditOutcome::Output(lines),
         }

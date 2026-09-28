@@ -1,17 +1,14 @@
 use crate::keys::{Key, Keymap, Mods};
 use crate::shell::{self, EditOutcome, LineEditor, Shell};
 use crate::style::{Line, Span, TextStyle};
-use crate::tab::Tab;
 use leptos::html;
 use leptos::prelude::*;
-use leptos_router::hooks::use_navigate;
 
 use super::keyboard::use_keyboard;
-use super::nav::replacing;
 use super::pane::SCROLL;
 use super::text::{runs, StyledLine};
 
-/// Owned by the session, not the prompt, so it survives a run of the app.
+/// Owned by the session, not the prompt.
 #[derive(Clone)]
 pub(super) struct ShellState {
     pub(super) shell: Shell,
@@ -77,7 +74,6 @@ pub(super) fn Prompt(
     state: RwSignal<ShellState>,
 ) -> impl IntoView {
     let pane = NodeRef::<html::Div>::new();
-    let navigate = use_navigate();
 
     use_keyboard(Keymap::Prompt, move |key: Key, mods: Mods| {
         // Snapshot before handle_key clears the line.
@@ -97,10 +93,6 @@ pub(super) fn Prompt(
                 });
             }
             EditOutcome::ClearScreen => scrollback.set(Vec::new()),
-            EditOutcome::Launch => {
-                scrollback.update(|scrollback| scrollback.push(frozen_prompt_line(&snapshot)));
-                navigate(Tab::About.route().as_str(), replacing());
-            }
             EditOutcome::Completion(candidates) => {
                 scrollback.update(|scrollback| {
                     scrollback.push(frozen_prompt_line(&snapshot));

@@ -11,12 +11,6 @@ pub(crate) struct Link {
     pub(crate) url: EncryptedString,
 }
 
-pub(crate) struct Project {
-    pub(crate) id: EncryptedString,
-    pub(crate) tagline: EncryptedString,
-    pub(crate) links: &'static [Link],
-}
-
 #[derive(Clone, Copy)]
 pub(crate) enum Category {
     Work,
@@ -98,86 +92,6 @@ pub(crate) const ABOUT_DOC_LINKS: &[Link] = &[
     },
     Link {
         name: encrypted_str!("resume"),
-        url: encrypted_str!("https://developersam.com/resume.pdf"),
-    },
-];
-
-pub(crate) const PROJECTS: &[Project] = &[
-    Project {
-        id: encrypted_str!("samlang"),
-        tagline: encrypted_str!("Sam's programming language with full type-inference."),
-        links: &[
-            Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/samlang") },
-            Link { name: encrypted_str!("Docs"), url: encrypted_str!("https://samlang.io") },
-            Link { name: encrypted_str!("Demo"), url: encrypted_str!("https://samlang.io/demo") },
-        ],
-    },
-    Project {
-        id: encrypted_str!("mini-react"),
-        tagline: encrypted_str!("A simplified version of the React runtime with useState and useEffect hooks, built from scratch."),
-        links: &[
-            Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/mini-react") },
-            Link { name: encrypted_str!("Demo"), url: encrypted_str!("https://mini-react.developersam.com") },
-            Link { name: encrypted_str!("Slides"), url: encrypted_str!("https://developersam.com/build-simplified-react.pdf") },
-        ],
-    },
-    Project {
-        id: encrypted_str!("samwise"),
-        tagline: encrypted_str!("A todo-list app by Cornell DTI, built with React, Redux and Firebase."),
-        links: &[Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/cornell-dti/samwise") }],
-    },
-    Project {
-        id: encrypted_str!("courseplan"),
-        tagline: encrypted_str!("Course planning tool for Cornell students by Cornell DTI."),
-        links: &[
-            Link { name: encrypted_str!("Product"), url: encrypted_str!("https://courseplan.io") },
-            Link { name: encrypted_str!("GitHub"), url: encrypted_str!("https://github.com/cornell-dti/course-plan") },
-        ],
-    },
-    Project {
-        id: encrypted_str!("ten"),
-        tagline: encrypted_str!("A tiny esoteric language implemented in Go."),
-        links: &[Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/ten-golang") }],
-    },
-    Project {
-        id: encrypted_str!("critter-compiler"),
-        tagline: encrypted_str!("A compiler for the Critter World language from Cornell CS 2112. Proved the language is Turing complete."),
-        links: &[
-            Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/primitivize") },
-            Link {
-                name: encrypted_str!("Blog Post"),
-                url: encrypted_str!("https://blog.developersam.com/2018/08/27/cw-turing-complete/"),
-            },
-        ],
-    },
-    Project {
-        id: encrypted_str!("sampl"),
-        tagline: encrypted_str!("Sam's first programming language. Archived in favor of samlang."),
-        links: &[
-            Link { name: encrypted_str!("GitHub Repo"), url: encrypted_str!("https://github.com/SamChou19815/sampl") },
-            Link {
-                name: encrypted_str!("Blog Post"),
-                url: encrypted_str!("https://blog.developersam.com/2018/06/15/sampl-alpha-design-choices/"),
-            },
-        ],
-    },
-];
-
-pub(crate) const SOCIAL_LINKS: &[Link] = &[
-    Link {
-        name: encrypted_str!("GitHub"),
-        url: encrypted_str!("https://github.com/SamChou19815"),
-    },
-    Link {
-        name: encrypted_str!("Bluesky"),
-        url: encrypted_str!("https://bsky.app/profile/developersam.com"),
-    },
-    Link {
-        name: encrypted_str!("LinkedIn"),
-        url: encrypted_str!("https://www.linkedin.com/in/sam-zhou-30b91610b/"),
-    },
-    Link {
-        name: encrypted_str!("Resume"),
         url: encrypted_str!("https://developersam.com/resume.pdf"),
     },
 ];
