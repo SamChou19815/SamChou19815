@@ -8,13 +8,13 @@
     "check": "tsc --incremental"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.111.0",
+    "@supabase/supabase-js": "^2.117.2",
     "@tailwindcss/postcss": "^4.3.3",
-    "autoprefixer": "^10.5.4",
-    "next": "^16.2.12",
-    "postcss": "^8.5.25",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
+    "autoprefixer": "^10.6.1",
+    "next": "^16.3.6",
+    "postcss": "^8.5.28",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "recharts": "^3.10.1",
     "tailwindcss": "^4.3.3"
   }

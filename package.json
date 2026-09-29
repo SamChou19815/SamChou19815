@@ -14,15 +14,15 @@
     "dev": "pnpm --filter www dev"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "autoprefixer": "^10.5.4",
-    "oxfmt": "^0.61.0",
-    "oxlint": "^1.76.0",
-    "postcss": "^8.5.25",
+    "@types/node": "^26.6.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.6.1",
+    "oxfmt": "^0.71.0",
+    "oxlint": "^1.86.0",
+    "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
-    "turbo": "^2.10.8",
+    "turbo": "^2.11.5",
     "typescript": "^7.0.2"
   },
   "packageManager": "pnpm@12.3.4+sha512.961aa41fb077da3a04a441d9f8e15ebc0c96da8ef710b2eb67bf9ee7cb0610eabd48f1fd85f51cffe73846785fa0f87c56a3a872a1d893f8446741b5cce45457"
