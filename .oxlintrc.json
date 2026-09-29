@@ -7,7 +7,9 @@
     "suspicious": "warn"
   },
   "rules": {
-    "react/react-in-jsx-scope": "off"
+    "react/react-in-jsx-scope": "off",
+    "react/purity": "warn",
+    "react/set-state-in-effect": "warn"
   },
   "ignorePatterns": [
     "**/.next/**",
