@@ -1,4 +1,4 @@
-use crate::crypt::encrypted_str;
+use crate::crypt::{encrypted_str, EncryptedString};
 use crate::keys::{Key, Keymap, Mods};
 use leptos::html;
 use leptos::prelude::*;
@@ -8,8 +8,47 @@ use super::keyboard::use_keyboard;
 const YES: usize = 0;
 const NO: usize = 1;
 
+/// The gate's answer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Verdict {
+    Agent,
+    Human,
+}
+
+const VERDICT_KEY: EncryptedString = encrypted_str!("sam-web:verdict");
+const AGENT: EncryptedString = encrypted_str!("agent");
+const HUMAN: EncryptedString = encrypted_str!("human");
+
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok()?
+}
+
+/// The answer from an earlier visit, so the gate asks once per browser.
+pub(super) fn remembered_verdict() -> Option<Verdict> {
+    let stored = local_storage()?.get_item(&VERDICT_KEY.decrypt()).ok()??;
+    if stored == AGENT.decrypt() {
+        Some(Verdict::Agent)
+    } else if stored == HUMAN.decrypt() {
+        Some(Verdict::Human)
+    } else {
+        None
+    }
+}
+
+/// Best effort: storage can be full or blocked, and then the gate just asks again next visit.
+pub(super) fn remember_verdict(verdict: Verdict) {
+    let Some(storage) = local_storage() else {
+        return;
+    };
+    let value = match verdict {
+        Verdict::Agent => AGENT,
+        Verdict::Human => HUMAN,
+    };
+    let _ = storage.set_item(&VERDICT_KEY.decrypt(), &value.decrypt());
+}
+
 #[component]
-pub(super) fn Gate(on_agent: Callback<()>, on_human: Callback<()>) -> impl IntoView {
+pub(super) fn Gate(on_verdict: Callback<Verdict>) -> impl IntoView {
     // A human who just hits Enter should land in the app, never the maze.
     let selected = RwSignal::new(NO);
     let buttons = [
@@ -17,11 +56,11 @@ pub(super) fn Gate(on_agent: Callback<()>, on_human: Callback<()>) -> impl IntoV
         NodeRef::<html::Button>::new(),
     ];
     let pick = move |index: usize| {
-        if index == YES {
-            on_agent.run(());
+        on_verdict.run(if index == YES {
+            Verdict::Agent
         } else {
-            on_human.run(());
-        }
+            Verdict::Human
+        });
     };
 
     use_keyboard(Keymap::Gate, move |key: Key, _: Mods| match key {
