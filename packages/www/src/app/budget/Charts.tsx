@@ -103,39 +103,40 @@ export function MonthlyTotalsChart({
   );
 }
 
-// A category counts as "big" when its average spending per month in range exceeds this.
-export const BIG_CATEGORY_MONTHLY_AVG = 1000;
+export type ExpenseTier = "big" | "regular" | "other";
 
-export function MonthlyExpenseBar({
+// Categories (case-insensitive) assigned to a tier; everything else is "other".
+const BIG_CATEGORIES = new Set(["rent", "travel"]);
+const REGULAR_CATEGORIES = new Set(["grocery", "dining", "transportation", "utility"]);
+
+function expenseTier(category: string): ExpenseTier {
+  const lower = category.toLowerCase();
+  if (BIG_CATEGORIES.has(lower)) return "big";
+  if (REGULAR_CATEGORIES.has(lower)) return "regular";
+  return "other";
+}
+
+export function MonthlyExpenseByCategory({
   range,
   expenses,
   tier,
 }: {
   range: Range;
   expenses: ReadonlyArray<Expense>;
-  tier: "big" | "small";
+  tier: ExpenseTier;
 }): React.JSX.Element {
   const months = monthsBetween(range.start, range.end);
   const monthSet = new Set(months);
   const inRange = expenses.filter((e) => monthSet.has(monthBucket(e.date)));
 
-  const totalByCategory = new Map<string, number>();
-  for (const e of inRange) {
-    totalByCategory.set(e.category, (totalByCategory.get(e.category) ?? 0) + Number(e.amount));
-  }
-  const monthCount = Math.max(months.length, 1);
-  const categories = Array.from(totalByCategory)
-    .filter(([, total]) => {
-      const isBig = total / monthCount > BIG_CATEGORY_MONTHLY_AVG;
-      return isBig === (tier === "big");
-    })
-    .map(([cat]) => cat)
+  const categories = Array.from(new Set(inRange.map((e) => e.category)))
+    .filter((cat) => expenseTier(cat) === tier)
     .sort();
 
   if (categories.length === 0) {
     return (
-      <div className="flex h-[300px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
-        No {tier === "big" ? "big" : "other"} spending categories in range.
+      <div className="flex h-75 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+        No {tier} spending categories in range.
       </div>
     );
   }
@@ -150,6 +151,40 @@ export function MonthlyExpenseBar({
     }
     return row;
   });
+
+  if (tier !== "big") {
+    const yearlyAvg = categoryYearlyMonthlyAverages(expenses);
+    return (
+      <ResponsiveContainer width="100%" height={300}>
+        <LineChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+          <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
+          <Tooltip
+            formatter={(v, name, item) => {
+              const value = Number(v);
+              const month = String(item.payload?.month ?? "");
+              const avg = yearlyAvg.get(`${month.slice(0, 4)}|${String(name)}`) ?? 0;
+              const diff = value - avg;
+              const sign = diff >= 0 ? "+" : "-";
+              return `${formatCAD(value)} (${sign}${formatCAD(Math.abs(diff))} vs ${month.slice(0, 4)} avg)`;
+            }}
+          />
+          <Legend />
+          {categories.map((cat, idx) => (
+            <Line
+              key={cat}
+              type="monotone"
+              dataKey={cat}
+              stroke={palette[idx % palette.length]}
+              name={cat}
+              dot={false}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  }
 
   return (
     <ResponsiveContainer width="100%" height={300}>
@@ -273,7 +308,7 @@ export function IncomeByCategoryPie({
   const data = Array.from(byCat, ([name, value]) => ({ name, value })).filter((d) => d.value > 0);
   if (data.length === 0) {
     return (
-      <div className="flex h-[300px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+      <div className="flex h-75 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
         No income in range.
       </div>
     );
@@ -316,7 +351,7 @@ export function ExpenseByCategoryPie({
   const data = Array.from(byCat, ([name, value]) => ({ name, value })).filter((d) => d.value > 0);
   if (data.length === 0) {
     return (
-      <div className="flex h-[300px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+      <div className="flex h-75 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
         No expenses in range.
       </div>
     );
@@ -355,7 +390,7 @@ export function AllocationDonut({
   const data = Array.from(byType, ([name, value]) => ({ name, value })).filter((d) => d.value > 0);
   if (data.length === 0) {
     return (
-      <div className="flex h-[300px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+      <div className="flex h-75 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
         No investments yet.
       </div>
     );
@@ -384,6 +419,24 @@ export function AllocationDonut({
 
 function pieValueLabel(props: { value?: number | string }): string {
   return formatCADCompact(Number(props.value));
+}
+
+// Average monthly spending per (year, category), keyed by `${yyyy}|${category}`. The current
+// year is averaged over the months elapsed so far.
+function categoryYearlyMonthlyAverages(expenses: ReadonlyArray<Expense>): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const e of expenses) {
+    const key = `${e.date.slice(0, 4)}|${e.category}`;
+    totals.set(key, (totals.get(key) ?? 0) + Number(e.amount));
+  }
+  const now = new Date();
+  const out = new Map<string, number>();
+  for (const [key, total] of totals) {
+    const year = Number(key.slice(0, 4));
+    const monthCount = year === now.getFullYear() ? now.getMonth() + 1 : 12;
+    out.set(key, total / monthCount);
+  }
+  return out;
 }
 
 function bucketSum<T extends { date: string }>(
