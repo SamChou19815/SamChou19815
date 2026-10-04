@@ -4,12 +4,11 @@ import { useMemo, useState } from "react";
 import { Card } from "./BudgetApp";
 import {
   AllocationDonut,
-  BIG_CATEGORY_MONTHLY_AVG,
   CashFlowLine,
   ExpenseByCategoryPie,
   IncomeByCategoryPie,
   InvestmentValueLine,
-  MonthlyExpenseBar,
+  MonthlyExpenseByCategory,
 } from "./Charts";
 import MonthlySummary from "./MonthlySummary";
 import TimeRangeSelector, {
@@ -99,15 +98,14 @@ export default function Dashboard({
       <Card>
         <h3 className="m-0 mb-4">Charts</h3>
         <div className="grid grid-cols-1 gap-8">
-          <ChartSection
-            title={`Big spending categories (monthly avg > ${formatCAD(BIG_CATEGORY_MONTHLY_AVG)})`}
-          >
-            <MonthlyExpenseBar range={range} expenses={expenses} tier="big" />
+          <ChartSection title="Big spending categories (rent + travel)">
+            <MonthlyExpenseByCategory range={range} expenses={expenses} tier="big" />
           </ChartSection>
-          <ChartSection
-            title={`Other spending categories (monthly avg ≤ ${formatCAD(BIG_CATEGORY_MONTHLY_AVG)})`}
-          >
-            <MonthlyExpenseBar range={range} expenses={expenses} tier="small" />
+          <ChartSection title="Regular expense categories (grocery + dining + transportation + utility)">
+            <MonthlyExpenseByCategory range={range} expenses={expenses} tier="regular" />
+          </ChartSection>
+          <ChartSection title="Other spending categories">
+            <MonthlyExpenseByCategory range={range} expenses={expenses} tier="other" />
           </ChartSection>
           <ChartSection title="Cumulative cash flow">
             <CashFlowLine range={range} incomes={incomes} expenses={expenses} />
