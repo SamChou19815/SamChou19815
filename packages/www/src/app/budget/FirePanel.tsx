@@ -119,7 +119,7 @@ function FirePlanner({ year, defaults }: { year: number; defaults: Defaults }): 
   const [annualSavings, setAnnualSavings] = useState(() => String(round2(defaults.annualSavings)));
   const [expectedReturn, setExpectedReturn] = useState("7");
   const [inflation, setInflation] = useState("2.5");
-  const [currentAge, setCurrentAge] = useState(String(new Date().getFullYear() - 1998));
+  const [currentAge, setCurrentAge] = useState(() => String(new Date().getFullYear() - 1998));
   const [retireAge, setRetireAge] = useState("40");
   const [coastStartAge, setCoastStartAge] = useState("30");
   const [endAge, setEndAge] = useState("95");

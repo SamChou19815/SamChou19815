@@ -6,15 +6,16 @@ import { getSupabase } from "../../lib/supabase";
 export type WhitelistResult = "loading" | "allowed" | "denied";
 
 export function useWhitelist(email: string | null | undefined): WhitelistResult {
-  const [result, setResult] = useState<WhitelistResult>("loading");
+  // Tagged with the email it was checked for, so a stale answer reads as
+  // "loading" instead of being reset synchronously when the email changes.
+  const [checked, setChecked] = useState<{
+    email: string;
+    result: Exclude<WhitelistResult, "loading">;
+  } | null>(null);
 
   useEffect(() => {
-    if (email == null) {
-      setResult("loading");
-      return;
-    }
+    if (email == null) return;
     let cancelled = false;
-    setResult("loading");
     getSupabase()
       .from("allowed_users")
       .select("email")
@@ -23,15 +24,15 @@ export function useWhitelist(email: string | null | undefined): WhitelistResult 
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error != null) {
-          setResult("denied");
+          setChecked({ email, result: "denied" });
           return;
         }
-        setResult(data != null && data.length > 0 ? "allowed" : "denied");
+        setChecked({ email, result: data != null && data.length > 0 ? "allowed" : "denied" });
       });
     return () => {
       cancelled = true;
     };
   }, [email]);
 
-  return result;
+  return email != null && checked?.email === email ? checked.result : "loading";
 }
