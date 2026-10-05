@@ -1,7 +1,7 @@
 import { parseLocalDate } from "../budget/utils";
 
 // Counting starts on this date, matching `START_DATE` in the Rust CLI.
-export const START_DATE = parseLocalDate("2025-01-24");
+export const START_DATE = parseLocalDate("2025-01-23");
 
 /** Days of physical presence needed to apply for citizenship. */
 export const TARGET_DAYS = 1095;
@@ -21,7 +21,7 @@ export type CitizenshipProgress = {
   prDays: number;
   total: number;
   remaining: number;
-  /** `total` as a share of `TARGET_DAYS`, 0–100. */
+  /** `total` as a share of `TARGET_DAYS`, 0-100. */
   percent: number;
 };
 
