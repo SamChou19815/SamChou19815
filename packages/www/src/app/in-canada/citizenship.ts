@@ -124,9 +124,10 @@ export function computeCitizenshipProgress(
 }
 
 /**
- * The first day the requirement is met, assuming presence in Canada every day
- * from `asOf` onward. `null` when it stays out of reach within the horizon —
- * notably with no PR date, where the credit is capped below the target.
+ * The first day the requirement is met, assuming presence in Canada from `asOf`
+ * onward except on future days already in `awayDays` (planned trips). `null`
+ * when it stays out of reach within the horizon — notably with no PR date,
+ * where the credit is capped below the target.
  */
 export function projectEligibility(
   asOf: Date,
