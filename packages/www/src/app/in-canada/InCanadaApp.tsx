@@ -7,12 +7,14 @@ import { parseLocalDate } from "../budget/utils";
 import {
   computeCitizenshipProgress,
   formatLocalDate,
+  parseTravelDays,
   PRE_PR_CREDIT_CAP,
   projectEligibility,
   START_DATE,
   TARGET_DAYS,
   WINDOW_YEARS,
   type CitizenshipProgress,
+  type TravelDays,
 } from "./citizenship";
 
 export function Card({ children }: { children: ReactNode }): React.JSX.Element {
@@ -37,14 +39,13 @@ function getDaysBetween(start: Date, end: Date): number {
 
 function countDaysInCanada(
   today: Date,
-  missingDays: ReadonlyArray<string>,
+  awayDays: ReadonlySet<string>,
 ): { totalDays: number; daysInCanada: number; missingDaysCount: number } {
   const totalDays = getDaysBetween(START_DATE, today);
-  const missingDaysInRange = missingDays.filter((dateStr) => {
+  const missingDaysCount = [...awayDays].filter((dateStr) => {
     const date = parseLocalDate(dateStr);
     return date >= START_DATE && date <= today;
-  });
-  const missingDaysCount = missingDaysInRange.length;
+  }).length;
   return { totalDays, daysInCanada: totalDays - missingDaysCount, missingDaysCount };
 }
 
@@ -97,13 +98,13 @@ function MonthCalendar({
   year,
   month,
   today,
-  missingDaysSet,
+  travelDays,
   prDateStr,
 }: {
   year: number;
   month: number;
   today: Date;
-  missingDaysSet: ReadonlySet<string>;
+  travelDays: TravelDays;
   prDateStr: string;
 }): React.JSX.Element {
   const daysInMonth = getDaysInMonth(year, month);
@@ -121,7 +122,8 @@ function MonthCalendar({
   for (let day = 1; day <= daysInMonth; day++) {
     const date = new Date(year, month, day);
     const dateStr = formatLocalDate(date);
-    const isMissing = missingDaysSet.has(dateStr);
+    const isMissing = travelDays.away.has(dateStr);
+    const isTravel = travelDays.travel.has(dateStr);
     const isOutOfRange = date < START_DATE || date > today;
 
     let className = "w-5 h-5 text-xs flex items-center justify-center rounded ";
@@ -129,6 +131,8 @@ function MonthCalendar({
       className += "text-gray-300 dark:text-gray-600";
     } else if (isMissing) {
       className += "bg-red-400 text-white font-medium";
+    } else if (isTravel) {
+      className += "bg-amber-400 text-white font-medium";
     } else {
       className += "bg-green-400 text-white";
     }
@@ -156,11 +160,11 @@ function MonthCalendar({
 
 function Calendar({
   today,
-  missingDaysSet,
+  travelDays,
   prDateStr,
 }: {
   today: Date;
-  missingDaysSet: ReadonlySet<string>;
+  travelDays: TravelDays;
   prDateStr: string;
 }): React.JSX.Element {
   const months = getMonthsInRange(START_DATE, today);
@@ -170,6 +174,7 @@ function Calendar({
       <h4 className="text-gray-700 mb-4 dark:text-gray-300">Calendar View</h4>
       <div className="flex flex-wrap items-center gap-4 mb-4 text-xs">
         <Legend swatch="bg-green-400" label="In Canada" />
+        <Legend swatch="bg-amber-400" label="Departure / arrival (counts as in Canada)" />
         <Legend swatch="bg-red-400" label="Outside Canada" />
         {prDateStr !== "" && <Legend swatch="ring-2 ring-blue-500" label="Became a PR" />}
       </div>
@@ -180,7 +185,7 @@ function Calendar({
             year={year}
             month={month}
             today={today}
-            missingDaysSet={missingDaysSet}
+            travelDays={travelDays}
             prDateStr={prDateStr}
           />
         ))}
@@ -350,8 +355,8 @@ export default function InCanadaApp(): React.JSX.Element {
   }, [message]);
 
   // Stats reflect the saved values, not in-progress edits.
-  const missingDays = useMemo(() => parseMissingDays(savedText), [savedText]);
-  const missingDaysSet = useMemo(() => new Set(missingDays), [missingDays]);
+  const travelDays = useMemo(() => parseTravelDays(savedText), [savedText]);
+  const missingDaysSet = travelDays.away;
   const prDate = useMemo(
     () => (savedPrDate === "" ? null : parseLocalDate(savedPrDate)),
     [savedPrDate],
@@ -365,7 +370,7 @@ export default function InCanadaApp(): React.JSX.Element {
     [today, prDate, missingDaysSet],
   );
 
-  const stats = today != null ? countDaysInCanada(today, missingDays) : null;
+  const stats = today != null ? countDaysInCanada(today, missingDaysSet) : null;
 
   const dirty = draftText !== savedText || draftPrDate !== savedPrDate;
 
@@ -425,7 +430,7 @@ export default function InCanadaApp(): React.JSX.Element {
           </div>
 
           {today != null && (
-            <Calendar today={today} missingDaysSet={missingDaysSet} prDateStr={savedPrDate} />
+            <Calendar today={today} travelDays={travelDays} prDateStr={savedPrDate} />
           )}
         </Card>
 
@@ -457,7 +462,9 @@ export default function InCanadaApp(): React.JSX.Element {
           <h3 className="mt-8 mb-2">Days outside Canada</h3>
           <p className="text-sm text-gray-500 mb-4 dark:text-gray-400">
             One date per line in <code>YYYY-MM-DD</code> format. These days are subtracted from the
-            counter.
+            counter. Mark the day you left with <code>(D)</code> and the day you came back with{" "}
+            <code>(A)</code>, e.g. <code>2025-03-14 (D)</code>: any part of a day spent in Canada
+            counts as a full day, so these still count as in Canada.
           </p>
           <textarea
             value={draftText}
@@ -465,7 +472,7 @@ export default function InCanadaApp(): React.JSX.Element {
             disabled={loadState === "loading"}
             rows={10}
             spellCheck={false}
-            placeholder={"2025-03-14\n2025-03-15\n2025-07-02"}
+            placeholder={"2025-03-14 (D)\n2025-03-15\n2025-03-16 (A)"}
             className="w-full rounded border border-gray-300 bg-white px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           />
 

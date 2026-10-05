@@ -42,7 +42,9 @@ pub enum InCanadaCommand {
     Status,
     /// List the recorded days spent outside Canada.
     List,
-    /// Record one or more days spent outside Canada (YYYY-MM-DD).
+    /// Record one or more days spent outside Canada (YYYY-MM-DD). Append
+    /// " (D)" or " (A)" to mark a departure or arrival day, which counts as a
+    /// day in Canada: e.g. "2025-03-14 (D)".
     Add {
         #[arg(required = true, value_name = "YYYY-MM-DD")]
         dates: Vec<String>,

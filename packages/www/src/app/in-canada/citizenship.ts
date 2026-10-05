@@ -25,6 +25,44 @@ export type CitizenshipProgress = {
   percent: number;
 };
 
+/** `YYYY-MM-DD`, optionally followed by a `(D)` departure or `(A)` arrival marker. */
+const ENTRY_PATTERN = /^(\d{4}-\d{2}-\d{2})\s*(?:\(([DA])\))?$/i;
+
+export type TravelDays = {
+  /** Days spent entirely outside Canada. */
+  away: ReadonlySet<string>;
+  /**
+   * Departure and arrival days. Any part of a day spent in Canada counts as a
+   * full day of physical presence, so these count as in Canada; they're kept
+   * only so the calendar can mark them.
+   */
+  travel: ReadonlySet<string>;
+};
+
+/**
+ * Parse the stored one-entry-per-line text. A date listed both bare and with a
+ * marker counts as a travel day, since part of it was spent in Canada. Lines
+ * that don't parse are ignored.
+ *
+ * Mirrors `parse_entry` in `crates/sam-cli/src/commands/in_canada.rs`.
+ */
+export function parseTravelDays(text: string): TravelDays {
+  const away = new Set<string>();
+  const travel = new Set<string>();
+  for (const line of text.split("\n")) {
+    const match = ENTRY_PATTERN.exec(line.trim());
+    if (match == null) continue;
+    const date = match[1] ?? "";
+    if (match[2] != null) {
+      travel.add(date);
+    } else {
+      away.add(date);
+    }
+  }
+  for (const date of travel) away.delete(date);
+  return { away, travel };
+}
+
 function addDays(date: Date, days: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
