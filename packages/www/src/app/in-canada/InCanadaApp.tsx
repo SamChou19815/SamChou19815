@@ -401,6 +401,11 @@ export default function InCanadaApp(): React.JSX.Element {
     return () => clearTimeout(t);
   }, [message]);
 
+  // Nothing is computed until the saved row has loaded: deriving numbers from
+  // the empty initial state would flash a wrong count (no days away, no PR
+  // date) before the real one replaces it.
+  const asOf = loadState === "ready" ? today : null;
+
   // Stats reflect the saved values, not in-progress edits.
   const travelDays = useMemo(() => parseTravelDays(savedText), [savedText]);
   const missingDaysSet = travelDays.away;
@@ -409,15 +414,15 @@ export default function InCanadaApp(): React.JSX.Element {
     [savedPrDate],
   );
   const progress = useMemo(
-    () => (today == null ? null : computeCitizenshipProgress(today, prDate, missingDaysSet)),
-    [today, prDate, missingDaysSet],
+    () => (asOf == null ? null : computeCitizenshipProgress(asOf, prDate, missingDaysSet)),
+    [asOf, prDate, missingDaysSet],
   );
   const eligibleOn = useMemo(
-    () => (today == null ? null : projectEligibility(today, prDate, missingDaysSet)),
-    [today, prDate, missingDaysSet],
+    () => (asOf == null ? null : projectEligibility(asOf, prDate, missingDaysSet)),
+    [asOf, prDate, missingDaysSet],
   );
 
-  const stats = today != null ? countDaysInCanada(today, missingDaysSet) : null;
+  const stats = asOf != null ? countDaysInCanada(asOf, missingDaysSet) : null;
 
   const dirty = draftText !== savedText || draftPrDate !== savedPrDate;
 
@@ -455,7 +460,7 @@ export default function InCanadaApp(): React.JSX.Element {
       <Hero
         progress={progress}
         eligibleOn={eligibleOn}
-        today={today}
+        today={asOf}
         hasPrDate={savedPrDate !== ""}
       />
 
@@ -464,9 +469,11 @@ export default function InCanadaApp(): React.JSX.Element {
           {TARGET_DAYS.toLocaleString()} days of physical presence in the last {WINDOW_YEARS} years.
           Days before permanent residency count as half a day each, up to {PRE_PR_CREDIT_CAP} days
           of credit; days from the PR date onward count in full.{" "}
-          {savedPrDate !== ""
-            ? "The projected date assumes you stay in Canada from now on, apart from any planned days away listed below."
-            : `Without a PR date every tracked day counts as half a day, so the total is capped at ${PRE_PR_CREDIT_CAP} — set the date below to count full days.`}
+          {asOf == null
+            ? null
+            : savedPrDate !== ""
+              ? "The projected date assumes you stay in Canada from now on, apart from any planned days away listed below."
+              : `Without a PR date every tracked day counts as half a day, so the total is capped at ${PRE_PR_CREDIT_CAP} — set the date below to count full days.`}
         </p>
 
         <Card>
@@ -479,8 +486,8 @@ export default function InCanadaApp(): React.JSX.Element {
             )}
           </div>
 
-          {today != null && (
-            <Calendar today={today} travelDays={travelDays} prDateStr={savedPrDate} />
+          {asOf != null && (
+            <Calendar today={asOf} travelDays={travelDays} prDateStr={savedPrDate} />
           )}
         </Card>
 
