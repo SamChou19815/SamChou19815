@@ -2,18 +2,26 @@
 
 import { useState, type ReactNode } from "react";
 import { getSupabase } from "./supabase";
-import { useAuth } from "./useAuth";
+import type { AuthState } from "./useAuth";
 
 // Result of an access-policy check for a signed-in user.
 export type AccessResult = "loading" | "allowed" | "denied";
+
+// The email to run an access check against: null until signed in.
+export function signedInEmail({ session, status }: AuthState): string | null {
+  return status === "signedIn" ? (session?.user.email ?? null) : null;
+}
 
 type Props = {
   // App name shown on the gate screens (sign-in / denied / loading).
   title: string;
   // Sentence shown above the sign-in form.
   signedOutPrompt: string;
-  // Access policy. Receives the signed-in email (or null while not signed in).
-  useAccessCheck: (email: string | null) => AccessResult;
+  // From the page's `useAuth()`.
+  auth: AuthState;
+  // The page's access-policy result, computed from `signedInEmail(auth)`. The
+  // page calls the policy hook itself so hooks are never passed around as values.
+  access: AccessResult;
   children: ReactNode;
   // Whether visitors may create an account from the sign-in screen.
   allowSignUp?: boolean;
@@ -147,15 +155,14 @@ function EmailAuthForm({
 export default function AuthGate({
   title,
   signedOutPrompt,
-  useAccessCheck,
+  auth,
+  access,
   children,
   allowSignUp = false,
   signUpRedirectPath = "/",
   deniedMessage = "Access denied — your account is not authorized.",
 }: Props): React.JSX.Element {
-  const { session, status } = useAuth();
-  const email = session?.user.email ?? null;
-  const access = useAccessCheck(status === "signedIn" ? email : null);
+  const { status } = auth;
 
   if (status === "loading") {
     return (

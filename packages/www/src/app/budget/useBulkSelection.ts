@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 export type BulkSelection<T> = {
   selected: ReadonlySet<string>;
@@ -18,21 +18,19 @@ export function useBulkSelection<T extends { id: string }>(
   rows: ReadonlyArray<T>,
 ): BulkSelection<T> {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [prevRows, setPrevRows] = useState(rows);
 
-  // Drop ids that no longer exist in the current row set (e.g. after a refresh or delete).
-  useEffect(() => {
-    setSelected((prev) => {
-      if (prev.size === 0) return prev;
+  // Drop ids that no longer exist in the current row set (e.g. after a refresh
+  // or delete). Adjusted during render rather than in an effect, so the stale
+  // selection is never committed.
+  if (rows !== prevRows) {
+    setPrevRows(rows);
+    if (selected.size > 0) {
       const valid = new Set(rows.map((r) => r.id));
-      let changed = false;
-      const next = new Set<string>();
-      for (const id of prev) {
-        if (valid.has(id)) next.add(id);
-        else changed = true;
-      }
-      return changed ? next : prev;
-    });
-  }, [rows]);
+      const next = new Set([...selected].filter((id) => valid.has(id)));
+      if (next.size !== selected.size) setSelected(next);
+    }
+  }
 
   const toggle = useCallback((id: string) => {
     setSelected((prev) => {

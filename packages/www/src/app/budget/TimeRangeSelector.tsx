@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { endOfCurrentMonth, parseLocalDate, todayISO } from "./utils";
 
 export type RangePreset = "MONTH" | "3M" | "6M" | "12M" | "YTD" | "ALL" | "CUSTOM";
@@ -55,13 +55,17 @@ export default function TimeRangeSelector({
 }): React.JSX.Element {
   const [customStart, setCustomStart] = useState<string>(todayISO());
   const [customEnd, setCustomEnd] = useState<string>(todayISO());
+  const [prevValue, setPrevValue] = useState<TimeRange | null>(null);
 
-  useEffect(() => {
+  // Mirror a custom range into the date inputs whenever a new one comes in,
+  // adjusted during render rather than in an effect.
+  if (value !== prevValue) {
+    setPrevValue(value);
     if (value.preset === "CUSTOM") {
       setCustomStart(toISODate(value.start));
       setCustomEnd(toISODate(value.end));
     }
-  }, [value]);
+  }
 
   const selectPreset = (preset: RangePreset) => {
     if (preset === "CUSTOM") {

@@ -1,11 +1,14 @@
 "use client";
 
 import { Suspense } from "react";
-import AuthGate from "../../lib/AuthGate";
+import AuthGate, { signedInEmail } from "../../lib/AuthGate";
+import { useAuth } from "../../lib/useAuth";
 import BudgetApp from "./BudgetApp";
 import { useWhitelist } from "./useWhitelist";
 
 export default function BudgetPage(): React.JSX.Element {
+  const auth = useAuth();
+  const access = useWhitelist(signedInEmail(auth));
   return (
     <Suspense fallback={<LoadingShell />}>
       <AuthGate
@@ -14,7 +17,8 @@ export default function BudgetPage(): React.JSX.Element {
         deniedMessage="Access denied — your account is not on the whitelist."
         allowSignUp
         signUpRedirectPath="/budget"
-        useAccessCheck={useWhitelist}
+        auth={auth}
+        access={access}
       >
         <BudgetApp />
       </AuthGate>

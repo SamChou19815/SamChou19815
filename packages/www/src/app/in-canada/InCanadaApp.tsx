@@ -348,8 +348,17 @@ export default function InCanadaApp(): React.JSX.Element {
   const { session } = useAuth();
   const userId = session?.user.id ?? null;
 
-  const [today, setToday] = useState<Date | null>(null);
-  const [loadState, setLoadState] = useState<LoadState>("loading");
+  // Rendered only once signed in (behind `AuthGate`), so never on the server:
+  // reading the clock in the initializer can't cause a hydration mismatch.
+  const [today] = useState(() => new Date());
+  // Tagged with the user it was loaded for, so a stale row reads as "loading"
+  // instead of being reset synchronously when the user changes.
+  const [loaded, setLoaded] = useState<{
+    userId: string;
+    state: Exclude<LoadState, "loading">;
+  } | null>(null);
+  const loadState: LoadState =
+    userId != null && loaded?.userId === userId ? loaded.state : "loading";
   // The persisted values, and the (possibly edited) form values.
   const [savedText, setSavedText] = useState("");
   const [draftText, setDraftText] = useState("");
@@ -360,13 +369,8 @@ export default function InCanadaApp(): React.JSX.Element {
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   useEffect(() => {
-    setToday(new Date());
-  }, []);
-
-  useEffect(() => {
     if (userId == null) return;
     let cancelled = false;
-    setLoadState("loading");
     getSupabase()
       .from("in_canada")
       // Every column rather than a named list: PostgREST rejects a select that
@@ -378,7 +382,7 @@ export default function InCanadaApp(): React.JSX.Element {
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error != null) {
-          setLoadState("error");
+          setLoaded({ userId, state: "error" });
           setMessage({ kind: "error", text: error.message });
           return;
         }
@@ -388,7 +392,7 @@ export default function InCanadaApp(): React.JSX.Element {
         const prDate = data?.pr_date ?? "";
         setSavedPrDate(prDate);
         setDraftPrDate(prDate);
-        setLoadState("ready");
+        setLoaded({ userId, state: "ready" });
       });
     return () => {
       cancelled = true;
