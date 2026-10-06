@@ -160,14 +160,14 @@ function MonthCalendar({
       if (isMissing) {
         className += "border border-red-400 text-red-500 font-medium";
       } else if (isTravel) {
-        className += "border border-amber-400 text-amber-600 font-medium dark:text-amber-400";
+        className += "border border-lime-500 text-lime-600 font-medium dark:text-lime-400";
       } else {
         className += "text-gray-300 dark:text-gray-600";
       }
     } else if (isMissing) {
       className += "bg-red-400 text-white font-medium";
     } else if (isTravel) {
-      className += "bg-amber-400 text-white font-medium";
+      className += "bg-lime-500 text-white font-medium";
     } else {
       className += "bg-green-400 text-white";
     }
@@ -215,11 +215,11 @@ function Calendar({
       <h4 className="text-gray-700 mb-4 dark:text-gray-300">Calendar View</h4>
       <div className="flex flex-wrap items-center gap-4 mb-4 text-xs">
         <Legend swatch="bg-green-400" label="In Canada" />
-        <Legend swatch="bg-amber-400" label="Departure / arrival (counts as in Canada)" />
+        <Legend swatch="bg-lime-500" label="Departure / arrival (counts as in Canada)" />
         <Legend swatch="bg-red-400" label="Outside Canada" />
         {hasPlanned && (
           <>
-            <Legend swatch="border border-amber-400" label="Planned departure / arrival" />
+            <Legend swatch="border border-lime-500" label="Planned departure / arrival" />
             <Legend swatch="border border-red-400" label="Planned outside Canada" />
           </>
         )}
