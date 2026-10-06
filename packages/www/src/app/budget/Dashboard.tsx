@@ -58,7 +58,7 @@ type Props = {
 
 function StatTile({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
-    <Card>
+    <Card bleed={false}>
       <div className="text-center">
         <div className="text-2xl font-bold text-blue-500 sm:text-3xl dark:text-blue-400">
           {value}
@@ -121,7 +121,8 @@ export default function Dashboard({
             allStart={allStart}
           />
         </div>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {/* On mobile the tiles bleed as one block, split by hairline seams. */}
+        <div className="grid grid-cols-2 gap-4 max-sm:-mx-4 max-sm:gap-px sm:grid-cols-4">
           <StatTile label={`Income (${tileLabel})`} value={formatCAD(stats.rangeIncome)} />
           <StatTile label={`Expenses (${tileLabel})`} value={formatCAD(stats.rangeExpense)} />
           <StatTile label={`Net (${tileLabel})`} value={formatCAD(stats.rangeNet)} />
