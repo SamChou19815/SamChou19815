@@ -32,6 +32,15 @@ function parseMissingDays(text: string): string[] {
     .filter((d) => d !== "");
 }
 
+/** The latest recorded day, away or travel, or `null` when nothing is recorded. */
+function lastRecordedDay({ away, travel }: TravelDays): Date | null {
+  let latest: string | null = null;
+  for (const dateStr of [...away, ...travel]) {
+    if (latest == null || dateStr > latest) latest = dateStr;
+  }
+  return latest == null ? null : parseLocalDate(latest);
+}
+
 function getDaysBetween(start: Date, end: Date): number {
   const msPerDay = 24 * 60 * 60 * 1000;
   return Math.floor((end.getTime() - start.getTime()) / msPerDay) + 1;
@@ -40,13 +49,29 @@ function getDaysBetween(start: Date, end: Date): number {
 function countDaysInCanada(
   today: Date,
   awayDays: ReadonlySet<string>,
-): { totalDays: number; daysInCanada: number; missingDaysCount: number } {
+): {
+  totalDays: number;
+  daysInCanada: number;
+  missingDaysCount: number;
+  plannedAwayCount: number;
+} {
   const totalDays = getDaysBetween(START_DATE, today);
-  const missingDaysCount = [...awayDays].filter((dateStr) => {
+  let missingDaysCount = 0;
+  let plannedAwayCount = 0;
+  for (const dateStr of awayDays) {
     const date = parseLocalDate(dateStr);
-    return date >= START_DATE && date <= today;
-  }).length;
-  return { totalDays, daysInCanada: totalDays - missingDaysCount, missingDaysCount };
+    if (date > today) {
+      plannedAwayCount++;
+    } else if (date >= START_DATE) {
+      missingDaysCount++;
+    }
+  }
+  return {
+    totalDays,
+    daysInCanada: totalDays - missingDaysCount,
+    missingDaysCount,
+    plannedAwayCount,
+  };
 }
 
 // Deliberately smaller than the hero's headline number: these are the supporting
@@ -124,11 +149,21 @@ function MonthCalendar({
     const dateStr = formatLocalDate(date);
     const isMissing = travelDays.away.has(dateStr);
     const isTravel = travelDays.travel.has(dateStr);
-    const isOutOfRange = date < START_DATE || date > today;
+    const isFuture = date > today;
 
     let className = "w-5 h-5 text-xs flex items-center justify-center rounded ";
-    if (isOutOfRange) {
+    if (date < START_DATE) {
       className += "text-gray-300 dark:text-gray-600";
+    } else if (isFuture) {
+      // Planned days are outlined rather than filled: they haven't happened yet,
+      // but the eligibility projection already counts them.
+      if (isMissing) {
+        className += "border border-red-400 text-red-500 font-medium";
+      } else if (isTravel) {
+        className += "border border-amber-400 text-amber-600 font-medium dark:text-amber-400";
+      } else {
+        className += "text-gray-300 dark:text-gray-600";
+      }
     } else if (isMissing) {
       className += "bg-red-400 text-white font-medium";
     } else if (isTravel) {
@@ -167,7 +202,13 @@ function Calendar({
   travelDays: TravelDays;
   prDateStr: string;
 }): React.JSX.Element {
-  const months = getMonthsInRange(START_DATE, today);
+  // Run through the last planned day so upcoming trips are visible too.
+  const lastPlanned = lastRecordedDay(travelDays);
+  const months = getMonthsInRange(
+    START_DATE,
+    lastPlanned != null && lastPlanned > today ? lastPlanned : today,
+  );
+  const hasPlanned = lastPlanned != null && lastPlanned > today;
 
   return (
     <div className="border-t pt-4 mt-4 dark:border-t-gray-600">
@@ -176,6 +217,12 @@ function Calendar({
         <Legend swatch="bg-green-400" label="In Canada" />
         <Legend swatch="bg-amber-400" label="Departure / arrival (counts as in Canada)" />
         <Legend swatch="bg-red-400" label="Outside Canada" />
+        {hasPlanned && (
+          <>
+            <Legend swatch="border border-amber-400" label="Planned departure / arrival" />
+            <Legend swatch="border border-red-400" label="Planned outside Canada" />
+          </>
+        )}
         {prDateStr !== "" && <Legend swatch="ring-2 ring-blue-500" label="Became a PR" />}
       </div>
       <div className="flex flex-wrap gap-4 justify-center">
@@ -418,7 +465,7 @@ export default function InCanadaApp(): React.JSX.Element {
           Days before permanent residency count as half a day each, up to {PRE_PR_CREDIT_CAP} days
           of credit; days from the PR date onward count in full.{" "}
           {savedPrDate !== ""
-            ? "The projected date assumes you stay in Canada every day from now on."
+            ? "The projected date assumes you stay in Canada from now on, apart from any planned days away listed below."
             : `Without a PR date every tracked day counts as half a day, so the total is capped at ${PRE_PR_CREDIT_CAP} — set the date below to count full days.`}
         </p>
 
@@ -427,6 +474,9 @@ export default function InCanadaApp(): React.JSX.Element {
             <StatBox label="Days in Canada" value={stats?.daysInCanada ?? "—"} />
             <StatBox label="Days away" value={stats?.missingDaysCount ?? "—"} />
             <StatBox label="Total days" value={stats?.totalDays ?? "—"} />
+            {stats != null && stats.plannedAwayCount > 0 && (
+              <StatBox label="Planned days away" value={stats.plannedAwayCount} />
+            )}
           </div>
 
           {today != null && (
@@ -462,7 +512,8 @@ export default function InCanadaApp(): React.JSX.Element {
           <h3 className="mt-8 mb-2">Days outside Canada</h3>
           <p className="text-sm text-gray-500 mb-4 dark:text-gray-400">
             One date per line in <code>YYYY-MM-DD</code> format. These days are subtracted from the
-            counter. Mark the day you left with <code>(D)</code> and the day you came back with{" "}
+            counter; future dates are planned trips, which push back the projected eligibility date.
+            Mark the day you left with <code>(D)</code> and the day you came back with{" "}
             <code>(A)</code>, e.g. <code>2025-03-14 (D)</code>: any part of a day spent in Canada
             counts as a full day, so these still count as in Canada.
           </p>

@@ -242,9 +242,10 @@ fn progress(
     }
 }
 
-/// The first day the requirement is met, assuming presence in Canada every day
-/// from `as_of` onward. `None` when it stays out of reach within the horizon —
-/// notably with no PR date, where the credit is capped below the target.
+/// The first day the requirement is met, assuming presence in Canada from
+/// `as_of` onward except on future days already in `away` (planned trips).
+/// `None` when it stays out of reach within the horizon — notably with no PR
+/// date, where the credit is capped below the target.
 fn eligible_on(
     start: NaiveDate,
     as_of: NaiveDate,
@@ -370,7 +371,7 @@ fn print_citizenship(start: NaiveDate, today: NaiveDate, state: &State) {
         Some(day) => println!(
             "  Eligible on    : {} {}",
             paint(&day.format("%Y-%m-%d").to_string(), Color::Cyan),
-            paint("(if present every day)", Color::Dim)
+            paint("(if present on all days not planned away)", Color::Dim)
         ),
         None => {}
     }
