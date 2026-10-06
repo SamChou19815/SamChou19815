@@ -1,6 +1,6 @@
 //! `sam in-canada` — mirror of the In-Canada Days Counter web app.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Result};
 use chrono::{Days, Months, NaiveDate, Utc};
@@ -31,11 +31,44 @@ struct Row {
     pr_date: Option<String>,
 }
 
-/// The persisted counter state: days spent outside Canada, plus the date
-/// permanent residency began, once recorded.
+/// Marks a recorded day as the day of leaving or returning to Canada.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Marker {
+    Departure,
+    Arrival,
+}
+
+impl Marker {
+    fn suffix(self) -> &'static str {
+        match self {
+            Marker::Departure => " (D)",
+            Marker::Arrival => " (A)",
+        }
+    }
+}
+
+/// The persisted counter state: recorded travel days, plus the date permanent
+/// residency began, once recorded.
 struct State {
-    away: BTreeSet<NaiveDate>,
+    /// Unmarked days were spent entirely outside Canada. Marked days are
+    /// departure or arrival days: any part of a day spent in Canada counts as
+    /// a full day of physical presence, so those count as in Canada.
+    entries: BTreeMap<NaiveDate, Option<Marker>>,
     pr_date: Option<NaiveDate>,
+}
+
+impl State {
+    fn away(&self) -> BTreeSet<NaiveDate> {
+        away_days(&self.entries)
+    }
+}
+
+fn away_days(entries: &BTreeMap<NaiveDate, Option<Marker>>) -> BTreeSet<NaiveDate> {
+    entries
+        .iter()
+        .filter(|(_, marker)| marker.is_none())
+        .map(|(date, _)| *date)
+        .collect()
 }
 
 pub fn run(sb: &Supabase, command: Option<InCanadaCommand>) -> Result<()> {
@@ -52,7 +85,9 @@ fn start_date() -> NaiveDate {
     NaiveDate::parse_from_str(START_DATE, "%Y-%m-%d").expect("START_DATE is valid")
 }
 
-/// Fetch the persisted state. Unparseable dates are silently skipped.
+/// Fetch the persisted state. Unparseable lines are silently skipped, and a
+/// date listed both bare and marked keeps its marker, matching the web app's
+/// `parseTravelDays`.
 ///
 /// Selects every column rather than naming them: PostgREST rejects a select
 /// that names a column the table doesn't have, and `pr_date` only exists once
@@ -60,31 +95,56 @@ fn start_date() -> NaiveDate {
 fn fetch(sb: &Supabase) -> Result<State> {
     let query = format!("select=*&user_id=eq.{}", sb.user_id());
     let rows: Vec<Row> = sb.select("in_canada", &query)?;
-    let mut away = BTreeSet::new();
+    let mut entries = BTreeMap::new();
     let mut pr_date = None;
     if let Some(row) = rows.into_iter().next() {
         if let Some(text) = row.missing_days {
             for line in text.lines() {
-                if let Some(date) = parse_date(line) {
-                    away.insert(date);
+                if let Some((date, marker)) = parse_entry(line) {
+                    let slot = entries.entry(date).or_insert(marker);
+                    if slot.is_none() {
+                        *slot = marker;
+                    }
                 }
             }
         }
         pr_date = row.pr_date.as_deref().and_then(parse_date);
     }
-    Ok(State { away, pr_date })
+    Ok(State { entries, pr_date })
 }
 
 fn parse_date(text: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d").ok()
 }
 
-/// Persist the set back, one ISO date per line (matching the web app's format).
+/// `YYYY-MM-DD`, optionally followed by a `(D)` departure or `(A)` arrival
+/// marker. Mirrors `parseTravelDays` in the web app.
+fn parse_entry(text: &str) -> Option<(NaiveDate, Option<Marker>)> {
+    let text = text.trim();
+    let (date, rest) = text.split_at_checked(10)?;
+    let marker = match rest.trim_start().to_ascii_uppercase().as_str() {
+        "" => None,
+        "(D)" => Some(Marker::Departure),
+        "(A)" => Some(Marker::Arrival),
+        _ => return None,
+    };
+    Some((parse_date(date)?, marker))
+}
+
+fn format_entry(date: NaiveDate, marker: Option<Marker>) -> String {
+    format!(
+        "{}{}",
+        date.format("%Y-%m-%d"),
+        marker.map_or("", Marker::suffix)
+    )
+}
+
+/// Persist the entries back, one per line (matching the web app's format).
 /// `pr_date` is left out of the payload so the upsert doesn't disturb it.
-fn save_missing_days(sb: &Supabase, days: &BTreeSet<NaiveDate>) -> Result<()> {
-    let text = days
+fn save_missing_days(sb: &Supabase, entries: &BTreeMap<NaiveDate, Option<Marker>>) -> Result<()> {
+    let text = entries
         .iter()
-        .map(|d| d.format("%Y-%m-%d").to_string())
+        .map(|(date, marker)| format_entry(*date, *marker))
         .collect::<Vec<_>>()
         .join("\n");
     let body = json!({
@@ -225,7 +285,7 @@ fn status(sb: &Supabase) -> Result<()> {
     let state = fetch(sb)?;
     let start = start_date();
     let today = Utc::now().date_naive();
-    let c = counts(start, today, &state.away);
+    let c = counts(start, today, &state.away());
 
     println!("{}", bold(&paint("In-Canada Days Counter", Color::Blue)));
     println!(
@@ -254,7 +314,8 @@ fn status(sb: &Supabase) -> Result<()> {
 }
 
 fn print_citizenship(start: NaiveDate, today: NaiveDate, state: &State) {
-    let p = progress(start, today, state.pr_date, &state.away);
+    let away = state.away();
+    let p = progress(start, today, state.pr_date, &away);
 
     println!();
     println!("{}", bold(&paint("Progress to citizenship", Color::Blue)));
@@ -301,7 +362,7 @@ fn print_citizenship(start: NaiveDate, today: NaiveDate, state: &State) {
     let pct = p.total as f64 / TARGET_DAYS as f64 * 100.0;
     println!("  {}  {}  {:>3.0}%", progress_bar(&p, bar_w), summary, pct);
 
-    match eligible_on(start, today, state.pr_date, &state.away) {
+    match eligible_on(start, today, state.pr_date, &away) {
         Some(day) if day <= today => println!(
             "  {}",
             paint("Requirement met — you can apply today.", Color::Green)
@@ -325,13 +386,19 @@ fn print_citizenship(start: NaiveDate, today: NaiveDate, state: &State) {
 }
 
 fn list(sb: &Supabase) -> Result<()> {
-    let days = fetch(sb)?.away;
+    let days = fetch(sb)?.entries;
     if days.is_empty() {
         println!("No days outside Canada recorded.");
         return Ok(());
     }
-    for day in &days {
-        println!("{}", paint(&day.format("%Y-%m-%d").to_string(), Color::Red));
+    for (day, marker) in &days {
+        // Departure and arrival days count as in Canada, so they aren't red.
+        let color = if marker.is_some() {
+            Color::Yellow
+        } else {
+            Color::Red
+        };
+        println!("{}", paint(&format_entry(*day, *marker), color));
     }
     println!(
         "{}",
@@ -340,10 +407,14 @@ fn list(sb: &Supabase) -> Result<()> {
     Ok(())
 }
 
+/// Record entries, replacing the marker of a date that's already recorded.
 fn add(sb: &Supabase, dates: &[String]) -> Result<()> {
-    let parsed = parse_dates(dates)?;
-    let mut days = fetch(sb)?.away;
-    let added = parsed.iter().filter(|d| days.insert(**d)).count();
+    let parsed = parse_entries(dates)?;
+    let mut days = fetch(sb)?.entries;
+    let added = parsed
+        .iter()
+        .filter(|(date, marker)| days.insert(*date, *marker) != Some(*marker))
+        .count();
     save_missing_days(sb, &days)?;
     println!(
         "{} day(s) added; {} total.",
@@ -353,10 +424,14 @@ fn add(sb: &Supabase, dates: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Forget entries by date; any marker given is ignored.
 fn remove(sb: &Supabase, dates: &[String]) -> Result<()> {
-    let parsed = parse_dates(dates)?;
-    let mut days = fetch(sb)?.away;
-    let removed = parsed.iter().filter(|d| days.remove(*d)).count();
+    let parsed = parse_entries(dates)?;
+    let mut days = fetch(sb)?.entries;
+    let removed = parsed
+        .iter()
+        .filter(|(date, _)| days.remove(date).is_some())
+        .count();
     save_missing_days(sb, &days)?;
     println!(
         "{} day(s) removed; {} total.",
@@ -398,6 +473,14 @@ fn parse_date_arg(date: &str) -> Result<NaiveDate> {
     }
 }
 
-fn parse_dates(dates: &[String]) -> Result<Vec<NaiveDate>> {
-    dates.iter().map(|d| parse_date_arg(d)).collect()
+fn parse_entries(dates: &[String]) -> Result<Vec<(NaiveDate, Option<Marker>)>> {
+    dates
+        .iter()
+        .map(|d| match parse_entry(d) {
+            Some(entry) => Ok(entry),
+            None => {
+                bail!("invalid date '{d}' (expected YYYY-MM-DD, optionally followed by (D) or (A))")
+            }
+        })
+        .collect()
 }
