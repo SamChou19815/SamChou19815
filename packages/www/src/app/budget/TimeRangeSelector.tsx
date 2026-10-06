@@ -23,8 +23,8 @@ const PRESET_LABELS: Record<RangePreset, string> = {
 
 const DEFAULT_PRESETS: ReadonlyArray<RangePreset> = ["3M", "6M", "12M", "YTD", "ALL", "CUSTOM"];
 
-function startForPreset(preset: RangePreset, end: Date): Date {
-  if (preset === "ALL") return new Date(2000, 0, 1);
+function startForPreset(preset: RangePreset, end: Date, allStart: Date): Date {
+  if (preset === "ALL") return allStart;
   if (preset === "YTD") return new Date(end.getFullYear(), 0, 1);
   if (preset === "MONTH") return new Date(end.getFullYear(), end.getMonth(), 1);
   const months = preset === "3M" ? 3 : preset === "6M" ? 6 : 12;
@@ -32,9 +32,10 @@ function startForPreset(preset: RangePreset, end: Date): Date {
   return d;
 }
 
-export function rangeFromPreset(preset: Exclude<RangePreset, "CUSTOM">): TimeRange {
+/** `allStart` is where the "ALL" preset begins: the start of the earliest data. */
+export function rangeFromPreset(preset: Exclude<RangePreset, "CUSTOM">, allStart: Date): TimeRange {
   const end = preset === "MONTH" ? endOfCurrentMonth() : new Date();
-  return { start: startForPreset(preset, end), end, preset };
+  return { start: startForPreset(preset, end, allStart), end, preset };
 }
 
 export function presetLabel(preset: RangePreset): string {
@@ -48,10 +49,12 @@ export default function TimeRangeSelector({
   value,
   onChange,
   presets = DEFAULT_PRESETS,
+  allStart,
 }: {
   value: TimeRange;
   onChange: (range: TimeRange) => void;
   presets?: ReadonlyArray<RangePreset>;
+  allStart: Date;
 }): React.JSX.Element {
   const [customStart, setCustomStart] = useState<string>(todayISO());
   const [customEnd, setCustomEnd] = useState<string>(todayISO());
@@ -76,7 +79,7 @@ export default function TimeRangeSelector({
       });
       return;
     }
-    onChange(rangeFromPreset(preset));
+    onChange(rangeFromPreset(preset, allStart));
   };
 
   return (
@@ -132,8 +135,4 @@ function toISODate(d: Date): string {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
-}
-
-export function defaultRange(): TimeRange {
-  return rangeFromPreset("12M");
 }
