@@ -16,6 +16,17 @@ anyhow.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap.workspace = true
 directories.workspace = true
+# Desktop GUI for `sam knowledge-graph`. tiny-skia is the pure-Rust software
+# renderer: the Linux release binaries stay fully static with no GPU stack,
+# and x11/wayland are loaded at runtime by the windowing layer.
+iced = { version = "0.14", default-features = false, features = [
+  "tiny-skia",
+  "canvas",
+  "x11",
+  "wayland",
+  "fira-sans",
+  "thread-pool",
+] }
 ratatui = "0.30"
 reqwest.workspace = true
 rpassword = "7"
