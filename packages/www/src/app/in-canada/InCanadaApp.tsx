@@ -8,6 +8,7 @@ import {
   computeCitizenshipProgress,
   findMilestoneDates,
   formatLocalDate,
+  liveCitizenshipPercent,
   MILESTONES,
   parseTravelDays,
   PRE_PR_CREDIT_CAP,
@@ -271,6 +272,9 @@ function buildStops(today: Date, prDate: Date | null, awayDays: ReadonlySet<stri
 /**
  * Jumps the whole page to the day a milestone was (or is projected to be)
  * reached. Future stops are outlined, like planned days on the calendar.
+ *
+ * On mobile the stops wrap to several rows and would push the page's content
+ * down, so they start collapsed behind a toggle that names the current stop.
  */
 function TimeTravel({
   stops,
@@ -283,12 +287,34 @@ function TimeTravel({
   selectedKey: string;
   onSelect: (key: string) => void;
 }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const headingClassName =
+    "text-xs font-semibold uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400";
+  const selectedLabel = stops.find(({ key }) => key === selectedKey)?.label;
   return (
     <nav aria-label="Time travel">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400">
-        Time travel
-      </h3>
-      <div className="flex flex-wrap gap-2">
+      <h3 className={`mb-3 max-sm:hidden ${headingClassName}`}>Time travel</h3>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls="time-travel-stops"
+        onClick={() => setExpanded((e) => !e)}
+        className={`flex w-full items-center justify-between sm:hidden ${headingClassName} ${expanded ? "mb-3" : ""}`}
+      >
+        <span>
+          Time travel
+          {selectedLabel != null && (
+            <span className="text-blue-500 dark:text-blue-400">{` · ${selectedLabel}`}</span>
+          )}
+        </span>
+        <span aria-hidden className={`transition-transform ${expanded ? "rotate-180" : ""}`}>
+          ▾
+        </span>
+      </button>
+      <div
+        id="time-travel-stops"
+        className={`flex flex-wrap gap-2 ${expanded ? "" : "max-sm:hidden"}`}
+      >
         {stops.map(({ key, label, date }) => {
           const selected = key === selectedKey;
           let className =
@@ -351,6 +377,46 @@ function ProgressBar({ progress }: { progress: CitizenshipProgress }): React.JSX
   );
 }
 
+/** How often the live percentage re-reads the clock. */
+const PERCENT_TICK_MS = 10_000;
+
+/**
+ * Enough decimals that the figure changes on every tick even at the pre-PR half
+ * rate: ten seconds of a half day is about 5e-6 percent of the target.
+ */
+const PERCENT_DECIMALS = 6;
+
+/**
+ * The hero's headline percentage. With `live` it re-reads the clock every
+ * {@link PERCENT_TICK_MS}; it ticks in its own component so only this figure re-renders, not
+ * the whole page and its calendar.
+ */
+function PercentFigure({
+  percent,
+  live,
+}: {
+  percent: number;
+  /** The percent at a given instant, or `null` for a fixed (time-travelled) figure. */
+  live: ((now: Date) => number) | null;
+}): React.JSX.Element {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    if (live == null) return;
+    const interval = setInterval(() => setNow(new Date()), PERCENT_TICK_MS);
+    return () => clearInterval(interval);
+  }, [live]);
+  const value = live?.(now) ?? percent;
+  const [whole, fraction] = value.toFixed(PERCENT_DECIMALS).split(".");
+  return (
+    // Only the whole part is headline-sized: the decimals are there to show
+    // movement, and at full size they wouldn't fit a phone screen.
+    <span className="font-bold leading-none tracking-tight tabular-nums">
+      <span className="text-7xl">{whole}</span>
+      <span className="text-3xl text-slate-300">{`.${fraction}%`}</span>
+    </span>
+  );
+}
+
 /**
  * The one fact the page exists to answer, stated once and large. The stats that
  * used to sit in a card below duplicated every number here, so that card is
@@ -358,12 +424,14 @@ function ProgressBar({ progress }: { progress: CitizenshipProgress }): React.JSX
  */
 function Hero({
   progress,
+  livePercent,
   eligibleOn,
   today,
   travelling,
   hasPrDate,
 }: {
   progress: CitizenshipProgress | null;
+  livePercent: ((now: Date) => number) | null;
   eligibleOn: Date | null;
   today: Date | null;
   /** Whether `today` is a time-travel destination rather than the real today. */
@@ -383,10 +451,12 @@ function Hero({
 
         <div className="mt-8 flex flex-wrap items-end justify-between gap-x-12 gap-y-6">
           <div>
-            <div className="flex items-baseline gap-4">
-              <span className="text-7xl font-bold leading-none tracking-tight">
-                {progress != null ? `${Math.round(progress.percent)}%` : "—"}
-              </span>
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+              {progress != null ? (
+                <PercentFigure percent={progress.percent} live={livePercent} />
+              ) : (
+                <span className="text-7xl font-bold leading-none tracking-tight">—</span>
+              )}
               <span className="text-lg text-slate-400">toward citizenship</span>
             </div>
             <p className="mt-4 text-slate-300">
@@ -520,6 +590,14 @@ export default function InCanadaApp(): React.JSX.Element {
     () => (asOf == null ? null : computeCitizenshipProgress(asOf, prDate, missingDaysSet)),
     [asOf, prDate, missingDaysSet],
   );
+  // Only the real today is live: a time-travel destination is a fixed day.
+  const livePercent = useMemo(
+    () =>
+      asOf == null || travelling
+        ? null
+        : (now: Date) => liveCitizenshipPercent(now, prDate, missingDaysSet),
+    [asOf, travelling, prDate, missingDaysSet],
+  );
   const eligibleOn = useMemo(
     () => (asOf == null ? null : projectEligibility(asOf, prDate, missingDaysSet)),
     [asOf, prDate, missingDaysSet],
@@ -562,6 +640,7 @@ export default function InCanadaApp(): React.JSX.Element {
     <div>
       <Hero
         progress={progress}
+        livePercent={livePercent}
         eligibleOn={eligibleOn}
         today={asOf}
         travelling={travelling}

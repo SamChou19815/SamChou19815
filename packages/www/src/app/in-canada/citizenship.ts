@@ -123,6 +123,35 @@ export function computeCitizenshipProgress(
   };
 }
 
+/**
+ * `percent` at the instant `now` rather than at the end of its day, for a
+ * figure that moves while you watch. Today's credit accrues over the day
+ * instead of landing at once, and pre-PR days aren't floored to whole credited
+ * days, so even the half rate shows up within seconds. At the end of a day
+ * with an even pre-PR count it matches `computeCitizenshipProgress` exactly.
+ */
+export function liveCitizenshipPercent(
+  now: Date,
+  prDate: Date | null,
+  awayDays: ReadonlySet<string>,
+): number {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let { prePrDays, prDays } = computeCitizenshipProgress(today, prDate, awayDays);
+  if (today >= START_DATE && !awayDays.has(formatLocalDate(today))) {
+    // Today was counted whole; take back the part of it still to come. Measured
+    // against the day's real length, which DST can make 23 or 25 hours.
+    const tomorrow = addDays(today, 1).getTime();
+    const unelapsed = (tomorrow - now.getTime()) / (tomorrow - today.getTime());
+    if (prDate != null && today >= prDate) {
+      prDays -= unelapsed;
+    } else {
+      prePrDays -= unelapsed;
+    }
+  }
+  const credit = Math.min(prePrDays / 2, PRE_PR_CREDIT_CAP) + prDays;
+  return Math.min(100, (credit / TARGET_DAYS) * 100);
+}
+
 export type Milestone = {
   key: string;
   label: string;
