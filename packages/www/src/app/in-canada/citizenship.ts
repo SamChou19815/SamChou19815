@@ -123,6 +123,87 @@ export function computeCitizenshipProgress(
   };
 }
 
+export type Milestone = {
+  key: string;
+  label: string;
+  /** Credited days needed to reach it. */
+  threshold: number;
+};
+
+/**
+ * Progress milestones in ascending order. Thresholds are rounded up, so on the
+ * milestone's date the credited share is at least the stated fraction.
+ */
+export const MILESTONES: readonly Milestone[] = (
+  [
+    ["10", "10%", 1, 10],
+    ["20", "20%", 2, 10],
+    ["25", "25%", 1, 4],
+    ["30", "30%", 3, 10],
+    ["33", "⅓", 1, 3],
+    ["40", "40%", 4, 10],
+    ["50", "50%", 1, 2],
+    ["60", "60%", 6, 10],
+    ["67", "⅔", 2, 3],
+    ["70", "70%", 7, 10],
+    ["75", "75%", 3, 4],
+    ["80", "80%", 8, 10],
+    ["90", "90%", 9, 10],
+    ["100", "Done", 1, 1],
+  ] as const
+).map(([key, label, numerator, denominator]) => ({
+  key,
+  label,
+  // Multiply before dividing so exact fractions like ⅓ of 1095 stay integral.
+  threshold: Math.ceil((TARGET_DAYS * numerator) / denominator),
+}));
+
+/**
+ * The first day each of `MILESTONES` is reached, keyed by `Milestone.key`, or
+ * `null` when it stays out of reach within the projection horizon past `asOf`.
+ * Days after `asOf` are projected the same way as `projectEligibility`.
+ *
+ * Equivalent to calling `computeCitizenshipProgress` for every day from
+ * `START_DATE`, but slides the window along instead of recounting it.
+ */
+export function findMilestoneDates(
+  asOf: Date,
+  prDate: Date | null,
+  awayDays: ReadonlySet<string>,
+): ReadonlyMap<string, Date | null> {
+  const dates = new Map<string, Date | null>(MILESTONES.map(({ key }) => [key, null]));
+  let prePrDays = 0;
+  let prDays = 0;
+  const count = (day: Date, delta: number) => {
+    if (awayDays.has(formatLocalDate(day))) return;
+    if (prDate != null && day >= prDate) {
+      prDays += delta;
+    } else {
+      prePrDays += delta;
+    }
+  };
+
+  const end = addDays(asOf, PROJECTION_HORIZON_DAYS);
+  // The oldest day still inside the window.
+  let tail = START_DATE;
+  let next = 0;
+  for (let day = START_DATE; day <= end && next < MILESTONES.length; day = addDays(day, 1)) {
+    count(day, 1);
+    const start = windowStart(day);
+    while (tail < start) {
+      count(tail, -1);
+      tail = addDays(tail, 1);
+    }
+    const total = Math.min(Math.floor(prePrDays / 2), PRE_PR_CREDIT_CAP) + prDays;
+    for (let milestone = MILESTONES[next]; milestone != null; milestone = MILESTONES[next]) {
+      if (total < milestone.threshold) break;
+      dates.set(milestone.key, day);
+      next++;
+    }
+  }
+  return dates;
+}
+
 /**
  * The first day the requirement is met, assuming presence in Canada from `asOf`
  * onward except on future days already in `awayDays` (planned trips). `null`

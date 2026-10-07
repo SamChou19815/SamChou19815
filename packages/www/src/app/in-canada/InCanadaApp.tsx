@@ -6,7 +6,9 @@ import { useAuth } from "../../lib/useAuth";
 import { parseLocalDate } from "../budget/utils";
 import {
   computeCitizenshipProgress,
+  findMilestoneDates,
   formatLocalDate,
+  MILESTONES,
   parseTravelDays,
   PRE_PR_CREDIT_CAP,
   projectEligibility,
@@ -241,6 +243,82 @@ function Calendar({
   );
 }
 
+/** A point the page can travel to. `null` `date` means it's out of reach. */
+type Stop = { key: string; label: string; date: Date | null };
+
+const TODAY_KEY = "today";
+
+/**
+ * Today, the PR date and every progress milestone, in date order with
+ * unreachable milestones last. A PR date before counting began is left out:
+ * there's nothing to show for it.
+ */
+function buildStops(today: Date, prDate: Date | null, awayDays: ReadonlySet<string>): Stop[] {
+  const milestoneDates = findMilestoneDates(today, prDate, awayDays);
+  const stops: Stop[] = [
+    { key: TODAY_KEY, label: "Today", date: today },
+    ...(prDate != null && prDate >= START_DATE ? [{ key: "pr", label: "PR", date: prDate }] : []),
+    ...MILESTONES.map(({ key, label }) => ({ key, label, date: milestoneDates.get(key) ?? null })),
+  ];
+  const time = (stop: Stop) => stop.date?.getTime() ?? Infinity;
+  return stops.sort((a, b) => (time(a) === time(b) ? 0 : time(a) - time(b)));
+}
+
+/**
+ * Jumps the whole page to the day a milestone was (or is projected to be)
+ * reached. Future stops are outlined, like planned days on the calendar.
+ */
+function TimeTravel({
+  stops,
+  today,
+  selectedKey,
+  onSelect,
+}: {
+  stops: readonly Stop[];
+  today: Date;
+  selectedKey: string;
+  onSelect: (key: string) => void;
+}): React.JSX.Element {
+  return (
+    <nav aria-label="Time travel">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400">
+        Time travel
+      </h3>
+      <div className="flex flex-wrap gap-2">
+        {stops.map(({ key, label, date }) => {
+          const selected = key === selectedKey;
+          let className =
+            "flex flex-col items-start rounded px-3 py-1.5 text-left transition-colors ";
+          if (selected) {
+            className +=
+              "border border-blue-500 bg-blue-500 text-white dark:border-blue-400 dark:bg-blue-400 dark:text-gray-900";
+          } else if (date == null) {
+            className +=
+              "border border-gray-200 text-gray-400 dark:border-gray-700 dark:text-gray-600";
+          } else {
+            className += `border ${date > today ? "border-dashed" : ""} border-gray-300 text-gray-700 hover:border-blue-400 hover:text-blue-600 dark:border-gray-600 dark:text-gray-300 dark:hover:border-blue-400 dark:hover:text-blue-300`;
+          }
+          return (
+            <button
+              key={key}
+              type="button"
+              disabled={date == null}
+              aria-pressed={selected}
+              onClick={() => onSelect(key)}
+              className={className}
+            >
+              <span className="text-sm font-semibold">{label}</span>
+              <span className="text-xs opacity-75">
+                {date?.toLocaleDateString("en-CA") ?? "Out of reach"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
 /**
  * A stacked bar toward {@link TARGET_DAYS}: pre-PR credit (half rate) in blue,
  * days as a PR (full rate) in green. Keeping the two rates as separate segments
@@ -278,11 +356,14 @@ function Hero({
   progress,
   eligibleOn,
   today,
+  travelling,
   hasPrDate,
 }: {
   progress: CitizenshipProgress | null;
   eligibleOn: Date | null;
   today: Date | null;
+  /** Whether `today` is a time-travel destination rather than the real today. */
+  travelling: boolean;
   hasPrDate: boolean;
 }): React.JSX.Element {
   const alreadyEligible = eligibleOn != null && today != null && eligibleOn <= today;
@@ -291,6 +372,9 @@ function Hero({
       <div className="mx-auto max-w-6xl px-6 pt-12 pb-10">
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
           In-Canada Days Counter
+          {travelling && today != null && (
+            <span className="text-blue-300">{` · As of ${today.toLocaleDateString("en-CA")}`}</span>
+          )}
         </p>
 
         <div className="mt-8 flex flex-wrap items-end justify-between gap-x-12 gap-y-6">
@@ -405,10 +489,9 @@ export default function InCanadaApp(): React.JSX.Element {
     return () => clearTimeout(t);
   }, [message]);
 
-  // Nothing is computed until the saved row has loaded: deriving numbers from
-  // the empty initial state would flash a wrong count (no days away, no PR
-  // date) before the real one replaces it.
-  const asOf = loadState === "ready" ? today : null;
+  // A stop key rather than a date, so the destination follows its milestone
+  // when saved changes move it.
+  const [travelKey, setTravelKey] = useState(TODAY_KEY);
 
   // Stats reflect the saved values, not in-progress edits.
   const travelDays = useMemo(() => parseTravelDays(savedText), [savedText]);
@@ -417,6 +500,18 @@ export default function InCanadaApp(): React.JSX.Element {
     () => (savedPrDate === "" ? null : parseLocalDate(savedPrDate)),
     [savedPrDate],
   );
+
+  // Nothing is computed until the saved row has loaded: deriving numbers from
+  // the empty initial state would flash a wrong count (no days away, no PR
+  // date) before the real one replaces it.
+  const stops = useMemo(
+    () => (loadState === "ready" ? buildStops(today, prDate, missingDaysSet) : null),
+    [loadState, today, prDate, missingDaysSet],
+  );
+  // A destination that has become unreachable falls back to today.
+  const destination = stops?.find(({ key }) => key === travelKey)?.date ?? null;
+  const asOf = loadState === "ready" ? (destination ?? today) : null;
+  const travelling = asOf != null && destination != null && travelKey !== TODAY_KEY;
   const progress = useMemo(
     () => (asOf == null ? null : computeCitizenshipProgress(asOf, prDate, missingDaysSet)),
     [asOf, prDate, missingDaysSet],
@@ -465,10 +560,20 @@ export default function InCanadaApp(): React.JSX.Element {
         progress={progress}
         eligibleOn={eligibleOn}
         today={asOf}
+        travelling={travelling}
         hasPrDate={savedPrDate !== ""}
       />
 
       <div className="mx-auto w-full max-w-6xl px-6 py-10 flex flex-col gap-6">
+        {stops != null && (
+          <TimeTravel
+            stops={stops}
+            today={today}
+            selectedKey={travelling ? travelKey : TODAY_KEY}
+            onSelect={setTravelKey}
+          />
+        )}
+
         <p className="max-w-3xl text-sm text-gray-500 dark:text-gray-400">
           {TARGET_DAYS.toLocaleString()} days of physical presence in the last {WINDOW_YEARS} years.
           Days before permanent residency count as half a day each, up to {PRE_PR_CREDIT_CAP} days
