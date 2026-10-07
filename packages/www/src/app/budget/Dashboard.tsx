@@ -22,6 +22,27 @@ import { cadValue, formatCAD, parseLocalDate } from "./utils";
 
 const PRESETS: ReadonlyArray<RangePreset> = ["MONTH", "3M", "6M", "12M", "YTD", "ALL", "CUSTOM"];
 
+/**
+ * The first day of the month holding the earliest income, expense or
+ * investment snapshot, or of the current month when there's no data yet.
+ */
+function earliestDataMonth(
+  incomes: ReadonlyArray<Income>,
+  expenses: ReadonlyArray<Expense>,
+  snapshots: ReadonlyArray<InvestmentSnapshot>,
+): Date {
+  let earliest = new Date();
+  for (const { date } of [...incomes, ...expenses]) {
+    const d = parseLocalDate(date);
+    if (d < earliest) earliest = d;
+  }
+  for (const { recorded_at } of snapshots) {
+    const d = new Date(recorded_at);
+    if (d < earliest) earliest = d;
+  }
+  return new Date(earliest.getFullYear(), earliest.getMonth(), 1);
+}
+
 function dateInRange(dateStr: string, range: TimeRange): boolean {
   const d = parseLocalDate(dateStr);
   return d >= range.start && d <= range.end;
@@ -55,7 +76,17 @@ export default function Dashboard({
   snapshots,
   loading,
 }: Props): React.JSX.Element {
-  const [range, setRange] = useState<TimeRange>(() => rangeFromPreset("12M"));
+  const allStart = useMemo(
+    () => earliestDataMonth(incomes, expenses, snapshots),
+    [incomes, expenses, snapshots],
+  );
+  const [selectedRange, setRange] = useState<TimeRange>(() => rangeFromPreset("12M", allStart));
+  // "ALL" follows the data rather than the moment it was picked, so rows that
+  // load or arrive later still extend it.
+  const range = useMemo(
+    () => (selectedRange.preset === "ALL" ? { ...selectedRange, start: allStart } : selectedRange),
+    [selectedRange, allStart],
+  );
 
   const stats = useMemo(() => {
     const rangeIncome = incomes
@@ -83,7 +114,12 @@ export default function Dashboard({
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <TimeRangeSelector value={range} onChange={setRange} presets={PRESETS} />
+          <TimeRangeSelector
+            value={selectedRange}
+            onChange={setRange}
+            presets={PRESETS}
+            allStart={allStart}
+          />
         </div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatTile label={`Income (${tileLabel})`} value={formatCAD(stats.rangeIncome)} />
