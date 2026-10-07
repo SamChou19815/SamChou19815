@@ -12,15 +12,23 @@ import Tabs, { useActiveTab } from "./Tabs";
 import { useRealtimeRows } from "./useRealtimeRows";
 import type { Expense, Income, Investment, InvestmentSnapshot } from "./types";
 
+/**
+ * On mobile a card is a flat, square band running edge to edge: `-mx-4`
+ * cancels the page container's `px-4`. Pass `bleed={false}` for a card that
+ * shares a row with others, and let the row bleed instead.
+ */
 export function Card({
   className,
+  bleed = true,
   children,
 }: {
   className?: string;
+  bleed?: boolean;
   children: ReactNode;
 }): React.JSX.Element {
-  const base =
-    "flex flex-col bg-white rounded filter drop-shadow hover:drop-shadow-lg transition-all duration-300 ease-out p-6 dark:bg-[#242424] dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.3)] dark:hover:drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]";
+  let base =
+    "flex flex-col bg-white transition-all duration-300 ease-out p-6 dark:bg-[#242424] sm:rounded sm:filter sm:drop-shadow sm:hover:drop-shadow-lg sm:dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.3)] sm:dark:hover:drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]";
+  if (bleed) base += " max-sm:-mx-4";
   return <div className={className != null ? `${base} ${className}` : base}>{children}</div>;
 }
 

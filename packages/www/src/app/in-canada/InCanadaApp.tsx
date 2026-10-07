@@ -19,9 +19,13 @@ import {
   type TravelDays,
 } from "./citizenship";
 
+/**
+ * On mobile a card is a flat, square band running edge to edge: `-mx-6`
+ * cancels the page container's `px-6`.
+ */
 export function Card({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <div className="flex flex-col bg-white rounded filter drop-shadow hover:drop-shadow-lg transition-all duration-300 ease-out p-6 dark:bg-[#242424] dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.3)] dark:hover:drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]">
+    <div className="flex flex-col bg-white transition-all duration-300 ease-out p-6 dark:bg-[#242424] max-sm:-mx-6 sm:rounded sm:filter sm:drop-shadow sm:hover:drop-shadow-lg sm:dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.3)] sm:dark:hover:drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]">
       {children}
     </div>
   );
