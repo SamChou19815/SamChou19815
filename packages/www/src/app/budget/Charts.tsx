@@ -15,6 +15,8 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  type PieLabelRenderProps,
+  type TooltipContentProps,
 } from "recharts";
 import type { Expense, Income, Investment, InvestmentSnapshot } from "./types";
 import {
@@ -93,7 +95,7 @@ export function MonthlyTotalsChart({
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
-        <Tooltip formatter={(v) => formatCAD(Number(v))} />
+        <Tooltip content={ChartTooltip} cursor={TOOLTIP_CURSOR} />
         <Legend />
         <Bar dataKey="income" fill="#10b981" name="Income" />
         <Bar dataKey="expense" fill="#ef4444" name="Expenses" />
@@ -158,17 +160,20 @@ export function MonthlyExpenseByCategory({
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-          <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+          <XAxis dataKey="month" tick={{ fontSize: 12 }} padding={X_PADDING} />
           <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
           <Tooltip
-            formatter={(v, name, item) => {
-              const value = Number(v);
-              const month = String(item.payload?.month ?? "");
-              const avg = yearlyAvg.get(`${month.slice(0, 4)}|${String(name)}`) ?? 0;
-              const diff = value - avg;
-              const sign = diff >= 0 ? "+" : "-";
-              return `${formatCAD(value)} (${sign}${formatCAD(Math.abs(diff))} vs ${month.slice(0, 4)} avg)`;
-            }}
+            cursor={TOOLTIP_CURSOR}
+            content={
+              <ChartTooltip
+                detail={(value, name, month) => {
+                  const year = month.slice(0, 4);
+                  const diff = value - (yearlyAvg.get(`${year}|${name}`) ?? 0);
+                  const sign = diff >= 0 ? "+" : "-";
+                  return `${sign}${formatCAD(Math.abs(diff))} vs ${year} avg`;
+                }}
+              />
+            }
           />
           <Legend />
           {categories.map((cat, idx) => (
@@ -192,7 +197,7 @@ export function MonthlyExpenseByCategory({
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
-        <Tooltip formatter={(v) => formatCAD(Number(v))} />
+        <Tooltip content={ChartTooltip} cursor={TOOLTIP_CURSOR} />
         <Legend />
         {categories.map((cat, idx) => (
           <Bar
@@ -236,9 +241,9 @@ export function CashFlowLine({
     <ResponsiveContainer width="100%" height={300}>
       <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+        <XAxis dataKey="month" tick={{ fontSize: 12 }} padding={X_PADDING} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
-        <Tooltip formatter={(v) => formatCAD(Number(v))} />
+        <Tooltip content={ChartTooltip} cursor={TOOLTIP_CURSOR} />
         <Legend />
         <Line type="monotone" dataKey="cashFlow" stroke={PALETTE[0]} name="Cash flow" dot={false} />
       </LineChart>
@@ -276,9 +281,9 @@ export function InvestmentValueLine({
     <ResponsiveContainer width="100%" height={300}>
       <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+        <XAxis dataKey="month" tick={{ fontSize: 12 }} padding={X_PADDING} />
         <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
-        <Tooltip formatter={(v) => formatCAD(Number(v))} />
+        <Tooltip content={ChartTooltip} cursor={TOOLTIP_CURSOR} />
         <Line
           type="monotone"
           dataKey="value"
@@ -308,27 +313,28 @@ export function IncomeByCategoryPie({
   const data = Array.from(byCat, ([name, value]) => ({ name, value })).filter((d) => d.value > 0);
   if (data.length === 0) {
     return (
-      <div className="flex h-75 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+      <div className="flex h-85 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
         No income in range.
       </div>
     );
   }
   return (
-    <ResponsiveContainer width="100%" height={300}>
+    <ResponsiveContainer width="100%" height={PIE_HEIGHT}>
       <PieChart>
         <Pie
           data={data}
           dataKey="value"
           nameKey="name"
-          innerRadius={60}
-          outerRadius={100}
+          innerRadius={50}
+          outerRadius={80}
           label={pieValueLabel}
+          labelLine={false}
         >
           {data.map((entry, idx) => (
             <Cell key={entry.name} fill={INCOME_PALETTE[idx % INCOME_PALETTE.length]} />
           ))}
         </Pie>
-        <Tooltip formatter={(v) => formatCAD(Number(v))} />
+        <Tooltip content={ChartTooltip} />
         <Legend />
       </PieChart>
     </ResponsiveContainer>
@@ -351,27 +357,28 @@ export function ExpenseByCategoryPie({
   const data = Array.from(byCat, ([name, value]) => ({ name, value })).filter((d) => d.value > 0);
   if (data.length === 0) {
     return (
-      <div className="flex h-75 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+      <div className="flex h-85 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
         No expenses in range.
       </div>
     );
   }
   return (
-    <ResponsiveContainer width="100%" height={300}>
+    <ResponsiveContainer width="100%" height={PIE_HEIGHT}>
       <PieChart>
         <Pie
           data={data}
           dataKey="value"
           nameKey="name"
-          innerRadius={60}
-          outerRadius={100}
+          innerRadius={50}
+          outerRadius={80}
           label={pieValueLabel}
+          labelLine={false}
         >
           {data.map((entry, idx) => (
             <Cell key={entry.name} fill={EXPENSE_PALETTE[idx % EXPENSE_PALETTE.length]} />
           ))}
         </Pie>
-        <Tooltip formatter={(v) => formatCAD(Number(v))} />
+        <Tooltip content={ChartTooltip} />
         <Legend />
       </PieChart>
     </ResponsiveContainer>
@@ -390,35 +397,112 @@ export function AllocationDonut({
   const data = Array.from(byType, ([name, value]) => ({ name, value })).filter((d) => d.value > 0);
   if (data.length === 0) {
     return (
-      <div className="flex h-75 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+      <div className="flex h-85 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
         No investments yet.
       </div>
     );
   }
   return (
-    <ResponsiveContainer width="100%" height={300}>
+    <ResponsiveContainer width="100%" height={PIE_HEIGHT}>
       <PieChart>
         <Pie
           data={data}
           dataKey="value"
           nameKey="name"
-          innerRadius={60}
-          outerRadius={100}
+          innerRadius={50}
+          outerRadius={80}
           label={pieValueLabel}
+          labelLine={false}
         >
           {data.map((entry, idx) => (
             <Cell key={entry.name} fill={PALETTE[idx % PALETTE.length]} />
           ))}
         </Pie>
-        <Tooltip formatter={(v) => formatCAD(Number(v))} />
+        <Tooltip content={ChartTooltip} />
         <Legend />
       </PieChart>
     </ResponsiveContainer>
   );
 }
 
-function pieValueLabel(props: { value?: number | string }): string {
-  return formatCADCompact(Number(props.value));
+// Pies are taller than the cartesian charts: their legend wraps onto several rows in a
+// narrow column, and the slice labels need room around the ring.
+const PIE_HEIGHT = 340;
+
+// Slices thinner than this go unlabelled (their value is still in the tooltip): neighbouring
+// labels on thin slices otherwise pile on top of each other.
+const PIE_LABEL_MIN_PERCENT = 0.05;
+
+function pieValueLabel(props: PieLabelRenderProps): React.ReactNode {
+  if ((props.percent ?? 0) < PIE_LABEL_MIN_PERCENT) return null;
+  return (
+    <text
+      x={props.x}
+      y={props.y}
+      fill={props.fill}
+      fontSize={12}
+      textAnchor={props.textAnchor}
+      dominantBaseline="central"
+    >
+      {formatCADCompact(Number(props.value))}
+    </text>
+  );
+}
+
+// Line charts put the first and last points on the plot edges: this keeps those month ticks clear of the Y axis labels and the right edge.
+const X_PADDING = { left: 24, right: 24 };
+
+const TOOLTIP_CURSOR = { fill: "rgba(148, 163, 184, 0.15)", stroke: "#94a3b8" };
+
+/**
+ * Replaces recharts' default tooltip, which has a fixed white background (its label is
+ * unreadable in dark mode) and never wraps, so long rows ran off the side of a narrow chart.
+ * `detail` adds a secondary line under a row's value.
+ */
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  detail,
+}: Partial<TooltipContentProps> & {
+  detail?: (value: number, name: string, month: string) => string;
+}): React.ReactNode {
+  if (!active || payload == null || payload.length === 0) return null;
+  return (
+    <div className="max-w-[min(18rem,calc(100vw-4rem))] rounded border border-gray-200 bg-white px-3 py-2 text-xs shadow-lg dark:border-gray-700 dark:bg-gray-900">
+      {label != null && label !== "" && (
+        <div className="mb-1 font-semibold text-gray-800 dark:text-gray-100">{label}</div>
+      )}
+      <ul className="m-0 flex list-none flex-col gap-1 p-0">
+        {payload.map((item) => {
+          const name = String(item.name ?? "");
+          const value = Number(item.value);
+          const color = item.color ?? item.payload?.fill;
+          return (
+            <li key={`${name}-${String(item.dataKey)}`} className="flex flex-col">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="flex min-w-0 items-center gap-1.5 text-gray-600 dark:text-gray-300">
+                  <span
+                    className="inline-block size-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="truncate">{name}</span>
+                </span>
+                <span className="font-medium whitespace-nowrap text-gray-900 tabular-nums dark:text-gray-50">
+                  {formatCAD(value)}
+                </span>
+              </div>
+              {detail != null && (
+                <div className="pl-3.5 text-gray-500 dark:text-gray-400">
+                  {detail(value, name, String(label ?? ""))}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 // Average monthly spending per (year, category), keyed by `${yyyy}|${category}`. The current
