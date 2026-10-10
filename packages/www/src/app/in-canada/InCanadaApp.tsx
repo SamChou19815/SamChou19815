@@ -380,11 +380,7 @@ function ProgressBar({ progress }: { progress: CitizenshipProgress }): React.JSX
 /** How often the live percentage re-reads the clock. */
 const PERCENT_TICK_MS = 10_000;
 
-/**
- * Enough decimals that the figure changes on every tick even at the pre-PR half
- * rate: ten seconds of a half day is about 5e-6 percent of the target.
- */
-const PERCENT_DECIMALS = 6;
+const PERCENT_DECIMALS = 2;
 
 /**
  * The hero's headline percentage. With `live` it re-reads the clock every
@@ -408,8 +404,8 @@ function PercentFigure({
   const value = live?.(now) ?? percent;
   const [whole, fraction] = value.toFixed(PERCENT_DECIMALS).split(".");
   return (
-    // Only the whole part is headline-sized: the decimals are there to show
-    // movement, and at full size they wouldn't fit a phone screen.
+    // Only the whole part is headline-sized: at full size the decimals wouldn't
+    // fit a phone screen.
     <span className="font-bold leading-none tracking-tight tabular-nums">
       <span className="text-7xl">{whole}</span>
       <span className="text-3xl text-slate-300">{`.${fraction}%`}</span>
