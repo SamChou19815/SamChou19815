@@ -2,17 +2,29 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../../lib/useAuth";
 import { loadSmallAppData, saveSmallAppData } from "../smallAppStorage";
 import {
+  AFFIX_GROUPS,
+  AFFIX_POSITIONS,
+  GEAR_SLOTS,
+  MAX_AFFIXES,
+  MAX_QUOTA,
+  affixFills,
+  affixUsage,
+  clampQuota,
   countedAffixIds,
-  definitionUsage,
   emptyWwmGearTrackerData,
+  enforceSingleEquipped,
+  equippedGears,
   formatRate,
   gearStats,
   newId,
   normalizeWwmGearTrackerData,
-  overallCategoryFills,
-  overallStats,
-  type AffixDefinition,
+  optimalSet,
+  quotaOf,
+  setStats,
+  type Affix,
   type Gear,
+  type GearSlot,
+  type Quotas,
   type RolledAffix,
   type WwmGearTrackerData,
 } from "./types";
@@ -32,6 +44,8 @@ const dangerButtonCls =
   "rounded border border-red-400 px-3 py-1.5 text-sm font-bold text-red-600 transition-colors duration-200 hover:bg-red-50 dark:border-red-500 dark:text-red-400 dark:hover:bg-red-900/20";
 
 const labelCls = "mb-1 text-gray-600 dark:text-gray-400";
+
+const mutedCls = "text-sm text-gray-500 dark:text-gray-400";
 
 function Card({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
@@ -86,8 +100,9 @@ function RateFigure({ rate }: { rate: string }): React.JSX.Element {
 }
 
 function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
-  const stats = overallStats(data);
-  const fills = overallCategoryFills(data);
+  const worn = equippedGears(data);
+  const stats = setStats(worn, data.quotas);
+  const fills = affixFills(worn, data.quotas);
   return (
     <section className="bg-slate-900 text-white">
       <div className="mx-auto max-w-6xl px-6 pt-12 pb-10">
@@ -95,43 +110,40 @@ function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
           Random Small Apps
         </p>
         <h1 className="mt-2 font-sans text-3xl font-bold tracking-tight text-white">
-          WWM Gear Tracker
+          燕云十六声 · 装备词条
         </h1>
         <p className="mt-3 max-w-2xl text-sm text-slate-300">
-          Track the affixes on your Where Winds Meet gear against quotas you set yourself: define
-          categories of affixes and how many of each your gear needs. The quotas are shared across
-          every piece — all your pieces&apos; rolled affixes fill them together, and extra affixes
-          in one category never make up for a shortfall in another.
+          设定整套装备每种词条需要几条，记录每件装备调律出的词条。毕业率按当前穿戴的装备计算：
+          同一种词条的需求由所有部位共同填满，超出需求的部分不计，也不能弥补其他词条的缺口。
         </p>
 
         <div className="mt-8 flex flex-wrap items-end justify-between gap-x-12 gap-y-6">
           <div>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
               <RateFigure rate={formatRate(stats.filled, stats.required)} />
-              <span className="text-lg text-slate-400">graduation rate</span>
+              <span className="text-lg text-slate-400">毕业率</span>
             </div>
             <p className="mt-4 text-slate-300">
               {stats.required > 0
-                ? `${stats.filled} of ${stats.required} required affixes filled · ${stats.pieces} ${stats.pieces === 1 ? "piece" : "pieces"} · ${stats.graduated ? "graduated" : `${stats.remaining} to go`}`
-                : "No requirements defined yet"}
+                ? `${stats.filled}/${stats.required} 条需求已满足 · 穿戴 ${stats.pieces} 件 · ${stats.graduated ? "已毕业" : `还差 ${stats.remaining} 条`}`
+                : "尚未设定毕业要求"}
             </p>
           </div>
           <div className="flex max-w-xl flex-wrap justify-end gap-2">
             {fills.length === 0 ? (
-              <p className="text-sm text-slate-400">
-                Set up categories with quotas in Affix Setup to start tracking.
-              </p>
+              <p className="text-sm text-slate-400">在「毕业要求」中设定每种词条需要几条。</p>
             ) : (
-              fills.map(({ category, counted, rolled }) => (
+              fills.map(({ affix, needed, counted, rolled }) => (
                 <span
-                  key={category.id}
+                  key={affix}
+                  title={`已穿戴共 ${rolled} 条`}
                   className={`rounded border px-2 py-1 text-xs ${
-                    counted >= category.needed
+                    counted >= needed
                       ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-200"
                       : "border-blue-400/40 bg-blue-400/10 text-blue-200"
                   }`}
                 >
-                  {`${category.name} · ${counted}/${category.needed} (rolled ${rolled})`}
+                  {`${affix} ${counted}/${needed}`}
                 </span>
               ))
             )}
@@ -143,11 +155,12 @@ function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
   );
 }
 
-type TabId = "gear" | "setup";
+type TabId = "gear" | "compare" | "quotas";
 
 const TABS: readonly { id: TabId; label: string }[] = [
-  { id: "gear", label: "My Gear" },
-  { id: "setup", label: "Affix Setup" },
+  { id: "gear", label: "我的装备" },
+  { id: "compare", label: "配装对比" },
+  { id: "quotas", label: "毕业要求" },
 ];
 
 function TabBar({
@@ -181,188 +194,193 @@ function TabBar({
   );
 }
 
+/** A 词条 picker grouped as the game groups them, noting each one's quota. */
+function AffixSelect({
+  value,
+  quotas,
+  onChange,
+  label,
+}: {
+  value: Affix;
+  quotas: Quotas;
+  onChange: (affix: Affix) => void;
+  label: string;
+}): React.JSX.Element {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value as Affix)}
+      aria-label={label}
+      className={`${inputCls} flex-1`}
+    >
+      {AFFIX_GROUPS.map((group) => (
+        <optgroup key={group.name} label={group.name}>
+          {group.affixes.map((affix) => {
+            const needed = quotaOf(quotas, affix);
+            return (
+              <option key={affix} value={affix}>
+                {needed > 0 ? `${affix}（需 ${needed}）` : affix}
+              </option>
+            );
+          })}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
 /** The form for one piece, shared by adding and editing. */
 function GearForm({
   initial,
   data,
-  pieceNumber,
   onSubmit,
   onCancel,
-  onGoToSetup,
 }: {
   // The piece being edited, or null when this form adds a new one.
   initial: Gear | null;
   data: WwmGearTrackerData;
-  // Fallback name for a piece saved with an empty name.
-  pieceNumber: number;
   onSubmit: (gear: Gear) => void;
   onCancel: () => void;
-  onGoToSetup: () => void;
 }): React.JSX.Element {
   const [name, setName] = useState(initial?.name ?? "");
-  const [slot, setSlot] = useState(initial?.slot ?? "");
-  const [affixCount, setAffixCount] = useState(initial?.affixCount.toString() ?? "4");
+  const [slot, setSlot] = useState<GearSlot>(initial?.slot ?? GEAR_SLOTS[0]);
+  const [affixCount, setAffixCount] = useState(initial?.affixCount ?? MAX_AFFIXES);
   const [affixes, setAffixes] = useState<RolledAffix[]>(
-    initial?.affixes.map((affix) => ({ ...affix })) ?? [],
+    initial?.affixes.map((rolled) => ({ ...rolled })) ?? [],
   );
 
-  const parsed = Number.parseInt(affixCount, 10);
-  const slots = Number.isFinite(parsed) ? Math.min(99, Math.max(1, parsed)) : 1;
-  const canAddAffix = data.affixPool.length > 0 && affixes.length < slots;
-
-  const addAffix = () => {
-    const first = data.affixPool[0];
-    if (first == null) return;
-    setAffixes((list) => [...list, { id: newId(), definitionId: first.id, value: "" }]);
-  };
+  // Fallback name for a piece saved with an empty name, e.g. "环 2".
+  const othersInSlot = data.gears.filter(
+    (gear) => gear.slot === slot && gear.id !== initial?.id,
+  ).length;
+  const fallbackName = `${slot} ${othersInSlot + 1}`;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     onSubmit({
       id: initial?.id ?? newId(),
-      name: name.trim() === "" ? `Piece ${pieceNumber}` : name.trim(),
-      slot: slot.trim(),
-      affixCount: slots,
-      // More rolled affixes than the (possibly lowered) slot count are dropped.
-      affixes: affixes.slice(0, slots).map((affix) => ({ ...affix, value: affix.value.trim() })),
+      name: name.trim() === "" ? fallbackName : name.trim(),
+      slot,
+      // A new piece is worn when its slot has nothing worn yet.
+      equipped:
+        initial?.equipped ?? !data.gears.some((gear) => gear.equipped && gear.slot === slot),
+      affixCount,
+      // More rolled 词条 than the (possibly lowered) count are dropped.
+      affixes: affixes
+        .slice(0, affixCount)
+        .map((rolled) => ({ ...rolled, value: rolled.value.trim() })),
     });
   };
 
-  const poolByCategory = useMemo(() => {
-    const grouped = new Map<string, AffixDefinition[]>();
-    for (const category of data.affixCategories) grouped.set(category.id, []);
-    const uncategorized: AffixDefinition[] = [];
-    for (const definition of data.affixPool) {
-      if (definition.categoryId == null) uncategorized.push(definition);
-      else grouped.get(definition.categoryId)?.push(definition);
-    }
-    return { grouped, uncategorized };
-  }, [data.affixCategories, data.affixPool]);
-
   return (
     <Card>
-      <h3 className="mb-4">{initial == null ? "Add a piece" : "Edit piece"}</h3>
+      <h3 className="mb-4">{initial == null ? "添加装备" : "编辑装备"}</h3>
       <form onSubmit={submit} className="flex flex-col gap-4">
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-3">
           <label className="flex flex-col text-sm">
-            <span className={labelCls}>Name</span>
+            <span className={labelCls}>名称</span>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={`Defaults to "Piece ${pieceNumber}"`}
+              placeholder={`默认「${fallbackName}」`}
               className={inputCls}
             />
           </label>
           <label className="flex flex-col text-sm">
-            <span className={labelCls}>Slot (optional)</span>
-            <input
+            <span className={labelCls}>部位</span>
+            <select
               value={slot}
-              onChange={(e) => setSlot(e.target.value)}
-              placeholder="e.g. Ring"
+              onChange={(e) => setSlot(e.target.value as GearSlot)}
               className={inputCls}
-            />
+            >
+              {GEAR_SLOTS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col text-sm">
+            <span className={labelCls}>词条数</span>
+            <select
+              value={affixCount}
+              onChange={(e) => setAffixCount(Number(e.target.value))}
+              className={inputCls}
+            >
+              {AFFIX_POSITIONS.map((position, i) => (
+                <option key={position} value={i + 1}>
+                  {`${i + 1}（至${position}）`}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
-        <label className="flex flex-col text-sm">
-          <span className={labelCls}>Affix slots</span>
-          <input
-            type="number"
-            min={1}
-            max={99}
-            value={affixCount}
-            onChange={(e) => setAffixCount(e.target.value)}
-            className={`${inputCls} w-24`}
-          />
-        </label>
 
         <div>
-          <span className={`text-sm ${labelCls}`}>Rolled affixes</span>
-          {data.affixPool.length === 0 ? (
-            <div className="mt-2 flex flex-wrap items-center gap-3">
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Define your affixes first — you pick them from that pool.
-              </p>
-              <button type="button" onClick={onGoToSetup} className={secondaryButtonCls}>
-                Go to Affix Setup
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="mt-2 flex flex-col gap-2">
-                {affixes.map((affix, index) => (
-                  <div key={affix.id} className="flex items-center gap-2">
-                    <select
-                      value={affix.definitionId}
-                      onChange={(e) =>
-                        setAffixes((list) =>
-                          list.map((a, i) =>
-                            i === index ? { ...a, definitionId: e.target.value } : a,
-                          ),
-                        )
-                      }
-                      aria-label={`Affix ${index + 1}`}
-                      className={`${inputCls} flex-1`}
-                    >
-                      {data.affixCategories.map((category) => (
-                        <AffixOptgroup
-                          key={category.id}
-                          label={`${category.name} (quota ${category.needed})`}
-                          definitions={poolByCategory.grouped.get(category.id) ?? []}
-                        />
-                      ))}
-                      {poolByCategory.uncategorized.length > 0 && (
-                        <AffixOptgroup
-                          label="Not counted"
-                          definitions={poolByCategory.uncategorized}
-                        />
-                      )}
-                    </select>
-                    <input
-                      value={affix.value}
-                      onChange={(e) =>
-                        setAffixes((list) =>
-                          list.map((a, i) => (i === index ? { ...a, value: e.target.value } : a)),
-                        )
-                      }
-                      placeholder="Value (optional)"
-                      aria-label={`Affix ${index + 1} value`}
-                      className={`${inputCls} w-40`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setAffixes((list) => list.filter((_, i) => i !== index))}
-                      aria-label={`Remove affix ${index + 1}`}
-                      title="Remove this affix"
-                      className="px-2 py-1 text-lg text-gray-400 transition-colors duration-200 hover:text-red-500"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-2 flex items-center gap-3">
+          <span className={`text-sm ${labelCls}`}>已调律词条</span>
+          <div className="mt-2 flex flex-col gap-2">
+            {affixes.slice(0, affixCount).map((rolled, index) => (
+              <div key={rolled.id} className="flex items-center gap-2">
+                <span className="w-6 shrink-0 text-center text-sm font-bold text-gray-500 dark:text-gray-400">
+                  {AFFIX_POSITIONS[index]}
+                </span>
+                <AffixSelect
+                  value={rolled.affix}
+                  quotas={data.quotas}
+                  label={`第 ${index + 1} 条词条`}
+                  onChange={(affix) =>
+                    setAffixes((list) => list.map((a, i) => (i === index ? { ...a, affix } : a)))
+                  }
+                />
+                <input
+                  value={rolled.value}
+                  onChange={(e) =>
+                    setAffixes((list) =>
+                      list.map((a, i) => (i === index ? { ...a, value: e.target.value } : a)),
+                    )
+                  }
+                  placeholder="数值（可选）"
+                  aria-label={`第 ${index + 1} 条词条数值`}
+                  className={`${inputCls} w-32`}
+                />
                 <button
                   type="button"
-                  onClick={addAffix}
-                  disabled={!canAddAffix}
-                  className={secondaryButtonCls}
+                  onClick={() => setAffixes((list) => list.filter((_, i) => i !== index))}
+                  aria-label={`删除第 ${index + 1} 条词条`}
+                  title="删除此词条"
+                  className="px-2 py-1 text-lg text-gray-400 transition-colors duration-200 hover:text-red-500"
                 >
-                  Add affix
+                  ✕
                 </button>
-                <span className="text-sm text-gray-500 dark:text-gray-400">
-                  {`${affixes.length} of ${slots} slots rolled`}
-                </span>
               </div>
-            </>
-          )}
+            ))}
+          </div>
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() =>
+                setAffixes((list) => [
+                  ...list.slice(0, affixCount),
+                  { id: newId(), affix: AFFIX_GROUPS[0].affixes[0], value: "" },
+                ])
+              }
+              disabled={affixes.length >= affixCount}
+              className={secondaryButtonCls}
+            >
+              添加词条
+            </button>
+            <span className={mutedCls}>
+              {`已调律 ${Math.min(affixes.length, affixCount)}/${affixCount} 条`}
+            </span>
+          </div>
         </div>
 
         <div className="flex justify-end gap-3">
           <button type="button" onClick={onCancel} className={secondaryButtonCls}>
-            Cancel
+            取消
           </button>
           <button type="submit" className={primaryButtonCls}>
-            {initial == null ? "Add piece" : "Save changes"}
+            {initial == null ? "添加" : "保存修改"}
           </button>
         </div>
       </form>
@@ -370,129 +388,110 @@ function GearForm({
   );
 }
 
-/** The form's affix picker grouped by the category each affix fills. */
-function AffixOptgroup({
-  label,
-  definitions,
-}: {
-  label: string;
-  definitions: readonly AffixDefinition[];
-}): React.JSX.Element {
-  if (definitions.length === 0) return <></>;
-  return (
-    <optgroup label={label}>
-      {definitions.map((definition) => (
-        <option key={definition.id} value={definition.id}>
-          {definition.name}
-        </option>
-      ))}
-    </optgroup>
-  );
-}
-
 function GearCard({
   gear,
-  data,
+  quotas,
   countedIds,
+  onToggleEquipped,
   onEdit,
   onDelete,
 }: {
   gear: Gear;
-  data: WwmGearTrackerData;
-  // Which rolled affixes count toward the shared quotas — computed once for
-  // every piece together, since a piece alone cannot fill a quota.
+  quotas: Quotas;
+  // Which rolled 词条 count toward the shared quotas — computed once for the
+  // whole worn set, since a piece alone cannot fill a quota.
   countedIds: ReadonlySet<string>;
+  onToggleEquipped: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }): React.JSX.Element {
-  const stats = gearStats(gear, countedIds);
-  const definitionsById = useMemo(
-    () => new Map(data.affixPool.map((definition) => [definition.id, definition])),
-    [data.affixPool],
-  );
-  const categoriesById = useMemo(
-    () => new Map(data.affixCategories.map((category) => [category.id, category])),
-    [data.affixCategories],
-  );
-
+  const stats = gearStats(gear, quotas, countedIds);
   const unrolled = Math.max(0, gear.affixCount - gear.affixes.length);
-  // The piece's useful share: how many of its rolled affixes count.
-  const rate = share(stats.counted, stats.rolled);
-  const badgeCls =
-    stats.rolled > 0 && rate >= 1
-      ? "bg-emerald-500"
-      : stats.counted > 0
-        ? "bg-blue-500 dark:bg-blue-400"
-        : "bg-gray-400 dark:bg-gray-600";
+  // Worn pieces are measured by what counts; spare ones by what could.
+  const good = gear.equipped ? stats.counted : stats.useful;
+  const rate = share(good, gear.affixCount);
+  const full = good >= gear.affixCount;
+  const badgeCls = full
+    ? "bg-emerald-500"
+    : good > 0
+      ? "bg-blue-500 dark:bg-blue-400"
+      : "bg-gray-400 dark:bg-gray-600";
 
   return (
     <Card>
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-lg font-semibold">{gear.name}</span>
-          {gear.slot !== "" && (
-            <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-              {gear.slot}
+          {gear.equipped && (
+            <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+              已穿戴
             </span>
           )}
         </div>
         <span
           className={`rounded px-2 py-1 text-sm font-bold tabular-nums text-white ${badgeCls}`}
-          title="Rolled affixes counting toward the shared quotas"
+          title={gear.equipped ? "计入毕业的词条 / 词条数" : "有效词条 / 词条数（未穿戴）"}
         >
-          {`${stats.counted}/${stats.rolled}`}
+          {`${good}/${gear.affixCount}`}
         </span>
       </div>
 
       <div className="mt-3 h-2 w-full overflow-hidden rounded bg-gray-200 dark:bg-gray-700">
         <div
-          className={`h-full ${stats.rolled > 0 && rate >= 1 ? "bg-emerald-500" : "bg-blue-500 dark:bg-blue-400"}`}
+          className={`h-full ${full ? "bg-emerald-500" : "bg-blue-500 dark:bg-blue-400"}`}
           style={{ width: `${rate * 100}%` }}
         />
       </div>
-      <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-        {`${stats.counted} of ${stats.rolled} rolled affixes count`}
-        {unrolled > 0 ? ` · +${unrolled} unrolled` : ""}
+      <p className={`mt-2 ${mutedCls}`}>
+        {gear.equipped
+          ? `${stats.counted} 条计入毕业`
+          : `${stats.useful} 条有效词条 · 未穿戴，不计入`}
+        {unrolled > 0 ? ` · ${unrolled} 条未调律` : ""}
       </p>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {gear.affixes.map((affix) => {
-          const definition = definitionsById.get(affix.definitionId);
-          const isCounted = countedIds.has(affix.id);
+        {gear.affixes.map((rolled, index) => {
+          const isCounted = countedIds.has(rolled.id);
+          const isUseful = quotaOf(quotas, rolled.affix) > 0;
           const chipCls = isCounted
-            ? "rounded border border-emerald-400 bg-emerald-50 px-2 py-1 text-sm text-emerald-800 dark:border-emerald-500 dark:bg-emerald-900/30 dark:text-emerald-300"
-            : "rounded border border-gray-300 bg-gray-50 px-2 py-1 text-sm text-gray-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300";
-          const category =
-            definition?.categoryId == null
-              ? null
-              : (categoriesById.get(definition.categoryId) ?? null);
+            ? "border-emerald-400 bg-emerald-50 text-emerald-800 dark:border-emerald-500 dark:bg-emerald-900/30 dark:text-emerald-300"
+            : !gear.equipped && isUseful
+              ? "border-blue-400 bg-blue-50 text-blue-800 dark:border-blue-500 dark:bg-blue-900/30 dark:text-blue-300"
+              : "border-gray-300 bg-gray-50 text-gray-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300";
           return (
             <span
-              key={affix.id}
-              className={chipCls}
+              key={rolled.id}
+              className={`rounded border px-2 py-1 text-sm ${chipCls}`}
               title={
                 isCounted
-                  ? "Counts toward its category's shared quota"
-                  : "Does not count — over quota or uncategorized"
+                  ? "计入毕业要求"
+                  : isUseful
+                    ? gear.equipped
+                      ? "需求已满，不计入"
+                      : "有效词条（未穿戴）"
+                    : "无效词条"
               }
             >
-              {`${definition?.name ?? "?"}${category != null ? ` · ${category.name}` : ""}${affix.value !== "" ? ` ${affix.value}` : ""}`}
+              {`${AFFIX_POSITIONS[index]} · ${rolled.affix}${rolled.value !== "" ? ` ${rolled.value}` : ""}`}
             </span>
           );
         })}
         {unrolled > 0 && (
           <span className="rounded border border-dashed border-gray-300 px-2 py-1 text-sm text-gray-400 dark:border-gray-600 dark:text-gray-500">
-            {`+${unrolled} unrolled`}
+            {`+${unrolled} 未调律`}
           </span>
         )}
       </div>
 
       <div className="mt-4 flex justify-end gap-2">
+        <button type="button" onClick={onToggleEquipped} className={secondaryButtonCls}>
+          {gear.equipped ? "卸下" : "穿戴"}
+        </button>
         <button type="button" onClick={onEdit} className={secondaryButtonCls}>
-          Edit
+          编辑
         </button>
         <button type="button" onClick={onDelete} className={dangerButtonCls}>
-          Delete
+          删除
         </button>
       </div>
     </Card>
@@ -502,22 +501,20 @@ function GearCard({
 function GearTab({
   draft,
   updateDraft,
-  onGoToSetup,
 }: {
   draft: WwmGearTrackerData;
   updateDraft: (mutate: (data: WwmGearTrackerData) => void) => void;
-  onGoToSetup: () => void;
 }): React.JSX.Element {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const editing = draft.gears.find(({ id }) => id === editingId) ?? null;
-  // Counted affixes depend on every piece at once, so the set is computed here
-  // and shared with each card.
-  const countedIds = useMemo(() => countedAffixIds(draft), [draft]);
+  // Counted 词条 depend on the whole worn set, so the set is computed here and
+  // shared with each card.
+  const countedIds = useMemo(() => countedAffixIds(equippedGears(draft), draft.quotas), [draft]);
 
   const submitNew = (gear: Gear) => {
     updateDraft((data) => {
       data.gears.push(gear);
+      enforceSingleEquipped(data.gears, gear.id);
     });
     setAdding(false);
   };
@@ -525,8 +522,17 @@ function GearTab({
     updateDraft((data) => {
       const index = data.gears.findIndex(({ id }) => id === gear.id);
       if (index >= 0) data.gears[index] = gear;
+      enforceSingleEquipped(data.gears, gear.id);
     });
     setEditingId(null);
+  };
+  const toggleEquipped = (id: string) => {
+    updateDraft((data) => {
+      const gear = data.gears.find((entry) => entry.id === id);
+      if (gear == null) return;
+      gear.equipped = !gear.equipped;
+      enforceSingleEquipped(data.gears, id);
+    });
   };
   const deleteGear = (id: string) => {
     updateDraft((data) => {
@@ -535,359 +541,293 @@ function GearTab({
     if (editingId === id) setEditingId(null);
   };
 
+  const slotsInUse = GEAR_SLOTS.filter((slot) => draft.gears.some((gear) => gear.slot === slot));
+
   return (
     <div className="flex flex-col gap-4">
       {adding ? (
         <GearForm
           initial={null}
           data={draft}
-          pieceNumber={draft.gears.length + 1}
           onSubmit={submitNew}
           onCancel={() => setAdding(false)}
-          onGoToSetup={() => {
-            setAdding(false);
-            onGoToSetup();
-          }}
         />
       ) : (
         <div className="flex justify-end">
           <button type="button" onClick={() => setAdding(true)} className={primaryButtonCls}>
-            Add piece
+            添加装备
           </button>
         </div>
       )}
 
       {draft.gears.length === 0 && !adding ? (
         <Card>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            No pieces yet. Set your category quotas in Affix Setup, then add a piece and enter the
-            affixes it rolled — nothing about the game is assumed.
+          <p className={mutedCls}>
+            还没有装备。先在「毕业要求」中设定每种词条需要几条，再添加装备并填入调律出的词条。
+            同一部位可以录入多件，用「配装对比」找出最优穿戴。
           </p>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {draft.gears.map((gear) =>
-            gear.id === editing?.id ? (
-              <div key={gear.id} className="sm:col-span-2">
-                <GearForm
-                  initial={gear}
-                  data={draft}
-                  pieceNumber={draft.gears.length + 1}
-                  onSubmit={submitEdit}
-                  onCancel={() => setEditingId(null)}
-                  onGoToSetup={onGoToSetup}
-                />
+        slotsInUse.map((slot) => {
+          const pieces = draft.gears.filter((gear) => gear.slot === slot);
+          return (
+            <section key={slot} className="flex flex-col gap-3">
+              <h3 className="text-base font-semibold">
+                {slot}
+                <span className={`ml-2 font-normal ${mutedCls}`}>{`${pieces.length} 件`}</span>
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {pieces.map((gear) =>
+                  gear.id === editingId ? (
+                    <div key={gear.id} className="sm:col-span-2">
+                      <GearForm
+                        initial={gear}
+                        data={draft}
+                        onSubmit={submitEdit}
+                        onCancel={() => setEditingId(null)}
+                      />
+                    </div>
+                  ) : (
+                    <GearCard
+                      key={gear.id}
+                      gear={gear}
+                      quotas={draft.quotas}
+                      countedIds={countedIds}
+                      onToggleEquipped={() => toggleEquipped(gear.id)}
+                      onEdit={() => setEditingId(gear.id)}
+                      onDelete={() => deleteGear(gear.id)}
+                    />
+                  ),
+                )}
               </div>
-            ) : (
-              <GearCard
-                key={gear.id}
-                gear={gear}
-                data={draft}
-                countedIds={countedIds}
-                onEdit={() => setEditingId(gear.id)}
-                onDelete={() => deleteGear(gear.id)}
-              />
-            ),
-          )}
-        </div>
+            </section>
+          );
+        })
       )}
     </div>
   );
 }
 
-function CategoriesCard({
+function fillCls(counted: number, needed: number): string {
+  if (needed > 0 && counted >= needed) return "text-emerald-600 dark:text-emerald-400";
+  return "text-gray-700 dark:text-gray-200";
+}
+
+function CompareTab({
   draft,
   updateDraft,
 }: {
   draft: WwmGearTrackerData;
   updateDraft: (mutate: (data: WwmGearTrackerData) => void) => void;
 }): React.JSX.Element {
-  const [name, setName] = useState("");
-  const [needed, setNeeded] = useState("2");
-  const [error, setError] = useState<string | null>(null);
-  const fills = useMemo(() => overallCategoryFills(draft), [draft]);
-  const filledByCategory = useMemo(
-    () => new Map(fills.map((fill) => [fill.category.id, fill])),
-    [fills],
-  );
+  const optimal = useMemo(() => optimalSet(draft), [draft]);
+  const worn = equippedGears(draft);
+  const current = setStats(worn, draft.quotas);
+  const best = setStats(optimal.gears, draft.quotas);
+  const currentFills = new Map(affixFills(worn, draft.quotas).map((fill) => [fill.affix, fill]));
+  const bestFills = affixFills(optimal.gears, draft.quotas);
+  const optimalIds = new Set(optimal.gears.map(({ id }) => id));
+  const sameAsWorn =
+    worn.length === optimal.gears.length && worn.every(({ id }) => optimalIds.has(id));
+  const gain = best.filled - current.filled;
 
-  const parsedNeeded = Number.parseInt(needed, 10);
-  const add = () => {
-    const trimmed = name.trim();
-    if (trimmed === "") {
-      setError("Enter a name.");
-      return;
-    }
-    if (draft.affixCategories.some((category) => category.name === trimmed)) {
-      setError("That category already exists.");
-      return;
-    }
-    const quota = Number.isFinite(parsedNeeded) ? Math.min(99, Math.max(0, parsedNeeded)) : 1;
+  if (draft.gears.length === 0) {
+    return (
+      <Card>
+        <p className={mutedCls}>先在「我的装备」中添加装备。</p>
+      </Card>
+    );
+  }
+  if (best.required === 0) {
+    return (
+      <Card>
+        <p className={mutedCls}>先在「毕业要求」中设定每种词条需要几条，才能比较配装。</p>
+      </Card>
+    );
+  }
+
+  const wear = () =>
     updateDraft((data) => {
-      data.affixCategories.push({ id: newId(), name: trimmed, needed: quota });
+      for (const gear of data.gears) gear.equipped = optimalIds.has(gear.id);
     });
-    setName("");
-    setNeeded("2");
-    setError(null);
-  };
 
   return (
-    <Card>
-      <h3 className="mb-2">Categories &amp; quotas</h3>
-      <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
-        A category is a group of affixes with a quota: how many affixes from that group your gear
-        needs in total. The quota is shared — rolled affixes from every piece fill it together, and
-        your build graduates when every quota is met. Overfilling one category never fills another.
-        Deleting a category keeps its affixes, but they stop counting.
-      </p>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          add();
-        }}
-        className="flex flex-wrap items-end gap-3"
-      >
-        <label className="flex flex-col text-sm">
-          <span className={labelCls}>Name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Offense"
-            className={inputCls}
-          />
-        </label>
-        <label className="flex flex-col text-sm">
-          <span className={labelCls}>Needed</span>
-          <input
-            type="number"
-            min={0}
-            max={99}
-            value={needed}
-            onChange={(e) => setNeeded(e.target.value)}
-            className={`${inputCls} w-24`}
-          />
-        </label>
-        <button type="submit" className={primaryButtonCls}>
-          Add category
-        </button>
-      </form>
-      {error != null && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
-
-      {draft.affixCategories.length > 0 && (
-        <div className="mt-4 flex flex-col gap-2">
-          {draft.affixCategories.map((category) => {
-            const fill = filledByCategory.get(category.id);
-            return (
-              <div key={category.id} className="flex flex-wrap items-center gap-2">
-                <input
-                  value={category.name}
-                  aria-label="Category name"
-                  onChange={(e) =>
-                    updateDraft((data) => {
-                      const entry = data.affixCategories.find(({ id }) => id === category.id);
-                      if (entry != null) entry.name = e.target.value;
-                    })
-                  }
-                  className={`${inputCls} flex-1`}
-                />
-                <label className="flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400">
-                  <span className="sr-only">{`Needed for ${category.name}`}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={99}
-                    value={category.needed}
-                    aria-label="Quota"
-                    onChange={(e) => {
-                      const parsed = Number.parseInt(e.target.value, 10);
-                      const quota = Number.isFinite(parsed) ? Math.min(99, Math.max(0, parsed)) : 0;
-                      updateDraft((data) => {
-                        const entry = data.affixCategories.find(({ id }) => id === category.id);
-                        if (entry != null) entry.needed = quota;
-                      });
-                    }}
-                    className={`${inputCls} w-16`}
-                  />
-                  needed
-                </label>
-                <span className="w-32 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
-                  {fill != null
-                    ? `${fill.counted}/${category.needed} filled (rolled ${fill.rolled})`
-                    : "not required"}
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    updateDraft((data) => {
-                      data.affixCategories = data.affixCategories.filter(
-                        ({ id }) => id !== category.id,
-                      );
-                      for (const definition of data.affixPool) {
-                        if (definition.categoryId === category.id) definition.categoryId = null;
-                      }
-                    })
-                  }
-                  aria-label={`Delete ${category.name}`}
-                  title="Delete this category"
-                  className="px-2 py-1 text-lg text-gray-400 transition-colors duration-200 hover:text-red-500"
-                >
-                  ✕
-                </button>
-              </div>
-            );
-          })}
+    <div className="flex flex-col gap-4">
+      <Card>
+        <div className="grid gap-6 sm:grid-cols-2">
+          {[
+            { label: "当前穿戴", stats: current },
+            { label: "最优配装", stats: best },
+          ].map(({ label, stats }) => (
+            <div key={label}>
+              <p className={mutedCls}>{label}</p>
+              <p className="mt-1 text-4xl font-bold tabular-nums">
+                {formatRate(stats.filled, stats.required)}
+              </p>
+              <p className={`mt-1 ${mutedCls}`}>
+                {`${stats.filled}/${stats.required} 条需求 · ${stats.pieces} 件 · ${stats.graduated ? "已毕业" : `还差 ${stats.remaining} 条`}`}
+              </p>
+            </div>
+          ))}
         </div>
-      )}
-    </Card>
+        <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+          <span className={`mr-auto ${mutedCls}`}>
+            {sameAsWorn
+              ? "当前穿戴已是最优配装。"
+              : gain > 0
+                ? `换上最优配装可多满足 ${gain} 条需求。`
+                : "最优配装满足的需求与当前相同，但词条分布更好或穿戴更完整。"}
+            {optimal.exhaustive ? "" : " 组合过多，结果为搜索上限内找到的最佳配装。"}
+          </span>
+          <button type="button" onClick={wear} disabled={sameAsWorn} className={primaryButtonCls}>
+            穿戴最优配装
+          </button>
+        </div>
+      </Card>
+
+      <Card>
+        <h3 className="mb-4">部位</h3>
+        <table className="w-full text-left text-sm">
+          <thead className="text-gray-500 dark:text-gray-400">
+            <tr>
+              <th className="py-1 pr-4 font-normal">部位</th>
+              <th className="py-1 pr-4 font-normal">当前</th>
+              <th className="py-1 font-normal">最优</th>
+            </tr>
+          </thead>
+          <tbody>
+            {GEAR_SLOTS.map((slot) => {
+              const now = worn.find((gear) => gear.slot === slot);
+              const next = optimal.gears.find((gear) => gear.slot === slot);
+              if (now == null && next == null) return null;
+              const changed = now?.id !== next?.id;
+              return (
+                <tr key={slot} className="border-t border-gray-200 dark:border-gray-700">
+                  <td className="py-2 pr-4">{slot}</td>
+                  <td className="py-2 pr-4 text-gray-500 dark:text-gray-400">{now?.name ?? "—"}</td>
+                  <td
+                    className={`py-2 ${changed ? "font-semibold text-blue-600 dark:text-blue-400" : ""}`}
+                  >
+                    {`${next?.name ?? "—"}${changed ? "（更换）" : ""}`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card>
+        <h3 className="mb-4">词条</h3>
+        <table className="w-full text-left text-sm">
+          <thead className="text-gray-500 dark:text-gray-400">
+            <tr>
+              <th className="py-1 pr-4 font-normal">词条</th>
+              <th className="py-1 pr-4 font-normal">需求</th>
+              <th className="py-1 pr-4 font-normal">当前</th>
+              <th className="py-1 font-normal">最优</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bestFills.map(({ affix, needed, counted, rolled }) => {
+              const now = currentFills.get(affix);
+              const nowCounted = now?.counted ?? 0;
+              const delta = counted - nowCounted;
+              return (
+                <tr key={affix} className="border-t border-gray-200 dark:border-gray-700">
+                  <td className="py-2 pr-4">{affix}</td>
+                  <td className="py-2 pr-4 tabular-nums">{needed}</td>
+                  <td
+                    className={`py-2 pr-4 tabular-nums ${fillCls(nowCounted, needed)}`}
+                    title={`共 ${now?.rolled ?? 0} 条`}
+                  >
+                    {`${nowCounted}/${needed}`}
+                  </td>
+                  <td
+                    className={`py-2 tabular-nums ${fillCls(counted, needed)}`}
+                    title={`共 ${rolled} 条`}
+                  >
+                    {`${counted}/${needed}`}
+                    {delta !== 0 && (
+                      <span
+                        className={`ml-2 text-xs ${delta > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
+                      >
+                        {delta > 0 ? `+${delta}` : `${delta}`}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </div>
   );
 }
 
-function AffixPoolCard({
+function QuotasTab({
   draft,
   updateDraft,
 }: {
   draft: WwmGearTrackerData;
   updateDraft: (mutate: (data: WwmGearTrackerData) => void) => void;
 }): React.JSX.Element {
-  const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-  const usage = definitionUsage(draft);
-
-  const add = () => {
-    const trimmed = name.trim();
-    if (trimmed === "") {
-      setError("Enter a name.");
-      return;
-    }
-    if (draft.affixPool.some((definition) => definition.name === trimmed)) {
-      setError("That affix already exists.");
-      return;
-    }
-    updateDraft((data) => {
-      data.affixPool.push({
-        id: newId(),
-        name: trimmed,
-        categoryId: categoryId === "" ? null : categoryId,
-      });
-    });
-    setName("");
-    setError(null);
-  };
+  const worn = equippedGears(draft);
+  const wornUsage = affixUsage(worn);
+  const allUsage = affixUsage(draft.gears);
 
   return (
     <Card>
-      <h3 className="mb-2">Affix pool</h3>
-      <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
-        The affixes you can enter on a piece, using the names the game shows you. File each one into
-        a category so it counts toward that category&apos;s quota. Deleting an affix also removes it
-        from every piece that rolled it.
+      <h3 className="mb-2">毕业要求</h3>
+      <p className={`mb-4 ${mutedCls}`}>
+        整套穿戴装备每种词条需要几条，0
+        表示不需要（无效词条）。需求由所有部位共同填满，超出部分不计。
       </p>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          add();
-        }}
-        className="flex flex-wrap items-end gap-3"
-      >
-        <label className="flex flex-col text-sm">
-          <span className={labelCls}>Name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Crit Rate"
-            className={inputCls}
-          />
-        </label>
-        <label className="flex flex-col text-sm">
-          <span className={labelCls}>Category</span>
-          <select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-            className={inputCls}
-          >
-            <option value="">Not counted</option>
-            {draft.affixCategories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="submit"
-          disabled={draft.affixCategories.length === 0}
-          title={draft.affixCategories.length === 0 ? "Add a category first" : undefined}
-          className={primaryButtonCls}
-        >
-          Add affix
-        </button>
-      </form>
-      {error != null && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
-
-      {draft.affixPool.length > 0 && (
-        <div className="mt-4 flex flex-col gap-2">
-          {draft.affixPool.map((definition) => {
-            const count = usage.get(definition.id) ?? 0;
-            return (
-              <div key={definition.id} className="flex flex-wrap items-center gap-2">
-                <input
-                  value={definition.name}
-                  aria-label="Affix name"
-                  onChange={(e) =>
-                    updateDraft((data) => {
-                      const entry = data.affixPool.find(({ id }) => id === definition.id);
-                      if (entry != null) entry.name = e.target.value;
-                    })
-                  }
-                  className={`${inputCls} flex-1`}
-                />
-                <select
-                  value={definition.categoryId ?? ""}
-                  aria-label={`Category for ${definition.name}`}
-                  onChange={(e) =>
-                    updateDraft((data) => {
-                      const entry = data.affixPool.find(({ id }) => id === definition.id);
-                      if (entry != null) {
-                        entry.categoryId = e.target.value === "" ? null : e.target.value;
-                      }
-                    })
-                  }
-                  className={`${inputCls} w-40`}
-                >
-                  <option value="">Not counted</option>
-                  {draft.affixCategories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-                <span className="w-24 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
-                  {count === 1 ? "on 1 piece" : `on ${count} pieces`}
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    updateDraft((data) => {
-                      data.affixPool = data.affixPool.filter(({ id }) => id !== definition.id);
-                      for (const gear of data.gears) {
-                        gear.affixes = gear.affixes.filter(
-                          ({ definitionId }) => definitionId !== definition.id,
-                        );
-                      }
-                    })
-                  }
-                  aria-label={`Delete ${definition.name}`}
-                  title="Delete this affix everywhere"
-                  className="px-2 py-1 text-lg text-gray-400 transition-colors duration-200 hover:text-red-500"
-                >
-                  ✕
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <div className="flex flex-col gap-6">
+        {AFFIX_GROUPS.map((group) => (
+          <div key={group.name}>
+            <h4 className="mb-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
+              {group.name}
+            </h4>
+            <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+              {group.affixes.map((affix) => {
+                const needed = quotaOf(draft.quotas, affix);
+                const rolled = wornUsage.get(affix) ?? 0;
+                const owned = allUsage.get(affix) ?? 0;
+                return (
+                  <div key={affix} className="flex items-center gap-2">
+                    <span className="flex-1 text-sm">{affix}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={MAX_QUOTA}
+                      value={needed}
+                      aria-label={`${affix}需要几条`}
+                      onChange={(e) => {
+                        const quota = clampQuota(Number.parseInt(e.target.value, 10));
+                        updateDraft((data) => {
+                          if (quota > 0) data.quotas[affix] = quota;
+                          else delete data.quotas[affix];
+                        });
+                      }}
+                      className={`${inputCls} w-20`}
+                    />
+                    <span
+                      className={`w-28 shrink-0 text-right text-xs ${needed > 0 && rolled >= needed ? "text-emerald-600 dark:text-emerald-400" : "text-gray-500 dark:text-gray-400"}`}
+                      title={`所有装备共 ${owned} 条`}
+                    >
+                      {needed > 0
+                        ? `穿戴 ${Math.min(rolled, needed)}/${needed}`
+                        : `穿戴 ${rolled} 条`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }
@@ -919,9 +859,7 @@ function SaveBar({
         </div>
       )}
       <div className="flex flex-wrap items-center justify-end gap-3">
-        {dirty && (
-          <span className="mr-auto text-sm text-gray-500 dark:text-gray-400">Unsaved changes</span>
-        )}
+        {dirty && <span className={`mr-auto ${mutedCls}`}>有未保存的修改</span>}
         {dirty && (
           <button
             type="button"
@@ -929,7 +867,7 @@ function SaveBar({
             disabled={saving}
             className={secondaryButtonCls}
           >
-            Discard
+            放弃修改
           </button>
         )}
         <button
@@ -938,7 +876,7 @@ function SaveBar({
           disabled={!dirty || saving}
           className={primaryButtonCls}
         >
-          {saving ? "Saving…" : "Save"}
+          {saving ? "保存中…" : "保存"}
         </button>
       </div>
     </Card>
@@ -1001,12 +939,11 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     setDraft((prev) => {
       const base = prev ?? saved ?? emptyWwmGearTrackerData();
       const next: WwmGearTrackerData = {
-        version: 1,
-        affixCategories: base.affixCategories.map((category) => ({ ...category })),
-        affixPool: base.affixPool.map((definition) => ({ ...definition })),
+        version: 2,
+        quotas: { ...base.quotas },
         gears: base.gears.map((gear) => ({
           ...gear,
-          affixes: gear.affixes.map((affix) => ({ ...affix })),
+          affixes: gear.affixes.map((rolled) => ({ ...rolled })),
         })),
       };
       mutate(next);
@@ -1030,14 +967,14 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     }
     setSaved(toSave);
     setDraft(toSave);
-    setMessage({ kind: "ok", text: "Saved." });
+    setMessage({ kind: "ok", text: "已保存。" });
   };
 
   if (loadState === "loading") {
     return (
       <div className="mx-auto w-full max-w-6xl px-6 py-12">
         <Card>
-          <div className="text-center text-gray-500 dark:text-gray-400">Loading…</div>
+          <div className="text-center text-gray-500 dark:text-gray-400">加载中…</div>
         </Card>
       </div>
     );
@@ -1047,9 +984,9 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     return (
       <div className="mx-auto w-full max-w-6xl px-6 py-12">
         <Card>
-          <h3 className="mb-2">Could not load your data</h3>
+          <h3 className="mb-2">无法加载数据</h3>
           <p className="mb-4 text-sm text-red-600 dark:text-red-400">
-            {message?.text ?? "Unknown error."}
+            {message?.text ?? "未知错误。"}
           </p>
           <div className="flex justify-end">
             <button
@@ -1061,7 +998,7 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
               }}
               className={primaryButtonCls}
             >
-              Retry
+              重试
             </button>
           </div>
         </Card>
@@ -1076,12 +1013,11 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10">
         <TabBar tab={tab} onSelect={setTab} />
         {tab === "gear" ? (
-          <GearTab draft={draft} updateDraft={updateDraft} onGoToSetup={() => setTab("setup")} />
+          <GearTab draft={draft} updateDraft={updateDraft} />
+        ) : tab === "compare" ? (
+          <CompareTab draft={draft} updateDraft={updateDraft} />
         ) : (
-          <div className="flex flex-col gap-4">
-            <CategoriesCard draft={draft} updateDraft={updateDraft} />
-            <AffixPoolCard draft={draft} updateDraft={updateDraft} />
-          </div>
+          <QuotasTab draft={draft} updateDraft={updateDraft} />
         )}
         <SaveBar
           saving={saving}
