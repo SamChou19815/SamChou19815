@@ -1,8 +1,8 @@
 // The 燕云十六声 gear tracker's whole state, persisted as one JSON document per
 // user in the shared random_small_apps table. The game's 词条 and 部位 are
 // hardcoded below; the user sets how many of each 词条 the whole set needs
-// (毕业要求) and enters their own pieces — the app counts, and searches for the
-// best set to wear.
+// (毕业要求), enters their own pieces, and configures the set they aim for
+// (目标配装) — the app counts, and compares what is worn against that target.
 
 /** Every 词条 a piece can roll, grouped as the game's guides group them. */
 export const AFFIX_GROUPS = [
@@ -84,9 +84,16 @@ export type Gear = {
  */
 export type Quotas = Partial<Record<Affix, number>>;
 
+/**
+ * The set the user aims for: the 词条 each slot's piece should have, at most
+ * MAX_AFFIXES per slot. Order within a slot does not matter.
+ */
+export type TargetSet = Partial<Record<GearSlot, Affix[]>>;
+
 export type WwmGearTrackerData = {
   version: 2;
   quotas: Quotas;
+  target: TargetSet;
   gears: Gear[];
 };
 
@@ -95,7 +102,7 @@ export function newId(): string {
 }
 
 export function emptyWwmGearTrackerData(): WwmGearTrackerData {
-  return { version: 2, quotas: {}, gears: [] };
+  return { version: 2, quotas: {}, target: {}, gears: [] };
 }
 
 function normalizeName(value: unknown): string {
@@ -149,6 +156,15 @@ export function normalizeWwmGearTrackerData(raw: unknown): WwmGearTrackerData {
     }
   }
 
+  const target: TargetSet = {};
+  if (typeof source.target === "object" && source.target != null) {
+    for (const [slot, affixes] of Object.entries(source.target as Record<string, unknown>)) {
+      if (!isGearSlot(slot) || !Array.isArray(affixes)) continue;
+      const valid = affixes.filter(isAffix).slice(0, MAX_AFFIXES);
+      if (valid.length > 0) target[slot] = valid;
+    }
+  }
+
   // Version 1 referenced its own pool entries by id.
   const legacyNames = new Map<string, string>();
   if (Array.isArray(source.affixPool)) {
@@ -197,7 +213,7 @@ export function normalizeWwmGearTrackerData(raw: unknown): WwmGearTrackerData {
   for (const gear of unknownEquipped) {
     if (!gears.some((other) => other.equipped && other.slot === gear.slot)) gear.equipped = true;
   }
-  return { version: 2, quotas, gears };
+  return { version: 2, quotas, target, gears };
 }
 
 /** Pieces in slot order, keeping entry order within a slot. */
@@ -313,107 +329,56 @@ export function affixUsage(set: readonly Gear[]): Map<Affix, number> {
   return usage;
 }
 
-export type OptimalSet = {
-  // One piece for every slot that has any piece, in slot order.
-  gears: Gear[];
-  // False when the search hit its budget and `gears` is only the best found.
-  exhaustive: boolean;
+/** How one slot's worn piece stands against the target set's 词条 for it. */
+export type SlotComparison = {
+  slot: GearSlot;
+  worn: Gear | null;
+  target: Affix[];
+  // Target 词条 the worn piece has, counted with multiplicity.
+  matched: Affix[];
+  // Target 词条 the worn piece lacks.
+  missing: Affix[];
+  // Worn 词条 the target does not ask for.
+  extra: Affix[];
 };
 
-// Search nodes visited before giving up on proving optimality.
-const SEARCH_BUDGET = 1_000_000;
-
-/**
- * The set — one piece per slot that has any — that fills the most quota.
- * Among equally good sets it keeps the most currently worn pieces, then
- * prefers more useful 词条 overall. A depth-first search over slots, pruned
- * by the most quota the remaining slots could still fill.
- */
-export function optimalSet({ gears, quotas }: WwmGearTrackerData): OptimalSet {
-  // Only needed 词条 matter; every vector below is indexed like `needed`.
-  const tracked = AFFIXES.filter((affix) => quotaOf(quotas, affix) > 0);
-  const needed = tracked.map((affix) => quotaOf(quotas, affix));
-  const trackedIndex = new Map(tracked.map((affix, i) => [affix, i]));
-  type Candidate = { gear: Gear; counts: number[]; useful: number };
-  const toCandidate = (gear: Gear): Candidate => {
-    const counts = tracked.map(() => 0);
-    for (const { affix } of gear.affixes) {
-      const i = trackedIndex.get(affix);
-      if (i != null) counts[i] = (counts[i] ?? 0) + 1;
+export function compareSlot(slot: GearSlot, worn: Gear | null, target: Affix[]): SlotComparison {
+  const unmatched = new Map<Affix, number>();
+  for (const affix of target) unmatched.set(affix, (unmatched.get(affix) ?? 0) + 1);
+  const matched: Affix[] = [];
+  const extra: Affix[] = [];
+  for (const { affix } of worn?.affixes ?? []) {
+    const left = unmatched.get(affix) ?? 0;
+    if (left > 0) {
+      unmatched.set(affix, left - 1);
+      matched.push(affix);
+    } else {
+      extra.push(affix);
     }
-    return { gear, counts, useful: counts.reduce((sum, n) => sum + n, 0) };
-  };
-
-  const slots: Candidate[][] = [];
-  for (const slot of GEAR_SLOTS) {
-    const candidates = gears.filter((gear) => gear.slot === slot).map(toCandidate);
-    if (candidates.length === 0) continue;
-    // Likely-best first, so the bound prunes early.
-    candidates.sort(
-      (a, b) => b.useful - a.useful || Number(b.gear.equipped) - Number(a.gear.equipped),
-    );
-    slots.push(candidates);
   }
-
-  // suffixMax[i][a]: the most of 词条 `a` slots i.. could add together.
-  const suffixMax: number[][] = [tracked.map(() => 0)];
-  for (const candidates of [...slots].reverse()) {
-    const next = suffixMax[0] ?? [];
-    suffixMax.unshift(
-      next.map((sum, a) => sum + Math.max(...candidates.map(({ counts }) => counts[a] ?? 0))),
-    );
+  const missing: Affix[] = [];
+  for (const affix of target) {
+    const left = unmatched.get(affix) ?? 0;
+    if (left <= 0) continue;
+    unmatched.set(affix, left - 1);
+    missing.push(affix);
   }
+  return { slot, worn, target, matched, missing, extra };
+}
 
-  const counts = tracked.map(() => 0);
-  const choice: Candidate[] = [];
-  let best: { filled: number; kept: number; useful: number; gears: Gear[] } | null = null;
-  let budget = SEARCH_BUDGET;
-  let truncated = false;
+/** Every slot's worn piece against the target set, in slot order. */
+export function compareToTarget(data: WwmGearTrackerData): SlotComparison[] {
+  const worn = new Map(equippedGears(data).map((gear) => [gear.slot, gear]));
+  return GEAR_SLOTS.map((slot) =>
+    compareSlot(slot, worn.get(slot) ?? null, data.target[slot] ?? []),
+  );
+}
 
-  const filledWith = (extra: readonly number[]): number => {
-    let filled = 0;
-    needed.forEach((quota, a) => {
-      filled += Math.min(quota, (counts[a] ?? 0) + (extra[a] ?? 0));
-    });
-    return filled;
-  };
-  const add = (delta: readonly number[], sign: 1 | -1): void => {
-    delta.forEach((n, a) => {
-      counts[a] = (counts[a] ?? 0) + sign * n;
-    });
-  };
-
-  const search = (i: number, kept: number, useful: number): void => {
-    if (budget <= 0) {
-      truncated = true;
-      return;
-    }
-    budget--;
-    const candidates = slots[i];
-    if (candidates == null) {
-      const filled = filledWith([]);
-      if (
-        best == null ||
-        filled > best.filled ||
-        (filled === best.filled &&
-          (kept > best.kept || (kept === best.kept && useful > best.useful)))
-      ) {
-        best = { filled, kept, useful, gears: choice.map(({ gear }) => gear) };
-      }
-      return;
-    }
-    if (best != null && filledWith(suffixMax[i] ?? []) < best.filled) return;
-    for (const candidate of candidates) {
-      add(candidate.counts, 1);
-      choice.push(candidate);
-      search(i + 1, kept + Number(candidate.gear.equipped), useful + candidate.useful);
-      choice.pop();
-      add(candidate.counts, -1);
-    }
-  };
-  search(0, 0, 0);
-
-  // Assigned only inside `search`, which TypeScript does not follow.
-  const found = best as { gears: Gear[] } | null;
-  return { gears: found?.gears ?? [], exhaustive: !truncated };
+/** How many of each 词条 the target set has across all slots. */
+export function targetUsage(target: TargetSet): Map<Affix, number> {
+  const usage = new Map<Affix, number>();
+  for (const affixes of Object.values(target)) {
+    for (const affix of affixes) usage.set(affix, (usage.get(affix) ?? 0) + 1);
+  }
+  return usage;
 }
