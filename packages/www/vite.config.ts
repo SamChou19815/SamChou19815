@@ -13,7 +13,18 @@ const blogPostPaths = allMetadata
   .filter((post) => post.externalUrl == null)
   .map(({ year, month, date, titleSlug }) => `/blog/${year}/${month}/${date}/${titleSlug}`);
 
-const pagePaths = ["/", "/about", "/blog", "/timeline", "/budget", "/in-canada", ...blogPostPaths];
+const pagePaths = [
+  "/",
+  "/about",
+  "/blog",
+  "/timeline",
+  "/budget",
+  "/in-canada",
+  "/random-small-apps",
+  "/random-small-apps/wwm-gear-tracker",
+  "/random-small-apps/edit-json",
+  ...blogPostPaths,
+];
 
 export default defineConfig({
   define: {

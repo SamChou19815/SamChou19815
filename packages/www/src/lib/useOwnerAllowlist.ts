@@ -1,6 +1,7 @@
-import type { AccessResult } from "../../lib/AuthGate";
+import type { AccessResult } from "./AuthGate";
 
-// The in-canada app is restricted to this single account.
+// The personal tools that don't keep their own allowlist in the database are
+// restricted to this single account.
 const OWNER_EMAIL = "sam@developersam.com";
 
 export function useOwnerAllowlist(email: string | null): AccessResult {

@@ -15,6 +15,9 @@ import { Route as InCanadaRouteImport } from './routes/in-canada'
 import { Route as TerminalIndexRouteImport } from './routes/_terminal/index'
 import { Route as TerminalAboutRouteImport } from './routes/_terminal/about'
 import { Route as TerminalTimelineRouteImport } from './routes/_terminal/timeline'
+import { Route as RandomSmallAppsIndexRouteImport } from './routes/random-small-apps/index'
+import { Route as RandomSmallAppsEditJsonRouteImport } from './routes/random-small-apps/edit-json'
+import { Route as RandomSmallAppsWwmGearTrackerRouteImport } from './routes/random-small-apps/wwm-gear-tracker'
 import { Route as TerminalBlogIndexRouteImport } from './routes/_terminal/blog/index'
 import { Route as TerminalBlogSplatRouteImport } from './routes/_terminal/blog/$'
 
@@ -47,6 +50,22 @@ const TerminalTimelineRoute = TerminalTimelineRouteImport.update({
   path: '/timeline',
   getParentRoute: () => TerminalRoute,
 } as any)
+const RandomSmallAppsIndexRoute = RandomSmallAppsIndexRouteImport.update({
+  id: '/random-small-apps/',
+  path: '/random-small-apps/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RandomSmallAppsEditJsonRoute = RandomSmallAppsEditJsonRouteImport.update({
+  id: '/random-small-apps/edit-json',
+  path: '/random-small-apps/edit-json',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RandomSmallAppsWwmGearTrackerRoute =
+  RandomSmallAppsWwmGearTrackerRouteImport.update({
+    id: '/random-small-apps/wwm-gear-tracker',
+    path: '/random-small-apps/wwm-gear-tracker',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const TerminalBlogIndexRoute = TerminalBlogIndexRouteImport.update({
   id: '/blog/',
   path: '/blog/',
@@ -64,6 +83,9 @@ export interface FileRoutesByFullPath {
   '/in-canada': typeof InCanadaRoute
   '/about': typeof TerminalAboutRoute
   '/timeline': typeof TerminalTimelineRoute
+  '/random-small-apps/edit-json': typeof RandomSmallAppsEditJsonRoute
+  '/random-small-apps/wwm-gear-tracker': typeof RandomSmallAppsWwmGearTrackerRoute
+  '/random-small-apps/': typeof RandomSmallAppsIndexRoute
   '/blog/$': typeof TerminalBlogSplatRoute
   '/blog/': typeof TerminalBlogIndexRoute
 }
@@ -72,7 +94,10 @@ export interface FileRoutesByTo {
   '/in-canada': typeof InCanadaRoute
   '/about': typeof TerminalAboutRoute
   '/timeline': typeof TerminalTimelineRoute
+  '/random-small-apps/edit-json': typeof RandomSmallAppsEditJsonRoute
+  '/random-small-apps/wwm-gear-tracker': typeof RandomSmallAppsWwmGearTrackerRoute
   '/': typeof TerminalIndexRoute
+  '/random-small-apps': typeof RandomSmallAppsIndexRoute
   '/blog/$': typeof TerminalBlogSplatRoute
   '/blog': typeof TerminalBlogIndexRoute
 }
@@ -83,7 +108,10 @@ export interface FileRoutesById {
   '/in-canada': typeof InCanadaRoute
   '/_terminal/about': typeof TerminalAboutRoute
   '/_terminal/timeline': typeof TerminalTimelineRoute
+  '/random-small-apps/edit-json': typeof RandomSmallAppsEditJsonRoute
+  '/random-small-apps/wwm-gear-tracker': typeof RandomSmallAppsWwmGearTrackerRoute
   '/_terminal/': typeof TerminalIndexRoute
+  '/random-small-apps/': typeof RandomSmallAppsIndexRoute
   '/_terminal/blog/$': typeof TerminalBlogSplatRoute
   '/_terminal/blog/': typeof TerminalBlogIndexRoute
 }
@@ -95,6 +123,9 @@ export interface FileRouteTypes {
     | '/in-canada'
     | '/about'
     | '/timeline'
+    | '/random-small-apps/edit-json'
+    | '/random-small-apps/wwm-gear-tracker'
+    | '/random-small-apps/'
     | '/blog/$'
     | '/blog/'
   fileRoutesByTo: FileRoutesByTo
@@ -103,7 +134,10 @@ export interface FileRouteTypes {
     | '/in-canada'
     | '/about'
     | '/timeline'
+    | '/random-small-apps/edit-json'
+    | '/random-small-apps/wwm-gear-tracker'
     | '/'
+    | '/random-small-apps'
     | '/blog/$'
     | '/blog'
   id:
@@ -113,7 +147,10 @@ export interface FileRouteTypes {
     | '/in-canada'
     | '/_terminal/about'
     | '/_terminal/timeline'
+    | '/random-small-apps/edit-json'
+    | '/random-small-apps/wwm-gear-tracker'
     | '/_terminal/'
+    | '/random-small-apps/'
     | '/_terminal/blog/$'
     | '/_terminal/blog/'
   fileRoutesById: FileRoutesById
@@ -122,6 +159,9 @@ export interface RootRouteChildren {
   TerminalRoute: typeof TerminalRouteWithChildren
   BudgetRoute: typeof BudgetRoute
   InCanadaRoute: typeof InCanadaRoute
+  RandomSmallAppsEditJsonRoute: typeof RandomSmallAppsEditJsonRoute
+  RandomSmallAppsWwmGearTrackerRoute: typeof RandomSmallAppsWwmGearTrackerRoute
+  RandomSmallAppsIndexRoute: typeof RandomSmallAppsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -168,6 +208,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TerminalTimelineRouteImport
       parentRoute: typeof TerminalRoute
     }
+    '/random-small-apps/': {
+      id: '/random-small-apps/'
+      path: '/random-small-apps'
+      fullPath: '/random-small-apps/'
+      preLoaderRoute: typeof RandomSmallAppsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/random-small-apps/edit-json': {
+      id: '/random-small-apps/edit-json'
+      path: '/random-small-apps/edit-json'
+      fullPath: '/random-small-apps/edit-json'
+      preLoaderRoute: typeof RandomSmallAppsEditJsonRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/random-small-apps/wwm-gear-tracker': {
+      id: '/random-small-apps/wwm-gear-tracker'
+      path: '/random-small-apps/wwm-gear-tracker'
+      fullPath: '/random-small-apps/wwm-gear-tracker'
+      preLoaderRoute: typeof RandomSmallAppsWwmGearTrackerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_terminal/blog/': {
       id: '/_terminal/blog/'
       path: '/blog'
@@ -209,6 +270,9 @@ const rootRouteChildren: RootRouteChildren = {
   TerminalRoute: TerminalRouteWithChildren,
   BudgetRoute: BudgetRoute,
   InCanadaRoute: InCanadaRoute,
+  RandomSmallAppsEditJsonRoute: RandomSmallAppsEditJsonRoute,
+  RandomSmallAppsWwmGearTrackerRoute: RandomSmallAppsWwmGearTrackerRoute,
+  RandomSmallAppsIndexRoute: RandomSmallAppsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
