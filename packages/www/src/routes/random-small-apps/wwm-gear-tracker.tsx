@@ -7,7 +7,7 @@ import { useAuth } from "../../lib/useAuth";
 export const Route = createFileRoute("/random-small-apps/wwm-gear-tracker")({
   head: () => ({
     meta: [
-      { title: "WWM Gear Tracker | Developer Sam" },
+      { title: "燕云十六声 · 装备词条 | Developer Sam" },
       { name: "robots", content: "noindex, nofollow" },
     ],
   }),
@@ -19,7 +19,7 @@ function WwmGearTrackerPage(): React.JSX.Element {
   const access = useOwnerAllowlist(signedInEmail(auth));
   return (
     <AuthGate
-      title="WWM Gear Tracker"
+      title="燕云十六声 · 装备词条"
       signedOutPrompt="Sign in to track your gear."
       deniedMessage="This app is restricted to its owner."
       auth={auth}

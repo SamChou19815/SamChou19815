@@ -14,9 +14,8 @@ export type RandomSmallApp = {
 export const RANDOM_SMALL_APPS: readonly RandomSmallApp[] = [
   {
     id: "wwm-gear-tracker",
-    name: "WWM Gear Tracker",
-    tagline:
-      "Define categories of affixes and how many of each your whole Where Winds Meet gear set needs, then track the shared graduation rate.",
+    name: "燕云十六声 · 装备词条",
+    tagline: "设定每种词条的毕业要求，记录每件装备的词条，计算毕业率并找出最优配装。",
     path: "/random-small-apps/wwm-gear-tracker",
   },
   {
