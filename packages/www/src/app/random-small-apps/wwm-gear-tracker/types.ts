@@ -20,6 +20,9 @@ export const AFFIX_GROUPS = [
       "最小牵丝攻击",
       "最大破竹攻击",
       "最小破竹攻击",
+      // Adaptive: becomes the 属攻 of whichever school is being played.
+      "最大无相攻击",
+      "最小无相攻击",
     ],
   },
   {
@@ -47,12 +50,10 @@ function isGearSlot(value: unknown): value is GearSlot {
   return typeof value === "string" && (GEAR_SLOTS as readonly string[]).includes(value);
 }
 
-/** A piece's 词条 positions, in order: 宫 is the initial one, the rest are tuned. */
-export const AFFIX_POSITIONS = ["宫", "商", "角", "徵", "羽"] as const;
+/** The most 词条 a piece can have. Their order on a piece does not matter. */
+export const MAX_AFFIXES = 5;
 
-export const MAX_AFFIXES = AFFIX_POSITIONS.length;
-
-/** The most any one 词条 could ever be needed: every position of every slot. */
+/** The most any one 词条 could ever be needed: every 词条 of every slot. */
 export const MAX_QUOTA = GEAR_SLOTS.length * MAX_AFFIXES;
 
 /** One rolled 词条 on a piece, plus its rolled value. */
@@ -210,7 +211,7 @@ export function equippedGears({ gears }: WwmGearTrackerData): Gear[] {
 
 /**
  * The ids of rolled 词条 that count toward their quota within `set`: the first
- * `needed` of each 词条 across the set, in slot then position order. The rest
+ * `needed` of each 词条 across the set, in slot then entry order. The rest
  * are overfills and render as uncounted.
  */
 export function countedAffixIds(set: readonly Gear[], quotas: Quotas): ReadonlySet<string> {

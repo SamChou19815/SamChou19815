@@ -3,7 +3,6 @@ import { useAuth } from "../../../lib/useAuth";
 import { loadSmallAppData, saveSmallAppData } from "../smallAppStorage";
 import {
   AFFIX_GROUPS,
-  AFFIX_POSITIONS,
   GEAR_SLOTS,
   MAX_AFFIXES,
   MAX_QUOTA,
@@ -166,30 +165,36 @@ const TABS: readonly { id: TabId; label: string }[] = [
 function TabBar({
   tab,
   onSelect,
+  trailing,
 }: {
   tab: TabId;
   onSelect: (tab: TabId) => void;
+  // Shown at the far end of the bar, e.g. the autosave status.
+  trailing: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div className="flex border-b border-gray-200 dark:border-gray-700" role="tablist">
-      {TABS.map(({ id, label }) => {
-        const isActive = id === tab;
-        const cls = isActive
-          ? "border-b-2 border-blue-500 text-blue-500 dark:border-blue-400 dark:text-blue-400"
-          : "border-b-2 border-transparent text-gray-600 hover:text-blue-500 dark:text-gray-300 dark:hover:text-blue-400";
-        return (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={isActive}
-            className={`whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors duration-200 ${cls}`}
-            onClick={() => onSelect(id)}
-          >
-            {label}
-          </button>
-        );
-      })}
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex" role="tablist">
+        {TABS.map(({ id, label }) => {
+          const isActive = id === tab;
+          const cls = isActive
+            ? "border-b-2 border-blue-500 text-blue-500 dark:border-blue-400 dark:text-blue-400"
+            : "border-b-2 border-transparent text-gray-600 hover:text-blue-500 dark:text-gray-300 dark:hover:text-blue-400";
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              className={`whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors duration-200 ${cls}`}
+              onClick={() => onSelect(id)}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      {trailing}
     </div>
   );
 }
@@ -307,9 +312,9 @@ function GearForm({
               onChange={(e) => setAffixCount(Number(e.target.value))}
               className={inputCls}
             >
-              {AFFIX_POSITIONS.map((position, i) => (
-                <option key={position} value={i + 1}>
-                  {`${i + 1}（至${position}）`}
+              {Array.from({ length: MAX_AFFIXES }, (_, i) => i + 1).map((count) => (
+                <option key={count} value={count}>
+                  {count}
                 </option>
               ))}
             </select>
@@ -321,9 +326,6 @@ function GearForm({
           <div className="mt-2 flex flex-col gap-2">
             {affixes.slice(0, affixCount).map((rolled, index) => (
               <div key={rolled.id} className="flex items-center gap-2">
-                <span className="w-6 shrink-0 text-center text-sm font-bold text-gray-500 dark:text-gray-400">
-                  {AFFIX_POSITIONS[index]}
-                </span>
                 <AffixSelect
                   value={rolled.affix}
                   quotas={data.quotas}
@@ -450,7 +452,7 @@ function GearCard({
       </p>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {gear.affixes.map((rolled, index) => {
+        {gear.affixes.map((rolled) => {
           const isCounted = countedIds.has(rolled.id);
           const isUseful = quotaOf(quotas, rolled.affix) > 0;
           const chipCls = isCounted
@@ -472,7 +474,7 @@ function GearCard({
                     : "无效词条"
               }
             >
-              {`${AFFIX_POSITIONS[index]} · ${rolled.affix}${rolled.value !== "" ? ` ${rolled.value}` : ""}`}
+              {`${rolled.affix}${rolled.value !== "" ? ` ${rolled.value}` : ""}`}
             </span>
           );
         })}
@@ -832,58 +834,40 @@ function QuotasTab({
   );
 }
 
-function SaveBar({
+function SaveStatus({
   saving,
   dirty,
-  message,
-  onSave,
-  onDiscard,
+  error,
+  onRetry,
 }: {
   saving: boolean;
   dirty: boolean;
-  message: { kind: "ok" | "error"; text: string } | null;
-  onSave: () => void;
-  onDiscard: () => void;
+  // Why the last save failed, or null.
+  error: string | null;
+  onRetry: () => void;
 }): React.JSX.Element {
-  return (
-    <Card>
-      {message != null && (
-        <div
-          className={`mb-4 rounded border px-3 py-2 text-sm ${
-            message.kind === "ok"
-              ? "border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300"
-              : "border-red-400 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300"
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        {dirty && <span className={`mr-auto ${mutedCls}`}>有未保存的修改</span>}
-        {dirty && (
-          <button
-            type="button"
-            onClick={onDiscard}
-            disabled={saving}
-            className={secondaryButtonCls}
-          >
-            放弃修改
-          </button>
-        )}
+  if (saving) return <span className={mutedCls}>保存中…</span>;
+  if (error != null) {
+    return (
+      <span className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
+        {`保存失败：${error}`}
         <button
           type="button"
-          onClick={onSave}
-          disabled={!dirty || saving}
-          className={primaryButtonCls}
+          onClick={onRetry}
+          className="font-bold underline transition-colors duration-200 hover:text-red-500"
         >
-          {saving ? "保存中…" : "保存"}
+          重试
         </button>
-      </div>
-    </Card>
-  );
+      </span>
+    );
+  }
+  return <span className={mutedCls}>{dirty ? "即将保存…" : "已自动保存"}</span>;
 }
 
 type LoadState = "loading" | "ready" | "error";
+
+// How long edits must pause before they are saved.
+const AUTOSAVE_DELAY_MS = 800;
 
 export default function WwmGearTrackerApp(): React.JSX.Element {
   const { session } = useAuth();
@@ -902,7 +886,10 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
   const [saved, setSaved] = useState<WwmGearTrackerData | null>(null);
   const [draft, setDraft] = useState<WwmGearTrackerData | null>(null);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // The last failed save: its error, and the document it tried to store, which
+  // is not retried automatically until the draft changes or 重试 is pressed.
+  const [saveFailure, setSaveFailure] = useState<{ error: string; json: string } | null>(null);
   const [tab, setTab] = useState<TabId>("gear");
 
   useEffect(() => {
@@ -912,7 +899,7 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
       if (cancelled) return;
       if (error != null) {
         setLoaded({ userId, state: "error" });
-        setMessage({ kind: "error", text: error });
+        setLoadError(error);
         return;
       }
       const normalized = normalizeWwmGearTrackerData(data);
@@ -928,11 +915,42 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     // oxlint-disable-next-line exhaustive-effect-dependencies
   }, [userId, reloadNonce]);
 
+  // What the draft stores as, normalized so it is exactly what loads back —
+  // comparing that, not the raw draft, keeps a save from re-triggering itself.
+  const pending = useMemo(
+    () => (draft == null ? null : normalizeWwmGearTrackerData(draft)),
+    [draft],
+  );
+  const pendingJson = pending == null ? null : JSON.stringify(pending);
+  const dirty = pendingJson != null && saved != null && pendingJson !== JSON.stringify(saved);
+
   useEffect(() => {
-    if (message?.kind !== "ok") return;
-    const t = setTimeout(() => setMessage(null), 4000);
+    if (userId == null || pending == null || pendingJson == null) return;
+    if (!dirty || saving || pendingJson === saveFailure?.json) return;
+    const t = setTimeout(() => {
+      setSaving(true);
+      saveSmallAppData(userId, APP_ID, pending).then((error) => {
+        setSaving(false);
+        if (error != null) {
+          setSaveFailure({ error, json: pendingJson });
+          return;
+        }
+        setSaveFailure(null);
+        // Only `saved` moves: edits made while this save ran stay in the draft
+        // and are saved next.
+        setSaved(pending);
+      });
+    }, AUTOSAVE_DELAY_MS);
     return () => clearTimeout(t);
-  }, [message]);
+  }, [userId, pending, pendingJson, dirty, saving, saveFailure]);
+
+  // Leaving with edits not yet stored would lose them.
+  useEffect(() => {
+    if (!dirty && !saving) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty, saving]);
 
   /** Applies `mutate` to a deep copy of the draft, so edits never alias `saved`. */
   const updateDraft = (mutate: (data: WwmGearTrackerData) => void) => {
@@ -951,25 +969,6 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     });
   };
 
-  const dirty = draft != null && saved != null && JSON.stringify(draft) !== JSON.stringify(saved);
-
-  const save = async () => {
-    if (userId == null || draft == null || saving) return;
-    setSaving(true);
-    setMessage(null);
-    // Normalize on the way in so what is stored is exactly what loads back.
-    const toSave = normalizeWwmGearTrackerData(draft);
-    const error = await saveSmallAppData(userId, APP_ID, toSave);
-    setSaving(false);
-    if (error != null) {
-      setMessage({ kind: "error", text: error });
-      return;
-    }
-    setSaved(toSave);
-    setDraft(toSave);
-    setMessage({ kind: "ok", text: "已保存。" });
-  };
-
   if (loadState === "loading") {
     return (
       <div className="mx-auto w-full max-w-6xl px-6 py-12">
@@ -985,14 +984,12 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
       <div className="mx-auto w-full max-w-6xl px-6 py-12">
         <Card>
           <h3 className="mb-2">无法加载数据</h3>
-          <p className="mb-4 text-sm text-red-600 dark:text-red-400">
-            {message?.text ?? "未知错误。"}
-          </p>
+          <p className="mb-4 text-sm text-red-600 dark:text-red-400">{loadError ?? "未知错误。"}</p>
           <div className="flex justify-end">
             <button
               type="button"
               onClick={() => {
-                setMessage(null);
+                setLoadError(null);
                 setLoaded(null);
                 setReloadNonce((n) => n + 1);
               }}
@@ -1011,7 +1008,18 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
       <Hero data={draft} />
 
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10">
-        <TabBar tab={tab} onSelect={setTab} />
+        <TabBar
+          tab={tab}
+          onSelect={setTab}
+          trailing={
+            <SaveStatus
+              saving={saving}
+              dirty={dirty}
+              error={saveFailure?.error ?? null}
+              onRetry={() => setSaveFailure(null)}
+            />
+          }
+        />
         {tab === "gear" ? (
           <GearTab draft={draft} updateDraft={updateDraft} />
         ) : tab === "compare" ? (
@@ -1019,18 +1027,6 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
         ) : (
           <QuotasTab draft={draft} updateDraft={updateDraft} />
         )}
-        <SaveBar
-          saving={saving}
-          dirty={dirty}
-          message={message}
-          onSave={() => {
-            void save();
-          }}
-          onDiscard={() => {
-            setDraft(saved);
-            setMessage(null);
-          }}
-        />
       </div>
     </div>
   );
