@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import InCanadaApp from "../app/in-canada/InCanadaApp";
-import { useOwnerAllowlist } from "../app/in-canada/useOwnerAllowlist";
 import AuthGate, { signedInEmail } from "../lib/AuthGate";
+import { useOwnerAllowlist } from "../lib/useOwnerAllowlist";
 import { useAuth } from "../lib/useAuth";
 
 export const Route = createFileRoute("/in-canada")({
