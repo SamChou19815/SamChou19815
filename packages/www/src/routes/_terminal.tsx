@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { SITE_ICON_LINKS } from "../lib/appIcons";
 import TerminalPage from "../lib/TerminalPage";
 
 /**
@@ -8,5 +9,6 @@ import TerminalPage from "../lib/TerminalPage";
  * the page's head) changes. See `TerminalPage`.
  */
 export const Route = createFileRoute("/_terminal")({
+  head: () => ({ links: SITE_ICON_LINKS }),
   component: TerminalPage,
 });

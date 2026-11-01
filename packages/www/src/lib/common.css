@@ -84,3 +84,15 @@
     @apply ml-0 mr-0 mt-4 mb-4 p-2 rounded-md text-sm dark:bg-[#2a2a2a];
   }
 }
+
+/* iOS Safari zooms the page in when a field under 16px takes focus, and leaves
+   it zoomed, so the page then scrolls sideways. On touch screens every field is
+   16px. This sits outside any layer on purpose: unlayered rules beat Tailwind's
+   utility layer, so a field's `text-sm` cannot undo it. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

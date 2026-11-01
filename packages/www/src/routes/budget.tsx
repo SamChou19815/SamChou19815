@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { appIconHead } from "../lib/appIcons";
 import { Suspense } from "react";
 import BudgetApp from "../app/budget/BudgetApp";
 import { useWhitelist } from "../app/budget/useWhitelist";
@@ -6,9 +7,17 @@ import AuthGate, { signedInEmail } from "../lib/AuthGate";
 import { useAuth } from "../lib/useAuth";
 
 export const Route = createFileRoute("/budget")({
-  head: () => ({
-    meta: [{ title: "Budget | Developer Sam" }, { name: "robots", content: "noindex, nofollow" }],
-  }),
+  head: () => {
+    const icon = appIconHead("budget", "Budget");
+    return {
+      meta: [
+        { title: "Budget | Developer Sam" },
+        { name: "robots", content: "noindex, nofollow" },
+        ...icon.meta,
+      ],
+      links: icon.links,
+    };
+  },
   validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
     tab: typeof search.tab === "string" ? search.tab : undefined,
   }),

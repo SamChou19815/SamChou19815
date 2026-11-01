@@ -10,10 +10,8 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: "stylesheet", href: commonCss },
-      { rel: "manifest", href: "/manifest.json" },
       { rel: "canonical", href: "https://developersam.com" },
-      { rel: "icon", href: "/logo.png" },
-      { rel: "shortcut icon", href: "/favicon.ico" },
+      // Icons and the manifest are set per page: see `lib/appIcons.ts`.
     ],
   }),
   component: RootLayout,

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e293b"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="blade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e2e8f0"/>
+      <stop offset="0.5" stop-color="#f8fafc"/>
+      <stop offset="0.5" stop-color="#94a3b8"/>
+      <stop offset="1" stop-color="#cbd5e1"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- 毕业率 ring: the track, then four fifths filled. -->
+  <circle cx="256" cy="256" r="168" fill="none" stroke="#334155" stroke-width="24"/>
+  <circle cx="256" cy="256" r="168" fill="none" stroke="#34d399" stroke-width="24" stroke-linecap="round"
+    stroke-dasharray="844 1056" transform="rotate(-90 256 256)"/>
+  <!-- A straight 剑. -->
+  <path d="M256 118 L278 158 L278 300 L234 300 L234 158 Z" fill="url(#blade)"/>
+  <path d="M256 130 L256 294" stroke="#64748b" stroke-width="3"/>
+  <path d="M196 298 Q256 318 316 298 L308 318 Q256 336 204 318 Z" fill="#f59e0b"/>
+  <rect x="244" y="324" width="24" height="44" rx="5" fill="#991b1b"/>
+  <path d="M244 336 L268 331 M244 348 L268 343 M244 360 L268 355" stroke="#7f1d1d" stroke-width="3"/>
+  <circle cx="256" cy="378" r="13" fill="#f59e0b"/>
+</svg>
