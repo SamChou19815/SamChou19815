@@ -6,6 +6,8 @@
 // set satisfies those counts together, wherever its 词条 sit; extra 词条 of one
 // kind never make up for a shortfall in another.
 
+import { defaultDpsSettings, normalizeDpsSettings, type DpsSettings } from "./dpsModel";
+
 /** Every 词条 a piece can roll, grouped as the game's guides group them. */
 export const AFFIX_GROUPS = [
   { name: "五维", affixes: ["劲", "敏", "势", "体", "御"] },
@@ -86,9 +88,12 @@ export type Gear = {
 export type TargetSet = Partial<Record<GearSlot, Affix[]>>;
 
 export type WwmGearTrackerData = {
-  version: 3;
+  version: 4;
   target: TargetSet;
   gears: Gear[];
+  // The build, level and in-game panel (with the worn set on) that every 词条
+  // change is priced against.
+  dps: DpsSettings;
 };
 
 export function newId(): string {
@@ -96,7 +101,7 @@ export function newId(): string {
 }
 
 export function emptyWwmGearTrackerData(): WwmGearTrackerData {
-  return { version: 3, target: {}, gears: [] };
+  return { version: 4, target: {}, gears: [], dps: defaultDpsSettings() };
 }
 
 function normalizeName(value: unknown): string {
@@ -190,7 +195,8 @@ export function normalizeWwmGearTrackerData(raw: unknown): WwmGearTrackerData {
   for (const gear of unknownEquipped) {
     if (!gears.some((other) => other.equipped && other.slot === gear.slot)) gear.equipped = true;
   }
-  return { version: 3, target, gears };
+  // Documents before version 4 had no DPS settings: they start from the preset.
+  return { version: 4, target, gears, dps: normalizeDpsSettings(source.dps) };
 }
 
 /** Pieces in slot order, keeping entry order within a slot. */
@@ -281,7 +287,7 @@ export function compareSlot(slot: GearSlot, worn: Gear | null, target: Affix[]):
 
 /** Every slot's worn piece against the target set, in slot order. */
 export function compareToTarget(data: WwmGearTrackerData): SlotComparison[] {
-  const worn = new Map(equippedGears(data).map((gear) => [gear.slot, gear]));
+  const worn = wornBySlot(data);
   return GEAR_SLOTS.map((slot) =>
     compareSlot(slot, worn.get(slot) ?? null, data.target[slot] ?? []),
   );
@@ -335,6 +341,11 @@ export function setStats(data: WwmGearTrackerData): SetStats {
     graduated: required > 0 && filled >= required,
     remaining: Math.max(0, required - filled),
   };
+}
+
+/** The worn piece of each slot. */
+export function wornBySlot(data: WwmGearTrackerData): Map<GearSlot, Gear> {
+  return new Map(equippedGears(data).map((gear) => [gear.slot, gear]));
 }
 
 /** A share as a percentage like "37.5%", or "—" when there is nothing to measure. */

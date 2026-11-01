@@ -25,6 +25,28 @@ import {
   type TargetSet,
   type WwmGearTrackerData,
 } from "./types";
+import { BUILDS, type AnyBuild } from "./builds";
+import {
+  LEVELS,
+  currentBuild,
+  fieldValue,
+  groupLabel,
+  panelFields,
+  setFieldValue,
+  settingsInput,
+  type PanelField,
+} from "./dpsModel";
+import {
+  affixMarginals,
+  currentDps,
+  formatChange,
+  formatDps,
+  isPriced,
+  wearChange,
+  wornAffixPayoffs,
+  wornIn,
+  type DpsChange,
+} from "./payoff";
 
 const APP_ID = "wwm-gear-tracker";
 
@@ -126,6 +148,7 @@ const HERO_GRID_MULTIPLE = 6;
 function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
   const stats = setStats(data);
   const fills = affixFills(data);
+  const dps = currentDps(data);
   const padding = (HERO_GRID_MULTIPLE - (fills.length % HERO_GRID_MULTIPLE)) % HERO_GRID_MULTIPLE;
   return (
     <section className="bg-slate-900 text-white">
@@ -151,6 +174,9 @@ function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
               {stats.required > 0
                 ? `${stats.filled}/${stats.required} 条目标词条已满足 · 穿戴 ${stats.pieces} 件 · ${stats.graduated ? "已毕业" : `还差 ${stats.remaining} 条`}`
                 : "尚未设定目标配装"}
+            </p>
+            <p className="mt-1 text-sm text-slate-400" title="按「收益分析」中的面板计算">
+              {`${currentBuild(data.dps).name} DPS ${formatDps(dps.dps)} · DPS 毕业率 ${dps.graduationRate.toFixed(1)}%`}
             </p>
           </div>
           {fills.length === 0 ? (
@@ -183,11 +209,12 @@ function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
   );
 }
 
-type TabId = "gear" | "compare";
+type TabId = "gear" | "compare" | "payoff";
 
 const TABS: readonly { id: TabId; label: string }[] = [
   { id: "gear", label: "我的装备" },
   { id: "compare", label: "配装对比" },
+  { id: "payoff", label: "收益分析" },
 ];
 
 function TabBar({
@@ -234,6 +261,7 @@ function AffixSelect({
   onChange,
   label,
   emptyLabel,
+  payoff,
   className = "min-w-0 flex-1",
 }: {
   // "" picks `emptyLabel`, offered only when one is given.
@@ -243,6 +271,8 @@ function AffixSelect({
   onChange: (affix: Affix | "") => void;
   label: string;
   emptyLabel?: string;
+  // The DPS change of picking each 词条 instead of `value`, noted on the option.
+  payoff?: (affix: Affix) => string | null;
   className?: string;
 }): React.JSX.Element {
   return (
@@ -257,9 +287,10 @@ function AffixSelect({
         <optgroup key={group.name} label={group.name}>
           {group.affixes.map((affix) => {
             const n = wanted?.get(affix) ?? 0;
+            const note = affix === value ? null : payoff?.(affix);
             return (
               <option key={affix} value={affix}>
-                {n > 0 ? `${affix}（目标${n > 1 ? ` ×${n}` : ""}）` : affix}
+                {`${n > 0 ? `${affix}（目标${n > 1 ? ` ×${n}` : ""}）` : affix}${note != null ? `  ${note}` : ""}`}
               </option>
             );
           })}
@@ -371,6 +402,26 @@ function SlotHeader({
   );
 }
 
+/** Text color for a DPS change: green up, red down, muted when flat. */
+function changeTone(percent: number): string {
+  if (Math.abs(percent) < 0.005) return "text-gray-500 dark:text-gray-400";
+  return percent > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400";
+}
+
+/** "<label>：DPS a → b (+x%) · DPS 毕业率 c% → d%". */
+function DpsChangeLine({ label, change }: { label: string; change: DpsChange }): React.JSX.Element {
+  const { before, after, percent } = change;
+  return (
+    <p className="rounded bg-gray-50 px-3 py-2 text-sm tabular-nums dark:bg-gray-800/60">
+      <span className="text-gray-600 dark:text-gray-300">{`${label}：`}</span>
+      <span className={`font-bold ${changeTone(percent)}`}>{`DPS ${formatChange(percent)}`}</span>
+      <span className={mutedCls}>
+        {` · ${formatDps(before.dps)} → ${formatDps(after.dps)} · DPS 毕业率 ${before.graduationRate.toFixed(1)}% → ${after.graduationRate.toFixed(1)}%`}
+      </span>
+    </p>
+  );
+}
+
 /** The form for one piece, shared by adding and editing. */
 function GearForm({
   initial,
@@ -394,6 +445,27 @@ function GearForm({
     initial?.affixes.map((rolled) => ({ ...rolled })) ?? [],
   );
   const wanted = slotTargetUsage(data.target, slot);
+
+  // Priced live: what saving (or, for a spare, wearing) this piece does to DPS.
+  const wornHere = wornIn(data, slot).filter(({ id }) => id !== initial?.id);
+  const willBeWorn = initial?.equipped ?? wornHere.length === 0;
+  const replacing = initial?.equipped === true ? [initial, ...wornHere] : wornHere;
+  const liveChange = wearChange(data, affixes.slice(0, affixCount), replacing);
+  const liveLabel = willBeWorn
+    ? initial == null
+      ? "穿戴此装备"
+      : "保存修改后"
+    : `换下「${wornHere[0]?.name ?? slot}」穿上此装备`;
+  // Rerolling row `index` into `affix` at its best roll, against the form as it stands.
+  const rerollPayoff = (index: number, affix: Affix): string | null => {
+    if (!isPriced(data, affix)) return null;
+    const rerolled = affixes
+      .slice(0, affixCount)
+      .map((rolled, i) => (i === index ? { affix, value: "" } : rolled));
+    const after = wearChange(data, rerolled, replacing).after;
+    const base = liveChange.after.dps;
+    return formatChange(base > 0 ? ((after.dps - base) / base) * 100 : 0);
+  };
 
   // Fallback name for a piece saved with an empty name, e.g. "环 2".
   const othersInSlot = data.gears.filter(
@@ -470,6 +542,7 @@ function GearForm({
                 <AffixSelect
                   value={rolled.affix}
                   wanted={wanted}
+                  payoff={(affix) => rerollPayoff(index, affix)}
                   label={`第 ${index + 1} 条词条`}
                   onChange={(affix) => {
                     if (affix === "") return;
@@ -483,7 +556,7 @@ function GearForm({
                       list.map((a, i) => (i === index ? { ...a, value: e.target.value } : a)),
                     )
                   }
-                  placeholder="数值（可选）"
+                  placeholder="数值（空为满值）"
                   aria-label={`第 ${index + 1} 条词条数值`}
                   className={`${inputCls} w-32`}
                 />
@@ -519,6 +592,8 @@ function GearForm({
           </div>
         </div>
 
+        <DpsChangeLine label={liveLabel} change={liveChange} />
+
         <div className="flex justify-end gap-3">
           <button type="button" onClick={onCancel} className={secondaryButtonCls}>
             取消
@@ -536,11 +611,14 @@ function GearCard({
   gear,
   neededBy,
   countedIds,
+  swap,
   onToggleEquipped,
   onEdit,
   onDelete,
 }: {
   gear: Gear;
+  // For a spare piece: what wearing it instead of the worn one does to DPS.
+  swap: DpsChange | null;
   // How many of each 词条 the whole target set asks for.
   neededBy: ReadonlyMap<Affix, number>;
   // Which worn 词条 count toward graduation — computed once for the whole worn
@@ -616,6 +694,14 @@ function GearCard({
           : gear.equipped
             ? `${good} 条计入毕业`
             : `${good} 条目标词条 · 未穿戴`}
+        {swap != null && (
+          <span
+            className={changeTone(swap.percent)}
+            title={`换上后 DPS ${formatDps(swap.before.dps)} → ${formatDps(swap.after.dps)}`}
+          >
+            {` · 换上 ${formatChange(swap.percent)}`}
+          </span>
+        )}
       </p>
 
       <div className="mt-3">
@@ -764,6 +850,9 @@ function GearTab({
                     gear={gear}
                     neededBy={neededBy}
                     countedIds={countedIds}
+                    swap={
+                      gear.equipped ? null : wearChange(draft, gear.affixes, wornIn(draft, slot))
+                    }
                     onToggleEquipped={() => toggleEquipped(gear.id)}
                     onEdit={() => {
                       setAddingSlot(null);
@@ -1000,6 +1089,296 @@ function CompareTab({
   );
 }
 
+/** A panel value as entered: percentages ×100, without float noise. */
+function formatPanelValue(value: number, percent: boolean): string {
+  return String(Number((percent ? value * 100 : value).toFixed(4)));
+}
+
+/** A number input that keeps what is typed while focused and commits whatever parses. */
+function NumberField({
+  field,
+  value,
+  inert,
+  onCommit,
+}: {
+  field: PanelField;
+  value: number;
+  // The build's formula ignores this number as things stand.
+  inert: boolean;
+  onCommit: (value: number) => void;
+}): React.JSX.Element {
+  const { label, percent, rawPercent } = field;
+  const shown = formatPanelValue(value, percent);
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <label
+      className="flex min-w-0 flex-col text-sm"
+      title={inert ? "当前计算不受此项影响" : undefined}
+    >
+      <span className={`truncate ${labelCls} ${inert ? "opacity-50" : ""}`}>
+        {percent || rawPercent ? `${label} %` : label}
+      </span>
+      <input
+        inputMode="decimal"
+        value={text ?? shown}
+        onFocus={() => setText(shown)}
+        onBlur={() => setText(null)}
+        onChange={(e) => {
+          setText(e.target.value);
+          const n = Number(e.target.value);
+          if (e.target.value.trim() !== "" && Number.isFinite(n)) onCommit(percent ? n / 100 : n);
+        }}
+        className={`${inputCls} min-w-0 tabular-nums ${inert ? "opacity-60" : ""}`}
+      />
+    </label>
+  );
+}
+
+/** Paths of the fields whose change would not move DPS at `input`. */
+function inertFields(build: AnyBuild, input: object, fields: readonly PanelField[]): Set<string> {
+  const base = build.dps(input);
+  const inert = new Set<string>();
+  for (const { path, percent } of fields) {
+    const value = fieldValue(input, path);
+    const nudged = structuredClone(input);
+    setFieldValue(nudged, path, value + Math.max(Math.abs(value) * 0.05, percent ? 0.01 : 1));
+    if (build.dps(nudged) === base) inert.add(path);
+  }
+  return inert;
+}
+
+const thCls = "py-1 pr-4 font-normal whitespace-nowrap";
+const tdCls = "py-2 pr-4 whitespace-nowrap tabular-nums";
+
+function PayoffTab({
+  draft,
+  updateDraft,
+}: {
+  draft: WwmGearTrackerData;
+  updateDraft: (mutate: (data: WwmGearTrackerData) => void) => void;
+}): React.JSX.Element {
+  const [editingPanel, setEditingPanel] = useState(false);
+  const build = currentBuild(draft.dps);
+  const input = useMemo(() => settingsInput(draft.dps), [draft]);
+  const fields = panelFields(build);
+  const dps = currentDps(draft);
+  const worn = useMemo(() => wornAffixPayoffs(draft), [draft]);
+  const marginals = useMemo(() => affixMarginals(draft), [draft]);
+  const inert = useMemo(
+    () => (editingPanel ? inertFields(build, input, fields) : new Set<string>()),
+    [editingPanel, build, input, fields],
+  );
+  const entered = draft.dps.panels[build.id] ?? {};
+  const isPreset = Object.keys(entered).length === 0;
+  const groups = [...new Set(fields.map(({ group }) => group))];
+  const mainWeapon =
+    fields.find(({ path }) => path === `weaponBonus.${build.mainWeapon}`)?.label ??
+    build.mainWeapon;
+
+  const setField = (path: string, value: number) =>
+    updateDraft((data) => {
+      const panel = (data.dps.panels[build.id] ??= {});
+      // Values equal to the preset's are not stored, so presets can be refreshed.
+      if (value === fieldValue(build.preset, path)) delete panel[path];
+      else panel[path] = value;
+      if (Object.keys(panel).length === 0) delete data.dps.panels[build.id];
+    });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className={mutedCls}>{`${build.name} · 当前面板`}</p>
+            <p className="mt-1 text-4xl font-bold tabular-nums">{formatDps(dps.dps)}</p>
+            <p className={`mt-1 ${mutedCls}`}>
+              {`DPS 毕业率 ${dps.graduationRate.toFixed(1)}%`}
+              {isPreset && " · 正在使用计算器的毕业面板，填入自己的面板后收益更准"}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="flex flex-col text-sm">
+              <span className={labelCls}>流派</span>
+              <select
+                value={build.id}
+                onChange={(e) =>
+                  updateDraft((data) => {
+                    data.dps.build = e.target.value;
+                  })
+                }
+                className={inputCls}
+              >
+                {BUILDS.map(({ id, name }) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col text-sm">
+              <span className={labelCls}>角色等级</span>
+              <select
+                value={draft.dps.level}
+                onChange={(e) =>
+                  updateDraft((data) => {
+                    data.dps.level = Number(e.target.value);
+                  })
+                }
+                className={inputCls}
+              >
+                {LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {editingPanel && (
+              <button
+                type="button"
+                disabled={isPreset}
+                onClick={() =>
+                  updateDraft((data) => {
+                    delete data.dps.panels[build.id];
+                  })
+                }
+                className={secondaryButtonCls}
+              >
+                恢复毕业面板
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditingPanel((value) => !value)}
+              className={primaryButtonCls}
+            >
+              {editingPanel ? "完成" : "编辑面板"}
+            </button>
+          </div>
+        </div>
+
+        {editingPanel && (
+          <div className="mt-6 flex flex-col gap-5">
+            <p className={mutedCls}>
+              {`填入穿着当前装备时游戏内的${build.name}面板，每个流派分别保存。所有收益都以此为基准：去掉一条词条就从面板中减去它，换上一条就加上它。灰色的项目当前不影响计算。`}
+            </p>
+            {groups.map((group) => (
+              <div key={group}>
+                <h4 className="mb-2 text-sm font-semibold">{groupLabel(group)}</h4>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {fields
+                    .filter((field) => field.group === group)
+                    .map((field) => (
+                      <NumberField
+                        key={`${build.id}:${field.path}`}
+                        field={field}
+                        value={fieldValue(input, field.path)}
+                        inert={inert.has(field.path)}
+                        onCommit={(value) => setField(field.path, value)}
+                      />
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <h3 className="mb-1">换一条词条</h3>
+        <p className={`mb-4 ${mutedCls}`}>
+          穿戴装备上的每条词条：去掉它损失多少，以及调律成哪条满值词条收益最大。未填数值的词条按满值计算。
+        </p>
+        {worn.length === 0 ? (
+          <p className={mutedCls}>还没有穿戴的装备词条。</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="text-gray-500 dark:text-gray-400">
+                <tr>
+                  <th className={thCls}>装备</th>
+                  <th className={thCls}>词条</th>
+                  <th className={thCls}>去掉</th>
+                  <th className={thCls}>最佳替换</th>
+                  <th className={thCls}>替换收益</th>
+                </tr>
+              </thead>
+              <tbody>
+                {worn.map(({ gear, rolled, amount, removal, best }) => (
+                  <tr key={rolled.id} className="border-t border-gray-200 dark:border-gray-700">
+                    <td className={tdCls}>
+                      <span className="text-gray-500 dark:text-gray-400">{gear.slot}</span>{" "}
+                      {gear.name}
+                    </td>
+                    <td className={tdCls}>
+                      {rolled.affix}
+                      {isPriced(draft, rolled.affix) && (
+                        <span className="ml-1 text-gray-500 dark:text-gray-400">{amount}</span>
+                      )}
+                    </td>
+                    <td className={`${tdCls} ${changeTone(removal.percent)}`}>
+                      {formatChange(removal.percent)}
+                    </td>
+                    <td className={tdCls}>{best == null ? "—" : `${best.affix} ${best.amount}`}</td>
+                    <td
+                      className={`${tdCls} font-bold ${changeTone(best?.change.percent ?? 0)}`}
+                      title={
+                        best == null
+                          ? undefined
+                          : `DPS 毕业率 ${dps.graduationRate.toFixed(1)}% → ${best.change.after.graduationRate.toFixed(1)}%`
+                      }
+                    >
+                      {best == null ? "—" : formatChange(best.change.percent)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <h3 className="mb-1">多一条满值词条</h3>
+        <p className={`mb-4 ${mutedCls}`}>
+          {`在当前面板上再加一条 ${draft.dps.level} 级满值词条的收益。精准、会心、会意按判定抗性折算后计入面板。`}
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-gray-500 dark:text-gray-400">
+              <tr>
+                <th className={thCls}>词条</th>
+                <th className={thCls}>满值</th>
+                <th className={thCls}>DPS</th>
+                <th className={thCls}>DPS 毕业率</th>
+              </tr>
+            </thead>
+            <tbody>
+              {marginals.map(({ affix, amount, change }) => (
+                <tr key={affix} className="border-t border-gray-200 dark:border-gray-700">
+                  <td className={tdCls}>{affix}</td>
+                  <td className={`${tdCls} text-gray-500 dark:text-gray-400`}>{amount}</td>
+                  <td className={`${tdCls} font-bold ${changeTone(change.percent)}`}>
+                    {formatChange(change.percent)}
+                  </td>
+                  <td className={`${tdCls} text-gray-500 dark:text-gray-400`}>
+                    {formatChange(
+                      change.after.graduationRate - change.before.graduationRate,
+                    ).replace("%", "")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className={`mt-4 text-xs ${mutedCls}`}>
+          {`公式与数据取自 wherewindsmeetcalculator.com 的${build.name}计算器，套装、心法等设定沿用其默认配置。武学增效按${mainWeapon}计；体、御、气血、防御等不影响输出的词条不参与计算，计算器公式未用到的项（如部分流派的首领增伤）收益为零。`}
+        </p>
+      </Card>
+    </div>
+  );
+}
+
 function SaveStatus({
   saving,
   dirty,
@@ -1123,7 +1502,7 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     setDraft((prev) => {
       const base = prev ?? saved ?? emptyWwmGearTrackerData();
       const next: WwmGearTrackerData = {
-        version: 3,
+        version: 4,
         target: Object.fromEntries(
           Object.entries(base.target).map(([slot, affixes]) => [slot, [...affixes]]),
         ) as TargetSet,
@@ -1131,6 +1510,7 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
           ...gear,
           affixes: gear.affixes.map((rolled) => ({ ...rolled })),
         })),
+        dps: structuredClone(base.dps),
       };
       mutate(next);
       return next;
@@ -1190,8 +1570,10 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
         />
         {tab === "gear" ? (
           <GearTab draft={draft} updateDraft={updateDraft} />
-        ) : (
+        ) : tab === "compare" ? (
           <CompareTab draft={draft} updateDraft={updateDraft} />
+        ) : (
+          <PayoffTab draft={draft} updateDraft={updateDraft} />
         )}
       </div>
     </div>
