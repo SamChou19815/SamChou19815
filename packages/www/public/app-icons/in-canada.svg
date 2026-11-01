@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#ffffff"/>
+  <!-- A calendar page: the red header, then the leaf as the day. -->
+  <rect width="512" height="150" fill="#d52b1e"/>
+  <rect x="150" y="96" width="28" height="84" rx="14" fill="#ffffff" stroke="#d52b1e" stroke-width="8"/>
+  <rect x="334" y="96" width="28" height="84" rx="14" fill="#ffffff" stroke="#d52b1e" stroke-width="8"/>
+  <path transform="translate(256 326) scale(0.057)" fill="#d52b1e"
+    d="m-90 2030 45-863a95 95 0 0 0-111-98l-859 151 116-320a65 65 0 0 0-20-73l-941-762 212-99a65 65 0 0 0 34-79l-186-572 542 115a65 65 0 0 0 73-38l105-247 423 454a65 65 0 0 0 111-57l-204-1052 327 189a65 65 0 0 0 91-27l332-652 332 652a65 65 0 0 0 91 27l327-189-204 1052a65 65 0 0 0 111 57l423-454 105 247a65 65 0 0 0 73 38l542-115-186 572a65 65 0 0 0 34 79l212 99-941 762a65 65 0 0 0-20 73l116 320-859-151a95 95 0 0 0-111 98l45 863z"/>
+</svg>

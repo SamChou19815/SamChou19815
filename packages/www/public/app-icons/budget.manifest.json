@@ -1,0 +1,33 @@
+{
+  "name": "Budget",
+  "short_name": "Budget",
+  "id": "/budget",
+  "start_url": "/budget",
+  "scope": "/budget",
+  "display": "standalone",
+  "theme_color": "#047857",
+  "background_color": "#047857",
+  "icons": [
+    {
+      "src": "/app-icons/budget-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/app-icons/budget-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/app-icons/budget-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/app-icons/budget.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

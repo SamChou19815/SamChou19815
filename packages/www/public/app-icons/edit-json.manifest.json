@@ -1,0 +1,33 @@
+{
+  "name": "JSON Editor",
+  "short_name": "JSON Editor",
+  "id": "/random-small-apps/edit-json",
+  "start_url": "/random-small-apps/edit-json",
+  "scope": "/random-small-apps/edit-json",
+  "display": "standalone",
+  "theme_color": "#18181b",
+  "background_color": "#18181b",
+  "icons": [
+    {
+      "src": "/app-icons/edit-json-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/app-icons/edit-json-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/app-icons/edit-json-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/app-icons/edit-json.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

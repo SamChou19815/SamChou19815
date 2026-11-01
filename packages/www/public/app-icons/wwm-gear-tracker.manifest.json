@@ -1,0 +1,33 @@
+{
+  "name": "燕云十六声 · 装备词条",
+  "short_name": "装备词条",
+  "id": "/random-small-apps/wwm-gear-tracker",
+  "start_url": "/random-small-apps/wwm-gear-tracker",
+  "scope": "/random-small-apps/wwm-gear-tracker",
+  "display": "standalone",
+  "theme_color": "#0f172a",
+  "background_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/app-icons/wwm-gear-tracker-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/app-icons/wwm-gear-tracker-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/app-icons/wwm-gear-tracker-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/app-icons/wwm-gear-tracker.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

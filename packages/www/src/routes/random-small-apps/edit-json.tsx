@@ -1,16 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { appIconHead } from "../../lib/appIcons";
 import JsonEditorApp from "../../app/random-small-apps/edit-json/JsonEditorApp";
 import AuthGate, { signedInEmail } from "../../lib/AuthGate";
 import { useOwnerAllowlist } from "../../lib/useOwnerAllowlist";
 import { useAuth } from "../../lib/useAuth";
 
 export const Route = createFileRoute("/random-small-apps/edit-json")({
-  head: () => ({
-    meta: [
-      { title: "Edit JSON | Developer Sam" },
-      { name: "robots", content: "noindex, nofollow" },
-    ],
-  }),
+  head: () => {
+    const icon = appIconHead("edit-json", "JSON Editor");
+    return {
+      meta: [
+        { title: "Edit JSON | Developer Sam" },
+        { name: "robots", content: "noindex, nofollow" },
+        ...icon.meta,
+      ],
+      links: icon.links,
+    };
+  },
   component: EditJsonPage,
 });
 
