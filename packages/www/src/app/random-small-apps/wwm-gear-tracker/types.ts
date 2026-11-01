@@ -2,8 +2,9 @@
 // user in the shared random_small_apps table. The game's 词条 and 部位 are
 // hardcoded below; the user configures the set they aim for (目标配装) and
 // enters their own pieces. The target set is the only source of truth for what
-// is needed: a worn piece's 词条 count toward graduation exactly when its
-// slot's target asks for them.
+// is needed: across all slots, it asks for some number of each 词条. The worn
+// set satisfies those counts together, wherever its 词条 sit; extra 词条 of one
+// kind never make up for a shortfall in another.
 
 /** Every 词条 a piece can roll, grouped as the game's guides group them. */
 export const AFFIX_GROUPS = [
@@ -224,20 +225,22 @@ export function slotTargetUsage(target: TargetSet, slot: GearSlot): Map<Affix, n
 }
 
 /**
- * The ids of the rolled 词条 on `gear` that its slot's target asks for, each
- * target entry matched at most once. For a worn piece these count toward
- * graduation; for a spare one they would if it were worn.
+ * The ids of the worn set's rolled 词条 that count toward graduation: the
+ * first ones of each 词条, in slot order, up to how many the target set asks
+ * for. The rest are surplus.
  */
-export function matchedAffixIds(gear: Gear, target: TargetSet): ReadonlySet<string> {
-  const left = slotTargetUsage(target, gear.slot);
-  const matched = new Set<string>();
-  for (const rolled of gear.affixes) {
-    const n = left.get(rolled.affix) ?? 0;
-    if (n <= 0) continue;
-    left.set(rolled.affix, n - 1);
-    matched.add(rolled.id);
+export function countedAffixIds(data: WwmGearTrackerData): ReadonlySet<string> {
+  const left = targetUsage(data.target);
+  const counted = new Set<string>();
+  for (const gear of equippedGears(data)) {
+    for (const rolled of gear.affixes) {
+      const n = left.get(rolled.affix) ?? 0;
+      if (n <= 0) continue;
+      left.set(rolled.affix, n - 1);
+      counted.add(rolled.id);
+    }
   }
-  return matched;
+  return counted;
 }
 
 /** How one slot's worn piece stands against the target set's 词条 for it. */
@@ -291,41 +294,39 @@ export type AffixFill = {
   needed: number;
   // How many the worn set rolled, anywhere.
   rolled: number;
-  // Rolled ones in a slot whose target asks for them: at most `needed`.
+  // How many of the needed ones are satisfied: rolled, capped at `needed`.
   counted: number;
 };
 
-/** Each target 词条, filled by the worn pieces whose slot targets it. */
+/** Each target 词条, satisfied by the worn set's 词条 of that kind, in any slot. */
 export function affixFills(data: WwmGearTrackerData): AffixFill[] {
   const neededBy = targetUsage(data.target);
   const rolledBy = affixUsage(equippedGears(data));
-  const countedBy = countAffixes(compareToTarget(data).flatMap(({ matched }) => matched));
-  return AFFIXES.filter((affix) => neededBy.has(affix)).map((affix) => ({
-    affix,
-    needed: neededBy.get(affix) ?? 0,
-    rolled: rolledBy.get(affix) ?? 0,
-    counted: countedBy.get(affix) ?? 0,
-  }));
+  return AFFIXES.filter((affix) => neededBy.has(affix)).map((affix) => {
+    const needed = neededBy.get(affix) ?? 0;
+    const rolled = rolledBy.get(affix) ?? 0;
+    return { affix, needed, rolled, counted: Math.min(rolled, needed) };
+  });
 }
 
 export type SetStats = {
   pieces: number;
   // How many 词条 the target set has in total.
   required: number;
-  // How many of them the worn set has, in the right slots.
+  // How many of them the worn set satisfies, in any slot.
   filled: number;
   // Whether every target 词条 is met.
   graduated: boolean;
-  // How many more matching 词条 are needed to graduate.
+  // How many more satisfied 词条 are needed to graduate.
   remaining: number;
 };
 
 export function setStats(data: WwmGearTrackerData): SetStats {
   let required = 0;
   let filled = 0;
-  for (const { target, matched } of compareToTarget(data)) {
-    required += target.length;
-    filled += matched.length;
+  for (const { needed, counted } of affixFills(data)) {
+    required += needed;
+    filled += counted;
   }
   return {
     pieces: equippedGears(data).length,
