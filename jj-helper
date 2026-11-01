@@ -1,0 +1,11 @@
+#!/usr/bin/env sam-run
+{
+  "repo": "SamChou19815/SamChou19815",
+  "tag": "jj-helper-latest",
+  "platforms": {
+    "linux-x86_64": { "asset": "jj-helper-linux-x86_64" },
+    "linux-aarch64": { "asset": "jj-helper-linux-aarch64" },
+    "macos-x86_64": { "asset": "jj-helper-macos-x86_64" },
+    "macos-aarch64": { "asset": "jj-helper-macos-aarch64" }
+  }
+}
