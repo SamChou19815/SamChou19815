@@ -1,8 +1,9 @@
 // The 燕云十六声 gear tracker's whole state, persisted as one JSON document per
 // user in the shared random_small_apps table. The game's 词条 and 部位 are
-// hardcoded below; the user sets how many of each 词条 the whole set needs
-// (毕业要求), enters their own pieces, and configures the set they aim for
-// (目标配装) — the app counts, and compares what is worn against that target.
+// hardcoded below; the user configures the set they aim for (目标配装) and
+// enters their own pieces. The target set is the only source of truth for what
+// is needed: a worn piece's 词条 count toward graduation exactly when its
+// slot's target asks for them.
 
 /** Every 词条 a piece can roll, grouped as the game's guides group them. */
 export const AFFIX_GROUPS = [
@@ -41,7 +42,11 @@ function isAffix(value: unknown): value is Affix {
   return typeof value === "string" && AFFIX_SET.has(value);
 }
 
-/** The eight 部位: one piece of each is worn at a time. */
+/**
+ * The eight 部位: one piece of each is worn at a time. Listed as the game lays
+ * them out — the left block (主武器 副武器 over 环 佩) before the right block
+ * (头盔 胸甲 over 胫甲 腕甲).
+ */
 export const GEAR_SLOTS = ["主武器", "副武器", "环", "佩", "头盔", "胸甲", "胫甲", "腕甲"] as const;
 
 export type GearSlot = (typeof GEAR_SLOTS)[number];
@@ -52,9 +57,6 @@ function isGearSlot(value: unknown): value is GearSlot {
 
 /** The most 词条 a piece can have. Their order on a piece does not matter. */
 export const MAX_AFFIXES = 5;
-
-/** The most any one 词条 could ever be needed: every 词条 of every slot. */
-export const MAX_QUOTA = GEAR_SLOTS.length * MAX_AFFIXES;
 
 /** One rolled 词条 on a piece, plus its rolled value. */
 export type RolledAffix = {
@@ -77,22 +79,13 @@ export type Gear = {
 };
 
 /**
- * How many of each 词条 the whole worn set needs. A quota is shared across
- * every piece: rolled 词条 from all worn pieces fill it together, and extra
- * 词条 of one kind never compensate for a shortfall in another. 词条 missing
- * here are not needed at all.
- */
-export type Quotas = Partial<Record<Affix, number>>;
-
-/**
  * The set the user aims for: the 词条 each slot's piece should have, at most
  * MAX_AFFIXES per slot. Order within a slot does not matter.
  */
 export type TargetSet = Partial<Record<GearSlot, Affix[]>>;
 
 export type WwmGearTrackerData = {
-  version: 2;
-  quotas: Quotas;
+  version: 3;
   target: TargetSet;
   gears: Gear[];
 };
@@ -102,7 +95,7 @@ export function newId(): string {
 }
 
 export function emptyWwmGearTrackerData(): WwmGearTrackerData {
-  return { version: 2, quotas: {}, target: {}, gears: [] };
+  return { version: 3, target: {}, gears: [] };
 }
 
 function normalizeName(value: unknown): string {
@@ -111,15 +104,6 @@ function normalizeName(value: unknown): string {
 
 function normalizeId(value: unknown): string {
   return typeof value === "string" && value !== "" ? value : newId();
-}
-
-export function clampQuota(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(MAX_QUOTA, Math.max(0, Math.round(value)));
-}
-
-export function quotaOf(quotas: Quotas, affix: Affix): number {
-  return quotas[affix] ?? 0;
 }
 
 /**
@@ -141,20 +125,12 @@ export function enforceSingleEquipped(gears: Gear[], winnerId: string | null = n
  * Coerces whatever the row holds (or nothing) into well-formed data. 词条 and
  * 部位 the game does not have are dropped. Documents from the first version,
  * which kept a user-defined affix pool, keep the rolled affixes whose names
- * match a real 词条; their old category quotas do not carry over.
+ * match a real 词条. The per-词条 quotas of earlier versions are dropped: the
+ * target set replaced them.
  */
 export function normalizeWwmGearTrackerData(raw: unknown): WwmGearTrackerData {
   if (typeof raw !== "object" || raw == null) return emptyWwmGearTrackerData();
   const source = raw as Record<string, unknown>;
-
-  const quotas: Quotas = {};
-  if (typeof source.quotas === "object" && source.quotas != null) {
-    for (const [affix, needed] of Object.entries(source.quotas as Record<string, unknown>)) {
-      if (!isAffix(affix) || typeof needed !== "number") continue;
-      const quota = clampQuota(needed);
-      if (quota > 0) quotas[affix] = quota;
-    }
-  }
 
   const target: TargetSet = {};
   if (typeof source.target === "object" && source.target != null) {
@@ -213,7 +189,7 @@ export function normalizeWwmGearTrackerData(raw: unknown): WwmGearTrackerData {
   for (const gear of unknownEquipped) {
     if (!gears.some((other) => other.equipped && other.slot === gear.slot)) gear.equipped = true;
   }
-  return { version: 2, quotas, target, gears };
+  return { version: 3, target, gears };
 }
 
 /** Pieces in slot order, keeping entry order within a slot. */
@@ -225,108 +201,43 @@ export function equippedGears({ gears }: WwmGearTrackerData): Gear[] {
   return sortedBySlot(gears.filter(({ equipped }) => equipped));
 }
 
-/**
- * The ids of rolled 词条 that count toward their quota within `set`: the first
- * `needed` of each 词条 across the set, in slot then entry order. The rest
- * are overfills and render as uncounted.
- */
-export function countedAffixIds(set: readonly Gear[], quotas: Quotas): ReadonlySet<string> {
-  const seen = new Map<Affix, number>();
-  const counted = new Set<string>();
-  for (const gear of sortedBySlot(set)) {
-    for (const rolled of gear.affixes) {
-      const n = (seen.get(rolled.affix) ?? 0) + 1;
-      seen.set(rolled.affix, n);
-      if (n <= quotaOf(quotas, rolled.affix)) counted.add(rolled.id);
-    }
-  }
-  return counted;
-}
-
-/** How one needed 词条 stands across a set. */
-export type AffixFill = {
-  affix: Affix;
-  needed: number;
-  // How many of this 词条 the set rolled.
-  rolled: number;
-  // Rolled ones that count: capped at the quota.
-  counted: number;
-};
-
-/** Each needed 词条's quota, filled by the 词条 rolled across `set`. */
-export function affixFills(set: readonly Gear[], quotas: Quotas): AffixFill[] {
-  const rolledBy = affixUsage(set);
-  const fills: AffixFill[] = [];
-  for (const affix of AFFIXES) {
-    const needed = quotaOf(quotas, affix);
-    if (needed <= 0) continue;
-    const rolled = rolledBy.get(affix) ?? 0;
-    fills.push({ affix, needed, rolled, counted: Math.min(rolled, needed) });
-  }
-  return fills;
-}
-
-export type SetStats = {
-  pieces: number;
-  // Total quota across 词条 — defined once, shared by every piece.
-  required: number;
-  // Quota filled by the set's rolled 词条 together.
-  filled: number;
-  // Whether every quota is met.
-  graduated: boolean;
-  // How many more counted 词条 are needed to graduate.
-  remaining: number;
-};
-
-export function setStats(set: readonly Gear[], quotas: Quotas): SetStats {
-  let required = 0;
-  let filled = 0;
-  for (const { needed, counted } of affixFills(set, quotas)) {
-    required += needed;
-    filled += counted;
-  }
-  return {
-    pieces: set.length,
-    required,
-    filled,
-    graduated: required > 0 && filled >= required,
-    remaining: Math.max(0, required - filled),
-  };
-}
-
-export type GearStats = {
-  rolled: number;
-  // Rolled 词条 the build needs at all, whether or not their quota has room.
-  useful: number;
-  // Rolled 词条 that count toward the quotas within the worn set.
-  counted: number;
-};
-
-export function gearStats(gear: Gear, quotas: Quotas, countedIds: ReadonlySet<string>): GearStats {
-  let useful = 0;
-  let counted = 0;
-  for (const rolled of gear.affixes) {
-    if (quotaOf(quotas, rolled.affix) > 0) useful++;
-    if (countedIds.has(rolled.id)) counted++;
-  }
-  return { rolled: gear.affixes.length, useful, counted };
-}
-
-/** A share as a percentage like "37.5%", or "—" when there is nothing to measure. */
-export function formatRate(numerator: number, denominator: number): string {
-  if (denominator <= 0) return "—";
-  const pct = Math.min(1, numerator / denominator) * 100;
-  const rounded = Math.round(pct * 10) / 10;
-  return `${rounded}%`;
+/** How many times each 词条 appears in `affixes`. */
+function countAffixes(affixes: Iterable<Affix>): Map<Affix, number> {
+  const counts = new Map<Affix, number>();
+  for (const affix of affixes) counts.set(affix, (counts.get(affix) ?? 0) + 1);
+  return counts;
 }
 
 /** How many times each 词条 was rolled across `set`. */
 export function affixUsage(set: readonly Gear[]): Map<Affix, number> {
-  const usage = new Map<Affix, number>();
-  for (const gear of set) {
-    for (const { affix } of gear.affixes) usage.set(affix, (usage.get(affix) ?? 0) + 1);
+  return countAffixes(set.flatMap(({ affixes }) => affixes.map(({ affix }) => affix)));
+}
+
+/** How many of each 词条 the target set has across all slots. */
+export function targetUsage(target: TargetSet): Map<Affix, number> {
+  return countAffixes(Object.values(target).flat());
+}
+
+/** How many of each 词条 one slot's target asks for. */
+export function slotTargetUsage(target: TargetSet, slot: GearSlot): Map<Affix, number> {
+  return countAffixes(target[slot] ?? []);
+}
+
+/**
+ * The ids of the rolled 词条 on `gear` that its slot's target asks for, each
+ * target entry matched at most once. For a worn piece these count toward
+ * graduation; for a spare one they would if it were worn.
+ */
+export function matchedAffixIds(gear: Gear, target: TargetSet): ReadonlySet<string> {
+  const left = slotTargetUsage(target, gear.slot);
+  const matched = new Set<string>();
+  for (const rolled of gear.affixes) {
+    const n = left.get(rolled.affix) ?? 0;
+    if (n <= 0) continue;
+    left.set(rolled.affix, n - 1);
+    matched.add(rolled.id);
   }
-  return usage;
+  return matched;
 }
 
 /** How one slot's worn piece stands against the target set's 词条 for it. */
@@ -343,8 +254,7 @@ export type SlotComparison = {
 };
 
 export function compareSlot(slot: GearSlot, worn: Gear | null, target: Affix[]): SlotComparison {
-  const unmatched = new Map<Affix, number>();
-  for (const affix of target) unmatched.set(affix, (unmatched.get(affix) ?? 0) + 1);
+  const unmatched = countAffixes(target);
   const matched: Affix[] = [];
   const extra: Affix[] = [];
   for (const { affix } of worn?.affixes ?? []) {
@@ -374,11 +284,62 @@ export function compareToTarget(data: WwmGearTrackerData): SlotComparison[] {
   );
 }
 
-/** How many of each 词条 the target set has across all slots. */
-export function targetUsage(target: TargetSet): Map<Affix, number> {
-  const usage = new Map<Affix, number>();
-  for (const affixes of Object.values(target)) {
-    for (const affix of affixes) usage.set(affix, (usage.get(affix) ?? 0) + 1);
+/** How one target 词条 stands across the worn set. */
+export type AffixFill = {
+  affix: Affix;
+  // How many the target set asks for, across all slots.
+  needed: number;
+  // How many the worn set rolled, anywhere.
+  rolled: number;
+  // Rolled ones in a slot whose target asks for them: at most `needed`.
+  counted: number;
+};
+
+/** Each target 词条, filled by the worn pieces whose slot targets it. */
+export function affixFills(data: WwmGearTrackerData): AffixFill[] {
+  const neededBy = targetUsage(data.target);
+  const rolledBy = affixUsage(equippedGears(data));
+  const countedBy = countAffixes(compareToTarget(data).flatMap(({ matched }) => matched));
+  return AFFIXES.filter((affix) => neededBy.has(affix)).map((affix) => ({
+    affix,
+    needed: neededBy.get(affix) ?? 0,
+    rolled: rolledBy.get(affix) ?? 0,
+    counted: countedBy.get(affix) ?? 0,
+  }));
+}
+
+export type SetStats = {
+  pieces: number;
+  // How many 词条 the target set has in total.
+  required: number;
+  // How many of them the worn set has, in the right slots.
+  filled: number;
+  // Whether every target 词条 is met.
+  graduated: boolean;
+  // How many more matching 词条 are needed to graduate.
+  remaining: number;
+};
+
+export function setStats(data: WwmGearTrackerData): SetStats {
+  let required = 0;
+  let filled = 0;
+  for (const { target, matched } of compareToTarget(data)) {
+    required += target.length;
+    filled += matched.length;
   }
-  return usage;
+  return {
+    pieces: equippedGears(data).length,
+    required,
+    filled,
+    graduated: required > 0 && filled >= required,
+    remaining: Math.max(0, required - filled),
+  };
+}
+
+/** A share as a percentage like "37.5%", or "—" when there is nothing to measure. */
+export function formatRate(numerator: number, denominator: number): string {
+  if (denominator <= 0) return "—";
+  const pct = Math.min(1, numerator / denominator) * 100;
+  const rounded = Math.round(pct * 10) / 10;
+  return `${rounded}%`;
 }
