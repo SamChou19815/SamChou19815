@@ -12,7 +12,7 @@ import {
   enforceSingleEquipped,
   equippedGears,
   formatRate,
-  matchedAffixIds,
+  countedAffixIds,
   newId,
   normalizeWwmGearTrackerData,
   setStats,
@@ -138,7 +138,7 @@ function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
         </h1>
         <p className="mt-3 max-w-2xl text-sm text-slate-300">
           在「配装对比」中设定每个部位想要的词条，记录每件装备调律出的词条。毕业率按当前穿戴的装备计算：
-          一件装备的词条只有在该部位的目标配装中才计入。
+          整套目标配装每种词条共需几条，由所有穿戴装备共同满足，不论在哪个部位；超出的部分不计，也不能弥补其他词条的缺口。
         </p>
 
         <div className="mt-8 flex flex-wrap items-end justify-between gap-x-12 gap-y-6">
@@ -534,22 +534,29 @@ function GearForm({
 
 function GearCard({
   gear,
-  target,
+  neededBy,
+  countedIds,
   onToggleEquipped,
   onEdit,
   onDelete,
 }: {
   gear: Gear;
-  target: TargetSet;
+  // How many of each 词条 the whole target set asks for.
+  neededBy: ReadonlyMap<Affix, number>;
+  // Which worn 词条 count toward graduation — computed once for the whole worn
+  // set, since one piece alone cannot tell whether its 词条 are surplus.
+  countedIds: ReadonlySet<string>;
   onToggleEquipped: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }): React.JSX.Element {
-  // Worn pieces count what matches their slot's target; spare ones show what would.
-  const matchedIds = matchedAffixIds(gear, target);
-  const good = matchedIds.size;
-  const wanted = target[gear.slot]?.length ?? 0;
-  const full = wanted > 0 && good >= wanted;
+  const isNeeded = (affix: Affix) => (neededBy.get(affix) ?? 0) > 0;
+  // Worn pieces are measured by what counts; spare ones by what the target needs.
+  const isGood = (rolled: RolledAffix) =>
+    gear.equipped ? countedIds.has(rolled.id) : isNeeded(rolled.affix);
+  const good = gear.affixes.filter(isGood).length;
+  const hasTarget = neededBy.size > 0;
+  const full = good >= gear.affixCount;
   const badgeCls = full
     ? "bg-emerald-500"
     : good > 0
@@ -557,13 +564,19 @@ function GearCard({
       : "bg-gray-400 dark:bg-gray-600";
 
   const rows: AffixRow[] = gear.affixes.map((rolled) => {
-    const isMatch = matchedIds.has(rolled.id);
+    const counts = isGood(rolled);
     return {
       key: rolled.id,
       label: rolled.affix,
       detail: rolled.value !== "" ? rolled.value : undefined,
-      tone: isMatch ? (gear.equipped ? "match" : "spare") : "plain",
-      title: isMatch ? (gear.equipped ? "计入毕业" : "命中目标（未穿戴）") : "目标外词条",
+      tone: counts ? (gear.equipped ? "match" : "spare") : "plain",
+      title: counts
+        ? gear.equipped
+          ? "计入毕业"
+          : "目标需要的词条（未穿戴）"
+        : isNeeded(rolled.affix)
+          ? "需求已满，不计入"
+          : "目标外词条",
     };
   });
   for (let i = gear.affixes.length; i < gear.affixCount; i++) {
@@ -585,26 +598,24 @@ function GearCard({
         </div>
         <span
           className={`shrink-0 rounded px-2 py-1 text-sm font-bold tabular-nums text-white ${badgeCls}`}
-          title={
-            gear.equipped ? "计入毕业的词条 / 目标词条数" : "命中目标的词条 / 目标词条数（未穿戴）"
-          }
+          title={gear.equipped ? "计入毕业的词条 / 词条数" : "目标需要的词条 / 词条数（未穿戴）"}
         >
-          {wanted > 0 ? `${good}/${wanted}` : "—"}
+          {`${good}/${gear.affixCount}`}
         </span>
       </div>
 
       <div className="mt-3 h-2 w-full overflow-hidden rounded bg-gray-200 dark:bg-gray-700">
         <div
           className={`h-full ${full ? "bg-emerald-500" : "bg-blue-500 dark:bg-blue-400"}`}
-          style={{ width: `${share(good, wanted) * 100}%` }}
+          style={{ width: `${share(good, gear.affixCount) * 100}%` }}
         />
       </div>
       <p className={`mt-2 truncate ${mutedCls}`}>
-        {wanted === 0
+        {!hasTarget
           ? "未设目标配装"
           : gear.equipped
             ? `${good} 条计入毕业`
-            : `${good} 条命中目标 · 未穿戴`}
+            : `${good} 条目标词条 · 未穿戴`}
       </p>
 
       <div className="mt-3">
@@ -637,6 +648,10 @@ function GearTab({
   const [addingSlot, setAddingSlot] = useState<GearSlot | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editing = draft.gears.find(({ id }) => id === editingId) ?? null;
+  // What counts depends on the whole worn set, so it is computed here and
+  // shared with each card.
+  const countedIds = useMemo(() => countedAffixIds(draft), [draft]);
+  const neededBy = useMemo(() => targetUsage(draft.target), [draft]);
 
   const submitNew = (gear: Gear) => {
     updateDraft((data) => {
@@ -747,7 +762,8 @@ function GearTab({
                   <GearCard
                     key={gear.id}
                     gear={gear}
-                    target={draft.target}
+                    neededBy={neededBy}
+                    countedIds={countedIds}
                     onToggleEquipped={() => toggleEquipped(gear.id)}
                     onEdit={() => {
                       setAddingSlot(null);
@@ -845,7 +861,7 @@ function CompareTab({
             </p>
             <p className={`mt-1 ${mutedCls}`}>
               {hasTarget
-                ? `${stats.filled}/${stats.required} 条目标词条已拥有 · ${stats.graduated ? "已毕业" : `还差 ${stats.remaining} 条`}`
+                ? `${stats.filled}/${stats.required} 条目标词条已满足 · ${stats.graduated ? "已毕业" : `还差 ${stats.remaining} 条`}`
                 : "还没有目标配装。设定每个部位想要的词条，或以当前穿戴为起点。"}
             </p>
           </div>
@@ -944,8 +960,8 @@ function CompareTab({
               <tr>
                 <th className="py-1 pr-4 font-normal">词条</th>
                 <th className="py-1 pr-4 font-normal">目标</th>
-                <th className="py-1 pr-4 font-normal" title="穿戴在目标要求的部位上">
-                  命中
+                <th className="py-1 pr-4 font-normal" title="穿戴装备满足了几条，不超过目标">
+                  满足
                 </th>
                 <th className="py-1 font-normal" title="穿戴装备上共有几条，不论部位">
                   穿戴
