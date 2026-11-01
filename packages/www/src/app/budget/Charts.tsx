@@ -280,7 +280,11 @@ export function InvestmentValueLine({
       <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} padding={X_PADDING} />
-        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
+        <YAxis
+          tick={{ fontSize: 12 }}
+          tickFormatter={(v) => formatCADCompact(v)}
+          domain={["auto", "auto"]}
+        />
         <Tooltip content={ChartTooltip} cursor={TOOLTIP_CURSOR} />
         <Line
           type="monotone"
