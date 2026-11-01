@@ -6,8 +6,10 @@ import BulkBar, { BulkEditField, HeaderCheckbox, RowCheckbox } from "./BulkBar";
 import type { Expense } from "./types";
 import { useBulkSelection } from "./useBulkSelection";
 import {
+  buildPairing,
   formatCAD,
   friendlyMutationError,
+  pairedFill,
   parseNonNegFloat,
   splitPastedRows,
   todayISO,
@@ -26,6 +28,8 @@ type Draft = {
   amount: string;
   date: string;
   notes: string;
+  // Which of name/category was filled in from the other, and so may be replaced again.
+  autoFilled: "name" | "category" | null;
 };
 
 const emptyDraft = (): Draft => ({
@@ -34,7 +38,40 @@ const emptyDraft = (): Draft => ({
   amount: "",
   date: todayISO(),
   notes: "",
+  autoFilled: null,
 });
+
+// Names and categories travel together (e.g. "Metro" is always "Grocery"), so picking one
+// fills in the other from past expenses.
+type Pairings = {
+  nameToCategory: ReadonlyMap<string, string>;
+  categoryToName: ReadonlyMap<string, string>;
+};
+
+function withName(d: Draft, name: string, p: Pairings): Draft {
+  const fill = pairedFill(p.nameToCategory, name, d.category, d.autoFilled === "category");
+  if (fill != null) return { ...d, name, category: fill, autoFilled: "category" };
+  return { ...d, name, autoFilled: d.autoFilled === "name" ? null : d.autoFilled };
+}
+
+function withCategory(d: Draft, category: string, p: Pairings): Draft {
+  const fill = pairedFill(p.categoryToName, category, d.name, d.autoFilled === "name");
+  if (fill != null) return { ...d, category, name: fill, autoFilled: "name" };
+  return { ...d, category, autoFilled: d.autoFilled === "category" ? null : d.autoFilled };
+}
+
+// Case-insensitive: every whitespace-separated term must appear in some field of the row.
+function matchesSearch(row: Expense, query: string): boolean {
+  const terms = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t !== "");
+  if (terms.length === 0) return true;
+  const haystack = [row.date, row.name, row.category, String(row.amount), row.notes ?? ""]
+    .join("\n")
+    .toLowerCase();
+  return terms.every((t) => haystack.includes(t));
+}
 
 const CATEGORY_LIST_ID = "expense-category-suggestions";
 const NAME_LIST_ID = "expense-name-suggestions";
@@ -105,8 +142,32 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(emptyDraft);
   const [bulkEdit, setBulkEdit] = useState<BulkEdit>(emptyBulkEdit);
+  const [search, setSearch] = useState("");
 
-  const sel = useBulkSelection(rows);
+  const visibleRows = useMemo(
+    () => (search.trim() === "" ? rows : rows.filter((r) => matchesSearch(r, search))),
+    [rows, search],
+  );
+
+  // Selection is scoped to the rows matching the search, so "select all" picks every match
+  // and nothing hidden by the search can be bulk edited or deleted.
+  const sel = useBulkSelection(visibleRows);
+
+  const pairings = useMemo<Pairings>(
+    () => ({
+      nameToCategory: buildPairing(
+        rows,
+        (r) => r.name,
+        (r) => r.category,
+      ),
+      categoryToName: buildPairing(
+        rows,
+        (r) => r.category,
+        (r) => r.name,
+      ),
+    }),
+    [rows],
+  );
 
   // Suggestions for the category autocomplete, derived from existing expenses.
   const categories = useMemo(() => {
@@ -142,6 +203,7 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
       amount: String(row.amount),
       date: row.date,
       notes: row.notes ?? "",
+      autoFilled: null,
     });
   };
 
@@ -252,10 +314,35 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
         ))}
       </datalist>
 
-      <AddExpenseForm userId={userId} error={error} />
+      <AddExpenseForm userId={userId} error={error} pairings={pairings} />
 
       <Card>
         <h3 className="mb-4">Expenses</h3>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name, category, notes, date, amount…"
+            aria-label="Search expenses"
+            className={`${inputCls()} max-w-sm flex-1`}
+          />
+          {search.trim() !== "" && (
+            <>
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                {visibleRows.length} of {rows.length} match
+              </span>
+              <button
+                type="button"
+                disabled={visibleRows.length === 0 || sel.allSelected}
+                onClick={sel.toggleAll}
+                className="rounded border border-blue-500 px-3 py-1 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-900/40"
+              >
+                Select all {visibleRows.length}
+              </button>
+            </>
+          )}
+        </div>
         {tableError && (
           <div className="mb-3 rounded border border-red-400 bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">
             {tableError}
@@ -338,7 +425,12 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
             No entries yet — add one above.
           </div>
         )}
-        {!loading && rows.length > 0 && (
+        {!loading && rows.length > 0 && visibleRows.length === 0 && (
+          <div className="text-center text-gray-500 dark:text-gray-400">
+            No expenses match “{search.trim()}”.
+          </div>
+        )}
+        {!loading && visibleRows.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
@@ -359,7 +451,7 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => {
+                {visibleRows.map((row) => {
                   const editing = editingId === row.id;
                   return (
                     <tr key={row.id} className="border-b border-gray-100 dark:border-gray-800">
@@ -382,7 +474,9 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
                           <Td>
                             <input
                               value={editDraft.name}
-                              onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                              onChange={(e) =>
+                                setEditDraft(withName(editDraft, e.target.value, pairings))
+                              }
                               className={inputCls()}
                               list={NAME_LIST_ID}
                             />
@@ -391,7 +485,7 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
                             <input
                               value={editDraft.category}
                               onChange={(e) =>
-                                setEditDraft({ ...editDraft, category: e.target.value })
+                                setEditDraft(withCategory(editDraft, e.target.value, pairings))
                               }
                               className={inputCls()}
                               list={CATEGORY_LIST_ID}
@@ -476,9 +570,11 @@ export default function ExpensesPanel({ userId, rows, loading, error }: Props): 
 function AddExpenseForm({
   userId,
   error,
+  pairings,
 }: {
   userId: string | null;
   error: string | null;
+  pairings: Pairings;
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -552,13 +648,13 @@ function AddExpenseForm({
             <Input
               label="Name"
               value={draft.name}
-              onChange={(v) => setDraft({ ...draft, name: v })}
+              onChange={(v) => setDraft(withName(draft, v, pairings))}
               list={NAME_LIST_ID}
             />
             <Input
               label="Category"
               value={draft.category}
-              onChange={(v) => setDraft({ ...draft, category: v })}
+              onChange={(v) => setDraft(withCategory(draft, v, pairings))}
               list={CATEGORY_LIST_ID}
             />
             <Input

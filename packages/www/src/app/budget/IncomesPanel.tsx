@@ -6,8 +6,10 @@ import BulkBar, { BulkEditField, HeaderCheckbox, RowCheckbox } from "./BulkBar";
 import type { Income } from "./types";
 import { useBulkSelection } from "./useBulkSelection";
 import {
+  buildPairing,
   formatCAD,
   friendlyMutationError,
+  pairedFill,
   parseNonNegFloat,
   splitPastedRows,
   todayISO,
@@ -26,6 +28,8 @@ type Draft = {
   amount: string;
   date: string;
   notes: string;
+  // Which of name/source was filled in from the other, and so may be replaced again.
+  autoFilled: "name" | "source" | null;
 };
 
 const emptyDraft = (): Draft => ({
@@ -34,7 +38,27 @@ const emptyDraft = (): Draft => ({
   amount: "",
   date: todayISO(),
   notes: "",
+  autoFilled: null,
 });
+
+// Names and sources travel together (e.g. "Salary" is always from the employer), so picking
+// one fills in the other from past income.
+type Pairings = {
+  nameToSource: ReadonlyMap<string, string>;
+  sourceToName: ReadonlyMap<string, string>;
+};
+
+function withName(d: Draft, name: string, p: Pairings): Draft {
+  const fill = pairedFill(p.nameToSource, name, d.source, d.autoFilled === "source");
+  if (fill != null) return { ...d, name, source: fill, autoFilled: "source" };
+  return { ...d, name, autoFilled: d.autoFilled === "name" ? null : d.autoFilled };
+}
+
+function withSource(d: Draft, source: string, p: Pairings): Draft {
+  const fill = pairedFill(p.sourceToName, source, d.name, d.autoFilled === "name");
+  if (fill != null) return { ...d, source, name: fill, autoFilled: "name" };
+  return { ...d, source, autoFilled: d.autoFilled === "source" ? null : d.autoFilled };
+}
 
 const SOURCE_LIST_ID = "income-source-suggestions";
 const NAME_LIST_ID = "income-name-suggestions";
@@ -110,6 +134,22 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
 
   const sel = useBulkSelection(rows);
 
+  const pairings = useMemo<Pairings>(
+    () => ({
+      nameToSource: buildPairing(
+        rows,
+        (r) => r.name,
+        (r) => r.source,
+      ),
+      sourceToName: buildPairing(
+        rows,
+        (r) => r.source,
+        (r) => r.name,
+      ),
+    }),
+    [rows],
+  );
+
   // Suggestions for the source autocomplete, derived from existing income.
   const sources = useMemo(() => {
     const seen = new Set<string>();
@@ -144,6 +184,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
       amount: String(row.amount),
       date: row.date,
       notes: row.notes ?? "",
+      autoFilled: null,
     });
   };
 
@@ -249,7 +290,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
         ))}
       </datalist>
 
-      <AddIncomeForm userId={userId} error={error} />
+      <AddIncomeForm userId={userId} error={error} pairings={pairings} />
 
       <Card>
         <h3 className="mb-4">Income</h3>
@@ -379,7 +420,9 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
                           <Td>
                             <input
                               value={editDraft.name}
-                              onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                              onChange={(e) =>
+                                setEditDraft(withName(editDraft, e.target.value, pairings))
+                              }
                               className={inputCls()}
                               list={NAME_LIST_ID}
                             />
@@ -388,7 +431,7 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
                             <input
                               value={editDraft.source}
                               onChange={(e) =>
-                                setEditDraft({ ...editDraft, source: e.target.value })
+                                setEditDraft(withSource(editDraft, e.target.value, pairings))
                               }
                               className={inputCls()}
                               list={SOURCE_LIST_ID}
@@ -473,9 +516,11 @@ export default function IncomesPanel({ userId, rows, loading, error }: Props): R
 function AddIncomeForm({
   userId,
   error,
+  pairings,
 }: {
   userId: string | null;
   error: string | null;
+  pairings: Pairings;
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -548,13 +593,13 @@ function AddIncomeForm({
             <Input
               label="Name"
               value={draft.name}
-              onChange={(v) => setDraft({ ...draft, name: v })}
+              onChange={(v) => setDraft(withName(draft, v, pairings))}
               list={NAME_LIST_ID}
             />
             <Input
               label="Source"
               value={draft.source}
-              onChange={(v) => setDraft({ ...draft, source: v })}
+              onChange={(v) => setDraft(withSource(draft, v, pairings))}
               list={SOURCE_LIST_ID}
             />
             <Input
