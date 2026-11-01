@@ -5,26 +5,22 @@ import {
   AFFIX_GROUPS,
   GEAR_SLOTS,
   MAX_AFFIXES,
-  MAX_QUOTA,
   affixFills,
   affixUsage,
-  clampQuota,
   compareToTarget,
-  countedAffixIds,
   emptyWwmGearTrackerData,
   enforceSingleEquipped,
   equippedGears,
   formatRate,
-  gearStats,
+  matchedAffixIds,
   newId,
   normalizeWwmGearTrackerData,
-  quotaOf,
   setStats,
+  slotTargetUsage,
   targetUsage,
   type Affix,
   type Gear,
   type GearSlot,
-  type Quotas,
   type RolledAffix,
   type TargetSet,
   type WwmGearTrackerData,
@@ -41,8 +37,12 @@ const primaryButtonCls =
 const secondaryButtonCls =
   "rounded border border-gray-300 px-4 py-2 text-sm font-bold text-gray-700 transition-colors duration-200 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800";
 
-const dangerButtonCls =
-  "rounded border border-red-400 px-3 py-1.5 text-sm font-bold text-red-600 transition-colors duration-200 hover:bg-red-50 dark:border-red-500 dark:text-red-400 dark:hover:bg-red-900/20";
+// Buttons sharing one row of a slot card, sized by the grid rather than their text.
+const slotButtonCls =
+  "whitespace-nowrap rounded border border-gray-300 px-1 py-1.5 text-sm font-bold text-gray-700 transition-colors duration-200 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800";
+
+const slotDangerButtonCls =
+  "whitespace-nowrap rounded border border-red-400 px-1 py-1.5 text-sm font-bold text-red-600 transition-colors duration-200 hover:bg-red-50 dark:border-red-500 dark:text-red-400 dark:hover:bg-red-900/20";
 
 const labelCls = "mb-1 text-gray-600 dark:text-gray-400";
 
@@ -51,6 +51,25 @@ const mutedCls = "text-sm text-gray-500 dark:text-gray-400";
 function Card({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="flex flex-col bg-white transition-all duration-300 ease-out p-6 dark:bg-[#242424] max-sm:-mx-6 sm:rounded sm:filter sm:drop-shadow sm:hover:drop-shadow-lg sm:dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.3)] sm:dark:hover:drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]">
+      {children}
+    </div>
+  );
+}
+
+/** A card inside the slot grid: never bleeds to the screen edge, tighter on phones. */
+function SlotCard({
+  highlighted = false,
+  children,
+}: {
+  highlighted?: boolean;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div
+      className={`flex min-w-0 flex-col rounded bg-white p-3 filter drop-shadow transition-all duration-300 ease-out hover:drop-shadow-lg sm:p-5 dark:bg-[#242424] dark:drop-shadow-[0_1px_3px_rgba(0,0,0,0.3)] dark:hover:drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)] ${
+        highlighted ? "ring-1 ring-emerald-400 dark:ring-emerald-500" : ""
+      }`}
+    >
       {children}
     </div>
   );
@@ -100,10 +119,14 @@ function RateFigure({ rate }: { rate: string }): React.JSX.Element {
   );
 }
 
+// The hero's 词条 grid is two or three columns wide; padding to a multiple of
+// both keeps its last row whole.
+const HERO_GRID_MULTIPLE = 6;
+
 function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
-  const worn = equippedGears(data);
-  const stats = setStats(worn, data.quotas);
-  const fills = affixFills(worn, data.quotas);
+  const stats = setStats(data);
+  const fills = affixFills(data);
+  const padding = (HERO_GRID_MULTIPLE - (fills.length % HERO_GRID_MULTIPLE)) % HERO_GRID_MULTIPLE;
   return (
     <section className="bg-slate-900 text-white">
       <div className="mx-auto max-w-6xl px-6 pt-12 pb-10">
@@ -114,8 +137,8 @@ function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
           燕云十六声 · 装备词条
         </h1>
         <p className="mt-3 max-w-2xl text-sm text-slate-300">
-          设定整套装备每种词条需要几条，记录每件装备调律出的词条。毕业率按当前穿戴的装备计算：
-          同一种词条的需求由所有部位共同填满，超出需求的部分不计，也不能弥补其他词条的缺口。
+          在「配装对比」中设定每个部位想要的词条，记录每件装备调律出的词条。毕业率按当前穿戴的装备计算：
+          一件装备的词条只有在该部位的目标配装中才计入。
         </p>
 
         <div className="mt-8 flex flex-wrap items-end justify-between gap-x-12 gap-y-6">
@@ -126,29 +149,33 @@ function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
             </div>
             <p className="mt-4 text-slate-300">
               {stats.required > 0
-                ? `${stats.filled}/${stats.required} 条需求已满足 · 穿戴 ${stats.pieces} 件 · ${stats.graduated ? "已毕业" : `还差 ${stats.remaining} 条`}`
-                : "尚未设定毕业要求"}
+                ? `${stats.filled}/${stats.required} 条目标词条已满足 · 穿戴 ${stats.pieces} 件 · ${stats.graduated ? "已毕业" : `还差 ${stats.remaining} 条`}`
+                : "尚未设定目标配装"}
             </p>
           </div>
-          <div className="flex max-w-xl flex-wrap justify-end gap-2">
-            {fills.length === 0 ? (
-              <p className="text-sm text-slate-400">在「毕业要求」中设定每种词条需要几条。</p>
-            ) : (
-              fills.map(({ affix, needed, counted, rolled }) => (
-                <span
+          {fills.length === 0 ? (
+            <p className="text-sm text-slate-400">在「配装对比」中设定每个部位想要的词条。</p>
+          ) : (
+            <div className="grid w-full max-w-xl grid-cols-2 gap-px overflow-hidden rounded border border-slate-700 bg-slate-700 text-xs sm:grid-cols-3">
+              {fills.map(({ affix, needed, counted, rolled }) => (
+                <div
                   key={affix}
                   title={`已穿戴共 ${rolled} 条`}
-                  className={`rounded border px-2 py-1 text-xs ${
+                  className={`flex h-8 items-center justify-between gap-2 px-3 ${
                     counted >= needed
-                      ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-200"
-                      : "border-blue-400/40 bg-blue-400/10 text-blue-200"
+                      ? "bg-emerald-950 text-emerald-200"
+                      : "bg-slate-900 text-slate-200"
                   }`}
                 >
-                  {`${affix} ${counted}/${needed}`}
-                </span>
-              ))
-            )}
-          </div>
+                  <span className="min-w-0 truncate">{affix}</span>
+                  <span className="shrink-0 tabular-nums">{`${counted}/${needed}`}</span>
+                </div>
+              ))}
+              {Array.from({ length: padding }, (_, i) => (
+                <div key={`pad-${i}`} className="h-8 bg-slate-900" />
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <ProgressBar numerator={stats.filled} denominator={stats.required} />
@@ -156,12 +183,11 @@ function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
   );
 }
 
-type TabId = "gear" | "compare" | "quotas";
+type TabId = "gear" | "compare";
 
 const TABS: readonly { id: TabId; label: string }[] = [
   { id: "gear", label: "我的装备" },
   { id: "compare", label: "配装对比" },
-  { id: "quotas", label: "毕业要求" },
 ];
 
 function TabBar({
@@ -201,36 +227,39 @@ function TabBar({
   );
 }
 
-/** A 词条 picker grouped as the game groups them, noting each one's quota. */
+/** A 词条 picker grouped as the game groups them, noting which ones a slot targets. */
 function AffixSelect({
   value,
-  quotas,
+  wanted,
   onChange,
   label,
   emptyLabel,
+  className = "min-w-0 flex-1",
 }: {
   // "" picks `emptyLabel`, offered only when one is given.
   value: Affix | "";
-  quotas: Quotas;
+  // How many of each 词条 the slot's target asks for, noted on the option.
+  wanted?: ReadonlyMap<Affix, number>;
   onChange: (affix: Affix | "") => void;
   label: string;
   emptyLabel?: string;
+  className?: string;
 }): React.JSX.Element {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value as Affix | "")}
       aria-label={label}
-      className={`${inputCls} min-w-0 flex-1`}
+      className={`${inputCls} ${className}`}
     >
       {emptyLabel != null && <option value="">{emptyLabel}</option>}
       {AFFIX_GROUPS.map((group) => (
         <optgroup key={group.name} label={group.name}>
           {group.affixes.map((affix) => {
-            const needed = quotaOf(quotas, affix);
+            const n = wanted?.get(affix) ?? 0;
             return (
               <option key={affix} value={affix}>
-                {needed > 0 ? `${affix}（需 ${needed}）` : affix}
+                {n > 0 ? `${affix}（目标${n > 1 ? ` ×${n}` : ""}）` : affix}
               </option>
             );
           })}
@@ -240,32 +269,104 @@ function AffixSelect({
   );
 }
 
-// The in-game arrangement: weapons over accessories on the left, armor on the
-// right — 主武器 副武器 · 头盔 胸甲 over 环 佩 · 胫甲 腕甲.
-const SLOT_GRID: readonly GearSlot[] = [
-  "主武器",
-  "副武器",
-  "头盔",
-  "胸甲",
-  "环",
-  "佩",
-  "胫甲",
-  "腕甲",
-];
+// The in-game layout is two 2×2 blocks side by side: 主武器 副武器 over 环 佩 on
+// the left, 头盔 胸甲 over 胫甲 腕甲 on the right. GEAR_SLOTS lists the left
+// block first, so two columns put the left block on top of the right one; four
+// columns place each slot where the game has it.
+const SLOT_PLACEMENT: Readonly<Record<GearSlot, string>> = {
+  主武器: "lg:col-start-1 lg:row-start-1",
+  副武器: "lg:col-start-2 lg:row-start-1",
+  环: "lg:col-start-1 lg:row-start-2",
+  佩: "lg:col-start-2 lg:row-start-2",
+  头盔: "lg:col-start-3 lg:row-start-1",
+  胸甲: "lg:col-start-4 lg:row-start-1",
+  胫甲: "lg:col-start-3 lg:row-start-2",
+  腕甲: "lg:col-start-4 lg:row-start-2",
+};
 
-/** Lays one cell per slot out as the game does, collapsing on narrow screens. */
+/** Lays one cell per slot out as the game does. */
 function SlotGrid({
   renderSlot,
 }: {
   renderSlot: (slot: GearSlot) => React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {SLOT_GRID.map((slot) => (
-        <div key={slot} className="flex min-w-0 flex-col gap-3">
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      {GEAR_SLOTS.map((slot) => (
+        <div key={slot} className={`flex min-w-0 flex-col gap-3 ${SLOT_PLACEMENT[slot]}`}>
           {renderSlot(slot)}
         </div>
       ))}
+    </div>
+  );
+}
+
+type AffixRowTone = "match" | "spare" | "missing" | "plain" | "empty";
+
+/** One line of an AffixStack. */
+type AffixRow = {
+  key: string;
+  label: string;
+  // Right-aligned, e.g. the rolled value.
+  detail?: React.ReactNode;
+  tone: AffixRowTone;
+  title?: string;
+};
+
+const ROW_TONE_CLS: Readonly<Record<AffixRowTone, string>> = {
+  match: "bg-emerald-50 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
+  spare: "bg-blue-50 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  missing: "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  plain: "text-gray-700 dark:text-gray-200",
+  empty: "text-gray-400 dark:text-gray-500",
+};
+
+/**
+ * 词条 as a stack of equal rows, always MAX_AFFIXES tall, so every piece's card
+ * has the same height whatever it rolled.
+ */
+function AffixStack({ rows }: { rows: readonly AffixRow[] }): React.JSX.Element {
+  const padded: AffixRow[] = [...rows];
+  while (padded.length < MAX_AFFIXES) {
+    padded.push({ key: `pad-${padded.length}`, label: "—", tone: "empty" });
+  }
+  return (
+    <ul className="flex flex-col divide-y divide-gray-200 overflow-hidden rounded border border-gray-200 text-sm dark:divide-gray-700 dark:border-gray-700">
+      {padded.map(({ key, label, detail, tone, title }) => (
+        <li
+          key={key}
+          title={title}
+          className={`flex h-9 items-center justify-between gap-2 px-3 ${ROW_TONE_CLS[tone]}`}
+        >
+          <span className="min-w-0 truncate">{label}</span>
+          {detail != null && (
+            <span className="min-w-0 max-w-[50%] truncate text-right text-xs tabular-nums opacity-80">
+              {detail}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** A slot's name, with a trailing control such as the add button. */
+function SlotHeader({
+  slot,
+  note,
+  trailing,
+}: {
+  slot: GearSlot;
+  note?: string;
+  trailing?: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div className="flex h-8 items-center justify-between gap-2">
+      <h3 className="min-w-0 truncate text-base font-semibold">
+        {slot}
+        {note != null && <span className={`ml-2 font-normal ${mutedCls}`}>{note}</span>}
+      </h3>
+      {trailing}
     </div>
   );
 }
@@ -292,6 +393,7 @@ function GearForm({
   const [affixes, setAffixes] = useState<RolledAffix[]>(
     initial?.affixes.map((rolled) => ({ ...rolled })) ?? [],
   );
+  const wanted = slotTargetUsage(data.target, slot);
 
   // Fallback name for a piece saved with an empty name, e.g. "环 2".
   const othersInSlot = data.gears.filter(
@@ -367,7 +469,7 @@ function GearForm({
               <div key={rolled.id} className="flex items-center gap-2">
                 <AffixSelect
                   value={rolled.affix}
-                  quotas={data.quotas}
+                  wanted={wanted}
                   label={`第 ${index + 1} 条词条`}
                   onChange={(affix) => {
                     if (affix === "") return;
@@ -432,111 +534,95 @@ function GearForm({
 
 function GearCard({
   gear,
-  quotas,
-  countedIds,
+  target,
   onToggleEquipped,
   onEdit,
   onDelete,
 }: {
   gear: Gear;
-  quotas: Quotas;
-  // Which rolled 词条 count toward the shared quotas — computed once for the
-  // whole worn set, since a piece alone cannot fill a quota.
-  countedIds: ReadonlySet<string>;
+  target: TargetSet;
   onToggleEquipped: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }): React.JSX.Element {
-  const stats = gearStats(gear, quotas, countedIds);
-  const unrolled = Math.max(0, gear.affixCount - gear.affixes.length);
-  // Worn pieces are measured by what counts; spare ones by what could.
-  const good = gear.equipped ? stats.counted : stats.useful;
-  const rate = share(good, gear.affixCount);
-  const full = good >= gear.affixCount;
+  // Worn pieces count what matches their slot's target; spare ones show what would.
+  const matchedIds = matchedAffixIds(gear, target);
+  const good = matchedIds.size;
+  const wanted = target[gear.slot]?.length ?? 0;
+  const full = wanted > 0 && good >= wanted;
   const badgeCls = full
     ? "bg-emerald-500"
     : good > 0
       ? "bg-blue-500 dark:bg-blue-400"
       : "bg-gray-400 dark:bg-gray-600";
 
+  const rows: AffixRow[] = gear.affixes.map((rolled) => {
+    const isMatch = matchedIds.has(rolled.id);
+    return {
+      key: rolled.id,
+      label: rolled.affix,
+      detail: rolled.value !== "" ? rolled.value : undefined,
+      tone: isMatch ? (gear.equipped ? "match" : "spare") : "plain",
+      title: isMatch ? (gear.equipped ? "计入毕业" : "命中目标（未穿戴）") : "目标外词条",
+    };
+  });
+  for (let i = gear.affixes.length; i < gear.affixCount; i++) {
+    rows.push({ key: `unrolled-${i}`, label: "未调律", tone: "empty" });
+  }
+
   return (
-    <Card>
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-lg font-semibold">{gear.name}</span>
+    <SlotCard>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 truncate text-lg font-semibold" title={gear.name}>
+            {gear.name}
+          </span>
           {gear.equipped && (
-            <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+            <span className="shrink-0 whitespace-nowrap rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
               已穿戴
             </span>
           )}
         </div>
         <span
-          className={`rounded px-2 py-1 text-sm font-bold tabular-nums text-white ${badgeCls}`}
-          title={gear.equipped ? "计入毕业的词条 / 词条数" : "有效词条 / 词条数（未穿戴）"}
+          className={`shrink-0 rounded px-2 py-1 text-sm font-bold tabular-nums text-white ${badgeCls}`}
+          title={
+            gear.equipped ? "计入毕业的词条 / 目标词条数" : "命中目标的词条 / 目标词条数（未穿戴）"
+          }
         >
-          {`${good}/${gear.affixCount}`}
+          {wanted > 0 ? `${good}/${wanted}` : "—"}
         </span>
       </div>
 
       <div className="mt-3 h-2 w-full overflow-hidden rounded bg-gray-200 dark:bg-gray-700">
         <div
           className={`h-full ${full ? "bg-emerald-500" : "bg-blue-500 dark:bg-blue-400"}`}
-          style={{ width: `${rate * 100}%` }}
+          style={{ width: `${share(good, wanted) * 100}%` }}
         />
       </div>
-      <p className={`mt-2 ${mutedCls}`}>
-        {gear.equipped
-          ? `${stats.counted} 条计入毕业`
-          : `${stats.useful} 条有效词条 · 未穿戴，不计入`}
-        {unrolled > 0 ? ` · ${unrolled} 条未调律` : ""}
+      <p className={`mt-2 truncate ${mutedCls}`}>
+        {wanted === 0
+          ? "未设目标配装"
+          : gear.equipped
+            ? `${good} 条计入毕业`
+            : `${good} 条命中目标 · 未穿戴`}
       </p>
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        {gear.affixes.map((rolled) => {
-          const isCounted = countedIds.has(rolled.id);
-          const isUseful = quotaOf(quotas, rolled.affix) > 0;
-          const chipCls = isCounted
-            ? "border-emerald-400 bg-emerald-50 text-emerald-800 dark:border-emerald-500 dark:bg-emerald-900/30 dark:text-emerald-300"
-            : !gear.equipped && isUseful
-              ? "border-blue-400 bg-blue-50 text-blue-800 dark:border-blue-500 dark:bg-blue-900/30 dark:text-blue-300"
-              : "border-gray-300 bg-gray-50 text-gray-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300";
-          return (
-            <span
-              key={rolled.id}
-              className={`rounded border px-2 py-1 text-sm ${chipCls}`}
-              title={
-                isCounted
-                  ? "计入毕业要求"
-                  : isUseful
-                    ? gear.equipped
-                      ? "需求已满，不计入"
-                      : "有效词条（未穿戴）"
-                    : "无效词条"
-              }
-            >
-              {`${rolled.affix}${rolled.value !== "" ? ` ${rolled.value}` : ""}`}
-            </span>
-          );
-        })}
-        {unrolled > 0 && (
-          <span className="rounded border border-dashed border-gray-300 px-2 py-1 text-sm text-gray-400 dark:border-gray-600 dark:text-gray-500">
-            {`+${unrolled} 未调律`}
-          </span>
-        )}
+      <div className="mt-3">
+        <AffixStack rows={rows} />
       </div>
 
-      <div className="mt-4 flex flex-wrap justify-end gap-2">
-        <button type="button" onClick={onToggleEquipped} className={secondaryButtonCls}>
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <button type="button" onClick={onToggleEquipped} className={slotButtonCls}>
           {gear.equipped ? "卸下" : "穿戴"}
         </button>
-        <button type="button" onClick={onEdit} className={secondaryButtonCls}>
+        <button type="button" onClick={onEdit} className={slotButtonCls}>
           编辑
         </button>
-        <button type="button" onClick={onDelete} className={dangerButtonCls}>
+        <button type="button" onClick={onDelete} className={slotDangerButtonCls}>
           删除
         </button>
       </div>
-    </Card>
+    </SlotCard>
   );
 }
 
@@ -551,9 +637,6 @@ function GearTab({
   const [addingSlot, setAddingSlot] = useState<GearSlot | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editing = draft.gears.find(({ id }) => id === editingId) ?? null;
-  // Counted 词条 depend on the whole worn set, so the set is computed here and
-  // shared with each card.
-  const countedIds = useMemo(() => countedAffixIds(equippedGears(draft), draft.quotas), [draft]);
 
   const submitNew = (gear: Gear) => {
     updateDraft((data) => {
@@ -614,8 +697,8 @@ function GearTab({
         <div className="flex items-center justify-end gap-3">
           {draft.gears.length === 0 && (
             <p className={`mr-auto ${mutedCls}`}>
-              还没有装备。先在「毕业要求」中设定每种词条需要几条，再添加装备并填入调律出的词条。
-              同一部位可以录入多件，在「配装对比」中设定目标配装来对比。
+              还没有装备。先在「配装对比」中设定每个部位想要的词条，再添加装备并填入调律出的词条。
+              同一部位可以录入多件。
             </p>
           )}
           <button
@@ -636,28 +719,26 @@ function GearTab({
             .sort((x, y) => Number(y.equipped) - Number(x.equipped));
           return (
             <>
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-base font-semibold">
-                  {slot}
-                  {pieces.length > 1 && (
-                    <span className={`ml-2 font-normal ${mutedCls}`}>{`${pieces.length} 件`}</span>
-                  )}
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => startAdding(slot)}
-                  aria-label={`添加${slot}`}
-                  title={`添加${slot}`}
-                  className="px-2 text-lg text-gray-400 transition-colors duration-200 hover:text-blue-500"
-                >
-                  ＋
-                </button>
-              </div>
+              <SlotHeader
+                slot={slot}
+                note={pieces.length > 1 ? `${pieces.length} 件` : undefined}
+                trailing={
+                  <button
+                    type="button"
+                    onClick={() => startAdding(slot)}
+                    aria-label={`添加${slot}`}
+                    title={`添加${slot}`}
+                    className="px-2 text-lg text-gray-400 transition-colors duration-200 hover:text-blue-500"
+                  >
+                    ＋
+                  </button>
+                }
+              />
               {pieces.length === 0 ? (
                 <button
                   type="button"
                   onClick={() => startAdding(slot)}
-                  className="rounded border border-dashed border-gray-300 px-3 py-8 text-sm text-gray-400 transition-colors duration-200 hover:border-blue-400 hover:text-blue-500 dark:border-gray-600 dark:text-gray-500"
+                  className="min-h-32 flex-1 rounded border border-dashed border-gray-300 px-3 text-sm text-gray-400 transition-colors duration-200 hover:border-blue-400 hover:text-blue-500 dark:border-gray-600 dark:text-gray-500"
                 >
                   未录入
                 </button>
@@ -666,8 +747,7 @@ function GearTab({
                   <GearCard
                     key={gear.id}
                     gear={gear}
-                    quotas={draft.quotas}
-                    countedIds={countedIds}
+                    target={draft.target}
                     onToggleEquipped={() => toggleEquipped(gear.id)}
                     onEdit={() => {
                       setAddingSlot(null);
@@ -685,43 +765,37 @@ function GearTab({
   );
 }
 
-function fillCls(counted: number, needed: number): string {
-  if (needed > 0 && counted >= needed) return "text-emerald-600 dark:text-emerald-400";
-  return "text-gray-700 dark:text-gray-200";
-}
-
 const TARGET_ROWS = Array.from({ length: MAX_AFFIXES }, (_, i) => i);
 
 /** Picks the target 词条 for one slot: up to MAX_AFFIXES, order irrelevant. */
 function TargetSlotEditor({
   slot,
   affixes,
-  quotas,
   onChange,
 }: {
   slot: GearSlot;
   affixes: readonly Affix[];
-  quotas: Quotas;
   onChange: (affixes: Affix[]) => void;
 }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-2 rounded border border-gray-200 p-3 dark:border-gray-700">
-      <p className="text-sm font-semibold">{slot}</p>
-      {TARGET_ROWS.map((row) => (
-        <AffixSelect
-          key={row}
-          value={affixes[row] ?? ""}
-          quotas={quotas}
-          emptyLabel="（空）"
-          label={`${slot}目标词条 ${row + 1}`}
-          onChange={(affix) => {
-            const next: (Affix | "")[] = TARGET_ROWS.map((i) => affixes[i] ?? "");
-            next[row] = affix;
-            onChange(next.filter((entry): entry is Affix => entry !== ""));
-          }}
-        />
-      ))}
-    </div>
+    <SlotCard>
+      <div className="flex flex-col gap-2">
+        {TARGET_ROWS.map((row) => (
+          <AffixSelect
+            key={row}
+            value={affixes[row] ?? ""}
+            emptyLabel="（空）"
+            label={`${slot}目标词条 ${row + 1}`}
+            className="w-full min-w-0"
+            onChange={(affix) => {
+              const next: (Affix | "")[] = TARGET_ROWS.map((i) => affixes[i] ?? "");
+              next[row] = affix;
+              onChange(next.filter((entry): entry is Affix => entry !== ""));
+            }}
+          />
+        ))}
+      </div>
+    </SlotCard>
   );
 }
 
@@ -735,17 +809,13 @@ function CompareTab({
   const [editing, setEditing] = useState(false);
   const comparisons = compareToTarget(draft);
   const bySlot = new Map(comparisons.map((comparison) => [comparison.slot, comparison]));
-  let targetTotal = 0;
-  let matchedTotal = 0;
-  for (const { target, matched } of comparisons) {
-    targetTotal += target.length;
-    matchedTotal += matched.length;
-  }
-  const hasTarget = targetTotal > 0;
+  const stats = setStats(draft);
+  const hasTarget = stats.required > 0;
 
   const wantedBy = targetUsage(draft.target);
   const wornBy = affixUsage(equippedGears(draft));
-  // Target 词条 first, then worn ones the target never asks for.
+  const countedBy = new Map(affixFills(draft).map(({ affix, counted }) => [affix, counted]));
+  // Every 词条 the target asks for or the worn set has, in the game's order.
   const affixRows = AFFIX_GROUPS.flatMap(({ affixes }) => affixes).filter(
     (affix) => wantedBy.has(affix) || wornBy.has(affix),
   );
@@ -771,11 +841,11 @@ function CompareTab({
           <div>
             <p className={mutedCls}>当前穿戴 vs 目标配装</p>
             <p className="mt-1 text-4xl font-bold tabular-nums">
-              {formatRate(matchedTotal, targetTotal)}
+              {formatRate(stats.filled, stats.required)}
             </p>
             <p className={`mt-1 ${mutedCls}`}>
               {hasTarget
-                ? `${matchedTotal}/${targetTotal} 条目标词条已拥有 · ${matchedTotal >= targetTotal ? "已达成" : `还差 ${targetTotal - matchedTotal} 条`}`
+                ? `${stats.filled}/${stats.required} 条目标词条已拥有 · ${stats.graduated ? "已毕业" : `还差 ${stats.remaining} 条`}`
                 : "还没有目标配装。设定每个部位想要的词条，或以当前穿戴为起点。"}
             </p>
           </div>
@@ -796,79 +866,75 @@ function CompareTab({
         </div>
       </Card>
 
-      <Card>
-        <h3 className="mb-4">{editing ? "目标配装" : "部位"}</h3>
-        <SlotGrid
-          renderSlot={(slot) => {
-            const comparison = bySlot.get(slot);
-            if (comparison == null) return null;
-            if (editing) {
-              return (
+      <SlotGrid
+        renderSlot={(slot) => {
+          const comparison = bySlot.get(slot);
+          if (comparison == null) return null;
+          const { worn, target, matched, missing, extra } = comparison;
+          if (editing) {
+            return (
+              <>
+                <SlotHeader slot={slot} />
                 <TargetSlotEditor
                   slot={slot}
-                  affixes={comparison.target}
-                  quotas={draft.quotas}
+                  affixes={target}
                   onChange={(affixes) => setTargetSlot(slot, affixes)}
                 />
-              );
-            }
-            const { worn, target, matched, missing, extra } = comparison;
-            const done = target.length > 0 && missing.length === 0;
-            return (
-              <div
-                className={`flex flex-col gap-2 rounded border p-3 text-sm ${
-                  done
-                    ? "border-emerald-400 dark:border-emerald-500"
-                    : "border-gray-200 dark:border-gray-700"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold">{slot}</span>
-                  {target.length > 0 && (
-                    <span className="tabular-nums text-gray-500 dark:text-gray-400">
-                      {`${matched.length}/${target.length}`}
-                    </span>
-                  )}
-                </div>
-                <p className={mutedCls}>{worn?.name ?? "未穿戴"}</p>
-                {target.length === 0 && extra.length === 0 ? (
-                  <p className={mutedCls}>未设目标</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {matched.map((affix, i) => (
-                      <span
-                        key={`matched-${affix}-${matched.slice(0, i).filter((a) => a === affix).length}`}
-                        title="已拥有"
-                        className="rounded border border-emerald-400 bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-800 dark:border-emerald-500 dark:bg-emerald-900/30 dark:text-emerald-300"
-                      >
-                        {affix}
-                      </span>
-                    ))}
-                    {missing.map((affix, i) => (
-                      <span
-                        key={`missing-${affix}-${missing.slice(0, i).filter((a) => a === affix).length}`}
-                        title="缺少"
-                        className="rounded border border-dashed border-red-400 px-1.5 py-0.5 text-xs text-red-600 dark:border-red-500 dark:text-red-400"
-                      >
-                        {`缺 ${affix}`}
-                      </span>
-                    ))}
-                    {extra.map((affix, i) => (
-                      <span
-                        key={`extra-${affix}-${extra.slice(0, i).filter((a) => a === affix).length}`}
-                        title="目标中没有"
-                        className="rounded border border-gray-300 bg-gray-50 px-1.5 py-0.5 text-xs text-gray-500 line-through dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400"
-                      >
-                        {affix}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
+              </>
             );
-          }}
-        />
-      </Card>
+          }
+          // matched + missing is the target and matched + extra is what is worn,
+          // so pairing each missing 词条 with an extra one fits in MAX_AFFIXES rows.
+          const rows: AffixRow[] = [
+            ...matched.map((affix, i): AffixRow => ({
+              key: `matched-${i}`,
+              label: affix,
+              detail: "✓",
+              tone: "match",
+              title: "已拥有",
+            })),
+            ...Array.from({ length: Math.max(missing.length, extra.length) }, (_, i): AffixRow => {
+              const want = missing[i];
+              const have = extra[i];
+              if (want == null) {
+                return {
+                  key: `diff-${i}`,
+                  label: have ?? "",
+                  detail: "目标外",
+                  tone: "plain",
+                  title: "目标中没有",
+                };
+              }
+              return {
+                key: `diff-${i}`,
+                label: `缺 ${want}`,
+                detail: have != null ? <span className="line-through">{have}</span> : undefined,
+                tone: "missing",
+                title: have != null ? `目标 ${want}，现为 ${have}` : `缺少 ${want}`,
+              };
+            }),
+          ];
+          const done = target.length > 0 && missing.length === 0;
+          return (
+            <>
+              <SlotHeader slot={slot} />
+              <SlotCard highlighted={done}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-lg font-semibold">
+                    {worn?.name ?? "未穿戴"}
+                  </span>
+                  <span className={`shrink-0 tabular-nums ${mutedCls}`}>
+                    {target.length > 0 ? `${matched.length}/${target.length}` : "未设目标"}
+                  </span>
+                </div>
+                <div className="mt-3">
+                  <AffixStack rows={rows} />
+                </div>
+              </SlotCard>
+            </>
+          );
+        }}
+      />
 
       {!editing && affixRows.length > 0 && (
         <Card>
@@ -878,31 +944,35 @@ function CompareTab({
               <tr>
                 <th className="py-1 pr-4 font-normal">词条</th>
                 <th className="py-1 pr-4 font-normal">目标</th>
-                <th className="py-1 pr-4 font-normal">当前</th>
-                <th className="py-1 font-normal">差</th>
+                <th className="py-1 pr-4 font-normal" title="穿戴在目标要求的部位上">
+                  命中
+                </th>
+                <th className="py-1 font-normal" title="穿戴装备上共有几条，不论部位">
+                  穿戴
+                </th>
               </tr>
             </thead>
             <tbody>
               {affixRows.map((affix) => {
                 const wanted = wantedBy.get(affix) ?? 0;
+                const counted = countedBy.get(affix) ?? 0;
                 const have = wornBy.get(affix) ?? 0;
-                const delta = have - wanted;
                 return (
                   <tr key={affix} className="border-t border-gray-200 dark:border-gray-700">
                     <td className="py-2 pr-4">{affix}</td>
                     <td className="py-2 pr-4 tabular-nums">{wanted}</td>
-                    <td className={`py-2 pr-4 tabular-nums ${fillCls(have, wanted)}`}>{have}</td>
                     <td
-                      className={`py-2 tabular-nums ${
-                        delta < 0
-                          ? "text-red-600 dark:text-red-400"
-                          : delta > 0
-                            ? "text-gray-500 dark:text-gray-400"
-                            : "text-emerald-600 dark:text-emerald-400"
+                      className={`py-2 pr-4 tabular-nums ${
+                        wanted === 0
+                          ? "text-gray-500 dark:text-gray-400"
+                          : counted >= wanted
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-red-600 dark:text-red-400"
                       }`}
                     >
-                      {delta > 0 ? `+${delta}` : `${delta}`}
+                      {counted}
                     </td>
+                    <td className="py-2 tabular-nums text-gray-500 dark:text-gray-400">{have}</td>
                   </tr>
                 );
               })}
@@ -911,72 +981,6 @@ function CompareTab({
         </Card>
       )}
     </div>
-  );
-}
-
-function QuotasTab({
-  draft,
-  updateDraft,
-}: {
-  draft: WwmGearTrackerData;
-  updateDraft: (mutate: (data: WwmGearTrackerData) => void) => void;
-}): React.JSX.Element {
-  const worn = equippedGears(draft);
-  const wornUsage = affixUsage(worn);
-  const allUsage = affixUsage(draft.gears);
-
-  return (
-    <Card>
-      <h3 className="mb-2">毕业要求</h3>
-      <p className={`mb-4 ${mutedCls}`}>
-        整套穿戴装备每种词条需要几条，0
-        表示不需要（无效词条）。需求由所有部位共同填满，超出部分不计。
-      </p>
-      <div className="flex flex-col gap-6">
-        {AFFIX_GROUPS.map((group) => (
-          <div key={group.name}>
-            <h4 className="mb-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
-              {group.name}
-            </h4>
-            <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
-              {group.affixes.map((affix) => {
-                const needed = quotaOf(draft.quotas, affix);
-                const rolled = wornUsage.get(affix) ?? 0;
-                const owned = allUsage.get(affix) ?? 0;
-                return (
-                  <div key={affix} className="flex items-center gap-2">
-                    <span className="flex-1 text-sm">{affix}</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={MAX_QUOTA}
-                      value={needed}
-                      aria-label={`${affix}需要几条`}
-                      onChange={(e) => {
-                        const quota = clampQuota(Number.parseInt(e.target.value, 10));
-                        updateDraft((data) => {
-                          if (quota > 0) data.quotas[affix] = quota;
-                          else delete data.quotas[affix];
-                        });
-                      }}
-                      className={`${inputCls} w-20`}
-                    />
-                    <span
-                      className={`w-28 shrink-0 text-right text-xs ${needed > 0 && rolled >= needed ? "text-emerald-600 dark:text-emerald-400" : "text-gray-500 dark:text-gray-400"}`}
-                      title={`所有装备共 ${owned} 条`}
-                    >
-                      {needed > 0
-                        ? `穿戴 ${Math.min(rolled, needed)}/${needed}`
-                        : `穿戴 ${rolled} 条`}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
   );
 }
 
@@ -1103,8 +1107,7 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     setDraft((prev) => {
       const base = prev ?? saved ?? emptyWwmGearTrackerData();
       const next: WwmGearTrackerData = {
-        version: 2,
-        quotas: { ...base.quotas },
+        version: 3,
         target: Object.fromEntries(
           Object.entries(base.target).map(([slot, affixes]) => [slot, [...affixes]]),
         ) as TargetSet,
@@ -1171,10 +1174,8 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
         />
         {tab === "gear" ? (
           <GearTab draft={draft} updateDraft={updateDraft} />
-        ) : tab === "compare" ? (
-          <CompareTab draft={draft} updateDraft={updateDraft} />
         ) : (
-          <QuotasTab draft={draft} updateDraft={updateDraft} />
+          <CompareTab draft={draft} updateDraft={updateDraft} />
         )}
       </div>
     </div>
