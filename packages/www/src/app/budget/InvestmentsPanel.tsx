@@ -3,6 +3,7 @@ import { getSupabase } from "../../lib/supabase";
 import { Card } from "./BudgetApp";
 import BulkAddPaste, { type ParseResult, type PreviewColumn } from "./BulkAddPaste";
 import BulkBar, { BulkEditField, HeaderCheckbox, RowCheckbox } from "./BulkBar";
+import MassSnapshotForm from "./MassSnapshotForm";
 import SnapshotsHistory from "./SnapshotsHistory";
 import type { Currency, Investment, InvestmentSnapshot } from "./types";
 import { useBulkSelection } from "./useBulkSelection";
@@ -171,6 +172,7 @@ export default function InvestmentsPanel({
   const [editDraft, setEditDraft] = useState<Draft>(emptyDraft);
   const [addMode, setAddMode] = useState<"single" | "bulk">("single");
   const [bulkEdit, setBulkEdit] = useState<BulkEdit>(emptyBulkEdit);
+  const [massSnapshotOpen, setMassSnapshotOpen] = useState(false);
 
   const sel = useBulkSelection(investments);
 
@@ -499,7 +501,25 @@ export default function InvestmentsPanel({
       </Card>
 
       <Card>
-        <h3 className="mb-4">Investments</h3>
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <h3 className="m-0">Investments</h3>
+          <button
+            type="button"
+            disabled={userId == null || investments.length === 0}
+            onClick={() => setMassSnapshotOpen((v) => !v)}
+            title="Update and snapshot every investment at once"
+            className="rounded border border-blue-500 px-3 py-1 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-900/40"
+          >
+            {massSnapshotOpen ? "Hide snapshot all" : "Snapshot all"}
+          </button>
+        </div>
+        {massSnapshotOpen && userId != null && investments.length > 0 && (
+          <MassSnapshotForm
+            userId={userId}
+            investments={investments}
+            onClose={() => setMassSnapshotOpen(false)}
+          />
+        )}
         <BulkBar
           count={sel.count}
           itemNoun="investment"

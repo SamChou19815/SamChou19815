@@ -145,6 +145,55 @@ export function parseLocalDate(yyyymmdd: string): Date {
   return new Date(y, m - 1, d);
 }
 
+/**
+ * For every value of one field, the value of another field it most often appears with
+ * (e.g. expense name "Metro" → category "Grocery"). Keys are lower-cased so lookups are
+ * case-insensitive; values keep their original spelling.
+ */
+export function buildPairing<T>(
+  rows: ReadonlyArray<T>,
+  from: (row: T) => string | null,
+  to: (row: T) => string | null,
+): ReadonlyMap<string, string> {
+  const counts = new Map<string, Map<string, number>>();
+  for (const row of rows) {
+    const key = from(row)?.trim().toLowerCase() ?? "";
+    const value = to(row)?.trim() ?? "";
+    if (key === "" || value === "") continue;
+    const byValue = counts.get(key) ?? new Map<string, number>();
+    byValue.set(value, (byValue.get(value) ?? 0) + 1);
+    counts.set(key, byValue);
+  }
+  const out = new Map<string, string>();
+  for (const [key, byValue] of counts) {
+    let best = "";
+    let bestCount = 0;
+    for (const [value, count] of byValue) {
+      if (count > bestCount) {
+        best = value;
+        bestCount = count;
+      }
+    }
+    out.set(key, best);
+  }
+  return out;
+}
+
+/**
+ * What to fill into a paired field after its partner changed to `next`, or null to leave it
+ * alone. The paired field is only filled when it is blank or was itself auto-filled, so a
+ * value the user typed is never overwritten.
+ */
+export function pairedFill(
+  pairing: ReadonlyMap<string, string>,
+  next: string,
+  current: string,
+  currentIsAutoFilled: boolean,
+): string | null {
+  if (current.trim() !== "" && !currentIsAutoFilled) return null;
+  return pairing.get(next.trim().toLowerCase()) ?? null;
+}
+
 export function friendlyMutationError(err: { code?: string; message: string }): string {
   if (err.code === "42501" || /row-level security|policy/i.test(err.message)) {
     return "Access denied — your account is not on the whitelist.";

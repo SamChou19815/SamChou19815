@@ -92,7 +92,11 @@ export function MonthlyTotalsChart({
       <ComposedChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
+        <YAxis
+          tick={{ fontSize: 12 }}
+          tickFormatter={(v) => formatCADCompact(v)}
+          domain={AUTO_DOMAIN}
+        />
         <Tooltip content={ChartTooltip} cursor={TOOLTIP_CURSOR} />
         <Legend />
         <Bar dataKey="income" fill="#10b981" name="Income" />
@@ -159,7 +163,11 @@ export function MonthlyExpenseByCategory({
         <LineChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
           <XAxis dataKey="month" tick={{ fontSize: 12 }} padding={X_PADDING} />
-          <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
+          <YAxis
+            tick={{ fontSize: 12 }}
+            tickFormatter={(v) => formatCADCompact(v)}
+            domain={AUTO_DOMAIN}
+          />
           <Tooltip
             cursor={TOOLTIP_CURSOR}
             content={
@@ -194,7 +202,11 @@ export function MonthlyExpenseByCategory({
       <BarChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
+        <YAxis
+          tick={{ fontSize: 12 }}
+          tickFormatter={(v) => formatCADCompact(v)}
+          domain={AUTO_DOMAIN}
+        />
         <Tooltip content={ChartTooltip} cursor={TOOLTIP_CURSOR} />
         <Legend />
         {categories.map((cat, idx) => (
@@ -240,7 +252,11 @@ export function CashFlowLine({
       <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis dataKey="month" tick={{ fontSize: 12 }} padding={X_PADDING} />
-        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => formatCADCompact(v)} />
+        <YAxis
+          tick={{ fontSize: 12 }}
+          tickFormatter={(v) => formatCADCompact(v)}
+          domain={AUTO_DOMAIN}
+        />
         <Tooltip content={ChartTooltip} cursor={TOOLTIP_CURSOR} />
         <Legend />
         <Line type="monotone" dataKey="cashFlow" stroke={PALETTE[0]} name="Cash flow" dot={false} />
@@ -283,7 +299,7 @@ export function InvestmentValueLine({
         <YAxis
           tick={{ fontSize: 12 }}
           tickFormatter={(v) => formatCADCompact(v)}
-          domain={["auto", "auto"]}
+          domain={AUTO_DOMAIN}
         />
         <Tooltip content={ChartTooltip} cursor={TOOLTIP_CURSOR} />
         <Line
@@ -450,6 +466,9 @@ function pieValueLabel(props: PieLabelRenderProps): React.ReactNode {
     </text>
   );
 }
+
+// Fit every Y axis to its data instead of anchoring at 0, so small movements stay visible.
+const AUTO_DOMAIN: [string, string] = ["auto", "auto"];
 
 // Line charts put the first and last points on the plot edges: this keeps those month ticks clear of the Y axis labels and the right edge.
 const X_PADDING = { left: 24, right: 24 };
