@@ -760,10 +760,17 @@ impl App {
                 }
                 let preview = op.preview(&self.dag, self.ghosts);
                 let focus = match &op {
-                    Op::Rebase { rev, .. }
-                    | Op::Abandon { rev }
-                    | Op::Edit { rev }
-                    | Op::Describe { rev, .. } => Some(rev.clone()),
+                    Op::Rebase { rev, .. } | Op::Abandon { rev } | Op::Edit { rev } => {
+                        Some(rev.clone())
+                    }
+                    // Describing @ seals it; focus the fresh @ above.
+                    Op::Describe { rev, .. } => {
+                        if self.dag.get(rev).is_some_and(|n| n.commit.is_wc) {
+                            Some(crate::dag::NEW_WC_ID.to_string())
+                        } else {
+                            Some(rev.clone())
+                        }
+                    }
                     Op::Squash { into, .. } => Some(into.clone()),
                     Op::BookmarkSet { target, .. } => Some(target.clone()),
                     _ => Some(crate::dag::NEW_WC_ID.to_string()),
@@ -918,11 +925,15 @@ impl App {
                     self.set_message("✗ can't describe an immutable commit", Color::Red);
                     return;
                 }
+                // Describing @ seals it: a fresh working copy opens on top,
+                // so later work doesn't stack on the finished change.
+                let action = if c.is_wc {
+                    "Enter: seal + new @ · Ctrl-E: open $EDITOR"
+                } else {
+                    "Enter: preview · Ctrl-E: open $EDITOR"
+                };
                 self.mode = Mode::Input {
-                    prompt: format!(
-                        "Describe {} (Enter: preview · Ctrl-E: open $EDITOR)",
-                        c.short_change
-                    ),
+                    prompt: format!("Describe {} ({action})", c.short_change),
                     buffer: c.title().to_string(),
                     next: InputNext::Describe {
                         body: c.body(),
