@@ -61,6 +61,9 @@ The PR commands run exactly what VisualJJ's `jj branching submit` / `push` / `sh
   (`--merge-method` overrides), polled until done, then fetches.
 - **Interdiff (`i`)** — what changed since the last push, since a reviewer's last review, or since
   the previous local version — re-review only new changes.
+- **PR signals in details** — selecting a change with an open PR lists each reviewer and their
+  verdict (reviews of an older head dimmed) and every check's name and outcome; the graph refreshes
+  every 5 seconds (`--refresh N`, 0 disables), re-reading PR data along with it.
 - **Auto-fetch** every 5 minutes (`--auto-fetch N`, 0 disables); with `--auto-rebase` (toggle: `T`)
   your stacks are rebased onto the new trunk, undone automatically if that would add conflicts.
 

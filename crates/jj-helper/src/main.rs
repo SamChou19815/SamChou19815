@@ -83,7 +83,7 @@ struct Cli {
     auto_rebase: bool,
 
     /// Reload the graph every N seconds while idle (0 disables).
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 5)]
     refresh: u64,
 
     #[command(subcommand)]

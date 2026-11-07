@@ -101,6 +101,16 @@ pub struct Review {
     pub state: String,
 }
 
+/// One status-check entry of a PR's head commit — a CheckRun (Actions job)
+/// or a legacy commit status — with the name and outcome shown in details.
+#[derive(Clone, Debug)]
+pub struct CheckSignal {
+    pub name: String,
+    /// CheckRun conclusion (falling back to its status while running) or
+    /// StatusContext state: SUCCESS, FAILURE, IN_PROGRESS, …
+    pub state: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct PrInfo {
     pub number: u64,
@@ -116,7 +126,10 @@ pub struct PrInfo {
     pub head_oid: String,
     pub review_decision: Option<String>,
     pub reviews: Vec<Review>,
+    /// Aggregate rollup state, for the row badge.
     pub checks: Option<String>,
+    /// Individual checks behind the rollup, for the details pane.
+    pub signals: Vec<CheckSignal>,
     pub merge_queue: Option<String>,
     pub stack: Option<StackInfo>,
 }
@@ -160,6 +173,35 @@ impl PrInfo {
                     .collect()
             })
             .unwrap_or_default();
+        // The rollup contexts are a union: CheckRun (Actions) or StatusContext
+        // (legacy commit statuses); each carries its name differently.
+        let signals = v
+            .pointer("/commits/nodes/0/commit/statusCheckRollup/contexts/nodes")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|c| {
+                        if let Some(name) = c.get("name").and_then(Value::as_str) {
+                            // A running CheckRun has no conclusion yet; its
+                            // status (QUEUED / IN_PROGRESS) is the signal.
+                            let state = c
+                                .get("conclusion")
+                                .and_then(Value::as_str)
+                                .or_else(|| c.get("status").and_then(Value::as_str))?;
+                            Some(CheckSignal {
+                                name: name.to_string(),
+                                state: state.to_string(),
+                            })
+                        } else {
+                            Some(CheckSignal {
+                                name: c.get("context")?.as_str()?.to_string(),
+                                state: c.get("state")?.as_str()?.to_string(),
+                            })
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         Some(PrInfo {
             number: v.get("number")?.as_u64()?,
             node_id: v
@@ -184,6 +226,7 @@ impl PrInfo {
                 .pointer("/commits/nodes/0/commit/statusCheckRollup/state")
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            signals,
             merge_queue: v
                 .pointer("/mergeQueueEntry/state")
                 .and_then(Value::as_str)
@@ -199,7 +242,13 @@ fn pr_fragment(with_stack: bool) -> String {
   number title url body state isDraft headRefName baseRefName headRefOid reviewDecision
   latestReviews(first: 20) {{ nodes {{ state author {{ login }} commit {{ oid }} }} }}
   mergeQueueEntry {{ state }}
-  commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }}
+  commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{
+    state
+    contexts(first: 30) {{ nodes {{
+      ... on CheckRun {{ name conclusion status }}
+      ... on StatusContext {{ context state }}
+    }} }}
+  }} }} }} }}
   {}
 }}",
         if with_stack {
@@ -554,6 +603,7 @@ impl GitHub {
                     review_decision: None,
                     reviews: vec![],
                     checks: None,
+                    signals: vec![],
                     merge_queue: None,
                     stack: None,
                 })
@@ -649,6 +699,7 @@ impl GitHub {
                 review_decision: None,
                 reviews: vec![],
                 checks: None,
+                signals: vec![],
                 merge_queue: None,
                 stack,
             });
@@ -707,6 +758,7 @@ impl GitHub {
                                 review_decision: None,
                                 reviews: vec![],
                                 checks: None,
+                                signals: vec![],
                                 merge_queue: None,
                                 stack,
                             })
@@ -876,7 +928,14 @@ mod tests {
             "reviewDecision": "APPROVED",
             "latestReviews": {"nodes": [{"state": "APPROVED", "author": {"login": "x"}, "commit": {"oid": "c0"}}]},
             "mergeQueueEntry": null,
-            "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": {
+                "state": "SUCCESS",
+                "contexts": {"nodes": [
+                    {"name": "build / CI", "conclusion": "SUCCESS", "status": "COMPLETED"},
+                    {"name": "e2e", "conclusion": null, "status": "IN_PROGRESS"},
+                    {"context": "codecov/patch", "state": "PENDING"}
+                ]}
+            }}}]},
             "stack": {"number": 3, "size": 2}, "stackEntry": {"position": 1}
         });
         let pr = PrInfo::from_graphql(&v).unwrap();
@@ -891,6 +950,13 @@ mod tests {
             })
         );
         assert_eq!(pr.reviews[0].oid, "c0");
+        // CheckRun (done + still running) and legacy StatusContext alike.
+        assert_eq!(pr.signals.len(), 3);
+        assert_eq!(pr.signals[0].name, "build / CI");
+        assert_eq!(pr.signals[0].state, "SUCCESS");
+        assert_eq!(pr.signals[1].state, "IN_PROGRESS");
+        assert_eq!(pr.signals[2].name, "codecov/patch");
+        assert_eq!(pr.signals[2].state, "PENDING");
     }
 
     #[test]

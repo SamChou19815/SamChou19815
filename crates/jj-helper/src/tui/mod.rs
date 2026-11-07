@@ -27,7 +27,9 @@ use crate::github::{open_in_browser, GitHub, PrInfo, PrState};
 use crate::jj::{shell_join, Jj, RepoGraph};
 use crate::ops::{Op, Pick, Placement, Scope};
 use crate::stack::{self, Plan, SubmitOptions};
-use render::{diff_lines, pr_badge, pr_for, relative_time, Mark, Rendered, Theme};
+use render::{
+    check_line, diff_lines, pr_badge, pr_for, relative_time, review_line, Mark, Rendered, Theme,
+};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -286,7 +288,6 @@ pub struct App {
     pr_job: Option<Job>,
     last_fetch: Instant,
     last_refresh: Instant,
-    last_pr_load: Option<Instant>,
     preview: Option<PreviewState>,
     /// Graph rows that mouse clicks can select (content line → node id).
     click_rows: HashMap<u16, String>,
@@ -301,6 +302,8 @@ pub struct App {
     files_cache: HashMap<String, String>,
     interactive: Option<Vec<String>>,
     root: String,
+    /// Shipped-commit count already announced in the status line.
+    shipped_notified: usize,
     quit: bool,
 }
 
@@ -361,7 +364,6 @@ pub fn run(jj: Jj, cfg: Config) -> Result<()> {
         pr_job: None,
         last_fetch: Instant::now(),
         last_refresh: Instant::now(),
-        last_pr_load: None,
         preview: None,
         click_rows: HashMap::new(),
         click_area: ratatui::layout::Rect::default(),
@@ -371,6 +373,7 @@ pub fn run(jj: Jj, cfg: Config) -> Result<()> {
         files_cache: HashMap::new(),
         interactive: None,
         root: String::new(),
+        shipped_notified: 0,
         quit: false,
     };
     app.root = app
@@ -527,7 +530,6 @@ impl App {
             .collect();
         branches.sort();
         branches.dedup();
-        self.last_pr_load = Some(Instant::now());
         if branches.is_empty() {
             return;
         }
@@ -567,10 +569,15 @@ impl App {
                     self.prs = prs;
                     self.rerender();
                     let shipped = self.shipped_commits();
+                    // Only announce a *new* shipped set; with the 5s refresh
+                    // cycle, re-announcing the same one would nag after
+                    // every dismiss.
                     if !shipped.is_empty()
+                        && shipped.len() != self.shipped_notified
                         && matches!(self.mode, Mode::Normal)
                         && self.message.0.is_empty()
                     {
+                        self.shipped_notified = shipped.len();
                         self.set_message(
                             format!(
                                 "{} commit(s) have shipped PRs — Clean up in the command menu",
@@ -595,12 +602,10 @@ impl App {
         if let Some(every) = self.cfg.refresh {
             if idle && self.last_refresh.elapsed() >= every {
                 self.refresh();
-                if self
-                    .last_pr_load
-                    .is_none_or(|t| t.elapsed() > Duration::from_secs(60))
-                {
-                    self.load_prs();
-                }
+                // PR signals (reviews, checks) ride along on every refresh,
+                // so the details pane stays current; a still-running load
+                // self-throttles in load_prs.
+                self.load_prs();
             }
         }
     }
@@ -615,7 +620,6 @@ impl App {
                     .to_string();
                 self.set_message(format!("✓ {}: {m}", job.title), Color::Green);
                 self.refresh();
-                self.last_pr_load = None;
                 self.load_prs();
             }
             Ok(Outcome::Plan(plan)) => {
@@ -1079,7 +1083,6 @@ impl App {
             Cmd::Redo => self.run_op(Op::Redo),
             Cmd::Refresh => {
                 self.refresh();
-                self.last_pr_load = None;
                 self.load_prs();
                 self.set_message("refreshed", Color::Green);
             }
@@ -2171,6 +2174,39 @@ impl App {
                     ),
                     Style::default().fg(Color::Blue),
                 ));
+            }
+            if pr.is_open() {
+                // The signals behind the row badges: who reviewed (and on
+                // which commit), and each check's name and outcome.
+                if !pr.reviews.is_empty() {
+                    lines.push(Line::raw(""));
+                    lines.push(Line::styled(
+                        "Reviews",
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                    for r in pr.reviews.iter().take(10) {
+                        lines.push(review_line(r, &pr.head_oid));
+                    }
+                    if pr.reviews.len() > 10 {
+                        lines.push(Line::styled(
+                            format!("  +{} more…", pr.reviews.len() - 10),
+                            Style::default().fg(Color::DarkGray),
+                        ));
+                    }
+                }
+                if !pr.signals.is_empty() {
+                    lines.push(Line::raw(""));
+                    lines.push(Line::styled("Checks", Style::default().fg(Color::DarkGray)));
+                    for s in pr.signals.iter().take(12) {
+                        lines.push(check_line(s));
+                    }
+                    if pr.signals.len() > 12 {
+                        lines.push(Line::styled(
+                            format!("  +{} more…", pr.signals.len() - 12),
+                            Style::default().fg(Color::DarkGray),
+                        ));
+                    }
+                }
             }
             if pr.is_open() && pr.head_oid != c.commit_id {
                 lines.push(Line::styled(

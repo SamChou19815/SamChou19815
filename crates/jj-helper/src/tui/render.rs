@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 
 use crate::dag::{Dag, Node, Preview};
-use crate::github::{PrInfo, PrState};
+use crate::github::{CheckSignal, PrInfo, PrState, Review};
 use crate::graph::{self, Kind};
 
 /// Extra emphasis for specific nodes in a pane.
@@ -203,6 +203,51 @@ pub fn pr_badge(pr: &PrInfo) -> Vec<Span<'static>> {
         }
     }
     spans
+}
+
+/// One reviewer line for the details pane: who, and their latest verdict.
+/// Reviews made on an older head render dimmed with a note.
+pub fn review_line(r: &Review, head_oid: &str) -> Line<'static> {
+    let (glyph, label, color) = match r.state.as_str() {
+        "APPROVED" => ("✓", "approved", Color::Green),
+        "CHANGES_REQUESTED" => ("✗", "changes requested", Color::Red),
+        "DISMISSED" => ("○", "dismissed", Color::DarkGray),
+        _ => ("◦", "commented", Color::Yellow),
+    };
+    let mut spans = vec![
+        Span::raw("  "),
+        Span::styled(glyph.to_string(), Style::default().fg(color)),
+        Span::raw(format!(" {} ", r.login)),
+        Span::styled(label.to_string(), Style::default().fg(color)),
+    ];
+    if r.oid != head_oid {
+        spans.push(Span::styled(
+            "  (older commit)",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// One status-check line for the details pane: the check's name and its
+/// outcome, colored green / red / yellow like the row badge's CI dot.
+pub fn check_line(s: &CheckSignal) -> Line<'static> {
+    let (glyph, color) = match s.state.as_str() {
+        "SUCCESS" => ("✓", Color::Green),
+        "FAILURE" | "ERROR" | "TIMED_OUT" | "ACTION_REQUIRED" => ("✗", Color::Red),
+        "NEUTRAL" | "SKIPPED" | "CANCELLED" => ("○", Color::DarkGray),
+        // PENDING, QUEUED, IN_PROGRESS, WAITING, EXPECTED, …
+        _ => ("●", Color::Yellow),
+    };
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(glyph.to_string(), Style::default().fg(color)),
+        Span::raw(format!(" {}", s.name)),
+        Span::styled(
+            format!("  {}", s.state.to_lowercase().replace('_', " ")),
+            Style::default().fg(color),
+        ),
+    ])
 }
 
 /// One VisualJJ-style row: pills (You are here, branches, PR) first, the
@@ -470,5 +515,44 @@ mod tests {
         assert_eq!(parse_override("nope"), None);
         // Light and dark must never collapse into one palette.
         assert_ne!(Theme::light().cursor, Theme::dark().cursor);
+    }
+
+    #[test]
+    fn signal_lines_carry_names() {
+        let review = Review {
+            login: "sam".into(),
+            oid: "c0".into(),
+            state: "APPROVED".into(),
+        };
+        let line = review_line(&review, "c0").spans;
+        let text: String = line
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(text.contains("sam") && text.contains("approved"), "{text}");
+        // A review of an older commit says so.
+        let stale = review_line(&review, "c1").spans;
+        let text: String = stale
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(text.contains("older commit"), "{text}");
+
+        let check = CheckSignal {
+            name: "build / CI".into(),
+            state: "TIMED_OUT".into(),
+        };
+        let text: String = check_line(&check)
+            .spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            text.contains("build / CI") && text.contains("timed out"),
+            "{text}"
+        );
     }
 }
