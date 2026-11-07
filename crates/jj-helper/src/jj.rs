@@ -11,9 +11,20 @@ use std::process::{Command, Stdio};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 
-/// Default set of revisions shown, mirroring jj's own default `revsets.log`.
-pub const DEFAULT_REVSET: &str =
-    "present(@) | ancestors(immutable_heads().., 2) | present(trunk())";
+/// Landed trunk history shown for context: this many commits below the trunk
+/// head render grayed out. Bounded so the graph still fits the pane without
+/// a scrollbar.
+pub const TRUNK_CONTEXT: usize = 5;
+
+/// Default set of revisions shown: jj's own default `revsets.log`, plus a
+/// few commits that already landed on trunk (`TRUNK_CONTEXT` below the head,
+/// rendered grayed out by the TUI).
+pub fn default_revset() -> String {
+    format!(
+        "present(@) | ancestors(immutable_heads().., 2) | ancestors(present(trunk()), {})",
+        TRUNK_CONTEXT + 1
+    )
+}
 
 /// One JSON object per line. `json(self)` covers the commit's core fields;
 /// the rest are hand-assembled because `json()` only accepts serializable

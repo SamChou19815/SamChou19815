@@ -13,6 +13,10 @@ the graph opens a **Before / After** view; nothing runs until you press `Enter`.
 destination — rebase, squash into, revert onto, move bookmark — let you move a target cursor while
 the After pane updates live, so you never type revsets.
 
+Below your work, the last few commits that already landed on the trunk branch render grayed out for
+context (capped at 5, so the graph never outgrows the pane); your stack's dashed connector shows
+which of them you're based on.
+
 | Key       | Command                                                                | Key | Command                        |
 | --------- | ---------------------------------------------------------------------- | --- | ------------------------------ |
 | `r`       | rebase… (`Tab`: onto / insert after / before, `s`: `-s` / `-r` / `-b`) | `e` | edit                           |

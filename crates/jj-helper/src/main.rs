@@ -34,7 +34,7 @@ struct Cli {
     repository: Option<PathBuf>,
 
     /// Revisions to show.
-    #[arg(short, long, global = true, default_value = jj::DEFAULT_REVSET)]
+    #[arg(short, long, global = true, default_value_t = jj::default_revset())]
     revisions: String,
 
     /// Git remote hosting the PRs.
