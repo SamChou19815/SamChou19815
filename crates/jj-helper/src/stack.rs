@@ -1004,6 +1004,7 @@ mod tests {
             review_decision: None,
             reviews: vec![],
             checks: None,
+            signals: vec![],
             merge_queue: None,
             stack: None,
         }
