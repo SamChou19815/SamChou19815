@@ -130,6 +130,18 @@ impl Dag {
             .cloned()
     }
 
+    /// Commits in view that already landed on trunk — ancestors of the trunk
+    /// head, excluding the head itself. The renderer grays them out as
+    /// history context; they are immutable, so no operation touches them.
+    pub fn landed(&self) -> HashSet<String> {
+        let Some(trunk) = self.trunk() else {
+            return HashSet::new();
+        };
+        let mut landed = self.ancestors(&trunk);
+        landed.remove(&trunk);
+        landed
+    }
+
     pub fn parent_ids(&self, id: &str) -> Vec<String> {
         self.nodes
             .get(id)
@@ -1050,5 +1062,24 @@ pub mod tests {
         d.bookmark_set("feat", "c").unwrap();
         assert!(d.nodes["c"].commit.bookmarks.contains(&"feat".to_string()));
         assert!(d.nodes["a"].commit.bookmarks.is_empty());
+    }
+
+    #[test]
+    fn landed_is_trunk_ancestry_minus_head() {
+        // Stack b sits on T2, which already landed: T2 and T1 are landed
+        // context, the trunk head T is not (it renders as the anchor).
+        let d = graph(&[
+            ("@c", &["b"]),
+            ("b", &["T2"]),
+            ("T", &["T1"]),
+            ("T1", &["T2"]),
+            ("T2", &[]),
+        ]);
+        let landed = d.landed();
+        assert!(landed.contains("T1"));
+        assert!(landed.contains("T2"));
+        assert!(!landed.contains("T"));
+        assert!(!landed.contains("b"));
+        assert!(!landed.contains("c"));
     }
 }

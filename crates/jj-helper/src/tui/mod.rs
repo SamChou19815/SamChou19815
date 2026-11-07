@@ -27,7 +27,7 @@ use crate::github::{open_in_browser, GitHub, PrInfo, PrState};
 use crate::jj::{shell_join, Jj, RepoGraph};
 use crate::ops::{Op, Pick, Placement, Scope};
 use crate::stack::{self, Plan, SubmitOptions};
-use render::{diff_lines, pr_badge, pr_for, relative_time, Mark, Rendered};
+use render::{diff_lines, pr_badge, pr_for, relative_time, Mark, Rendered, Theme};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -268,6 +268,8 @@ pub struct App {
     repo: RepoGraph,
     dag: Dag,
     rendered: Rendered,
+    /// Background-matched colors (queried from the terminal at startup).
+    theme: Theme,
     /// Inner width the rows were rendered for (right-aligned metadata).
     render_width: u16,
     cursor: usize,
@@ -326,6 +328,9 @@ fn spawn_job(
 }
 
 pub fn run(jj: Jj, cfg: Config) -> Result<()> {
+    // Ask the terminal for its background before the TUI takes over the
+    // screen; the query reply would otherwise be swallowed by the event loop.
+    let theme = Theme::detect();
     let repo = jj.load_graph(&cfg.revset)?;
     let trunk_branch = jj.trunk_branch();
     let (gh, gh_error) = match GitHub::for_remote(&jj, &cfg.remote) {
@@ -333,13 +338,14 @@ pub fn run(jj: Jj, cfg: Config) -> Result<()> {
         Err(e) => (None, Some(format!("{e:#}"))),
     };
     let dag = Dag::from_repo(&repo);
-    let rendered = render::render(&dag, &HashMap::new(), &HashMap::new(), 0);
+    let rendered = render::render(&dag, &HashMap::new(), &HashMap::new(), 0, &theme);
     let mut app = App {
         jj,
         cfg,
         repo,
         dag,
         rendered,
+        theme,
         render_width: 0,
         cursor: 0,
         scroll: 0,
@@ -468,7 +474,13 @@ impl App {
                 marks.insert(id, Mark::Source);
             }
         }
-        self.rendered = render::render(&self.dag, &self.prs, &marks, self.render_width as usize);
+        self.rendered = render::render(
+            &self.dag,
+            &self.prs,
+            &marks,
+            self.render_width as usize,
+            &self.theme,
+        );
         self.update_preview();
     }
 
@@ -846,7 +858,13 @@ impl App {
         self.preview = built.map(|(result, focus, commands, title)| PreviewState {
             key,
             result: result.map(|d| {
-                render::render(&d, &self.prs, &HashMap::new(), self.render_width as usize)
+                render::render(
+                    &d,
+                    &self.prs,
+                    &HashMap::new(),
+                    self.render_width as usize,
+                    &self.theme,
+                )
             }),
             focus,
             commands,
@@ -1789,7 +1807,7 @@ impl App {
                     )
                     .highlight_style(
                         Style::default()
-                            .bg(Color::Rgb(40, 52, 80))
+                            .bg(self.theme.cursor)
                             .add_modifier(Modifier::BOLD),
                     );
                 f.render_stateful_widget(list, rect, state);
@@ -1814,7 +1832,7 @@ impl App {
                     )
                     .highlight_style(
                         Style::default()
-                            .bg(Color::Rgb(40, 52, 80))
+                            .bg(self.theme.cursor)
                             .add_modifier(Modifier::BOLD),
                     );
                 f.render_stateful_widget(list, rect, state);
@@ -2020,8 +2038,9 @@ impl App {
                 && matches!(cmd, Cmd::Fetch | Cmd::Push)
         };
         // Filled pill: one cell of fill each side, the icon as the accent,
-        // white label — reads as a button, not floating text. While a
-        // foreground command runs, Fetch/Push flatten to disabled text.
+        // label text — reads as a button, not floating text, on either
+        // terminal background. While a foreground command runs, Fetch/Push
+        // flatten to disabled text.
         let push = |spans: &mut Vec<Span<'static>>, icon: char, label: &str, dim: bool| {
             if dim {
                 spans.push(Span::styled(
@@ -2029,13 +2048,16 @@ impl App {
                     Style::default().fg(Color::DarkGray),
                 ));
             } else {
-                let pill = Style::default().bg(Color::Rgb(64, 72, 90));
+                let pill = Style::default().bg(self.theme.pill);
                 spans.push(Span::styled(" ", pill));
                 spans.push(Span::styled(
                     icon.to_string(),
-                    pill.fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    pill.fg(self.theme.pill_accent).add_modifier(Modifier::BOLD),
                 ));
-                spans.push(Span::styled(format!(" {label} "), pill.fg(Color::White)));
+                spans.push(Span::styled(
+                    format!(" {label} "),
+                    pill.fg(self.theme.pill_text),
+                ));
             }
         };
         let mut spans: Vec<Span<'static>> = vec![];
@@ -2348,6 +2370,10 @@ fn help_lines() -> Vec<Line<'static>> {
         Line::styled("Preview legend", Style::default().fg(Color::Cyan).bold()),
         Line::styled("  cyan      moved / carried along", Style::default().fg(Color::Cyan)),
         Line::styled("  ◌ gray    old position", Style::default().fg(Color::DarkGray)),
+        Line::styled(
+            "  ◆ gray    already landed on trunk (context)",
+            Style::default().fg(Color::DarkGray),
+        ),
         Line::styled("  ⊘ red     abandoned / folded away", Style::default().fg(Color::Red)),
         Line::styled("  green     created / receives changes / @ destination", Style::default().fg(Color::Green)),
         Line::styled("  magenta   gets a PR", Style::default().fg(Color::Magenta)),

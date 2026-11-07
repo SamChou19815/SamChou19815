@@ -21,6 +21,76 @@ pub enum Mark {
     Target,
 }
 
+/// The few colors that must adapt to the terminal's background — everything
+/// else is plain ANSI colors the terminal already maps to its theme. Dark
+/// rows highlighted with a dark background are unreadable with a light
+/// terminal's dark text, and vice versa.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Theme {
+    /// Cursor / selected row background.
+    pub cursor: Color,
+    /// The commit an operation acts on, while picking a destination.
+    pub source: Color,
+    /// The destination being picked.
+    pub target: Color,
+    /// Toolbar pill background, with its label and icon colors.
+    pub pill: Color,
+    pub pill_text: Color,
+    pub pill_accent: Color,
+}
+
+impl Theme {
+    /// Asks the terminal for its background color (OSC 11) before the TUI
+    /// takes over the screen. `JJ_HELPER_THEME=light|dark` overrides, and
+    /// terminals that can't answer fall back to dark.
+    pub fn detect() -> Theme {
+        if let Some(t) = std::env::var("JJ_HELPER_THEME")
+            .ok()
+            .as_deref()
+            .and_then(parse_override)
+        {
+            return t;
+        }
+        match terminal_colorsaurus::theme_mode(terminal_colorsaurus::QueryOptions::default()) {
+            Ok(terminal_colorsaurus::ThemeMode::Light) => Theme::light(),
+            _ => Theme::dark(),
+        }
+    }
+
+    /// Current look: navy cursor, olive source, forest target, slate pills.
+    fn dark() -> Theme {
+        Theme {
+            cursor: Color::Rgb(40, 52, 80),
+            source: Color::Rgb(70, 55, 20),
+            target: Color::Rgb(25, 70, 45),
+            pill: Color::Rgb(64, 72, 90),
+            pill_text: Color::White,
+            pill_accent: Color::Yellow,
+        }
+    }
+
+    /// Pastel twins of the dark colors: same hues, light enough for a light
+    /// terminal's dark text to stay readable.
+    fn light() -> Theme {
+        Theme {
+            cursor: Color::Rgb(215, 227, 248),
+            source: Color::Rgb(248, 234, 192),
+            target: Color::Rgb(214, 240, 224),
+            pill: Color::Rgb(225, 229, 236),
+            pill_text: Color::Black,
+            pill_accent: Color::Rgb(146, 100, 12),
+        }
+    }
+}
+
+fn parse_override(s: &str) -> Option<Theme> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "light" => Some(Theme::light()),
+        "dark" => Some(Theme::dark()),
+        _ => None,
+    }
+}
+
 pub struct Rendered {
     pub lines: Vec<Line<'static>>,
     /// First line index of each node.
@@ -138,9 +208,15 @@ pub fn pr_badge(pr: &PrInfo) -> Vec<Span<'static>> {
 /// One VisualJJ-style row: pills (You are here, branches, PR) first, the
 /// description as the primary text, then the time and the change-id chip
 /// right-aligned at the pane's right edge when `avail` leaves room for it.
-fn node_line_spans(n: &Node, prs: &HashMap<String, PrInfo>, avail: usize) -> Vec<Span<'static>> {
+/// `landed` grays the whole row out — history that already landed on trunk.
+fn node_line_spans(
+    n: &Node,
+    prs: &HashMap<String, PrInfo>,
+    avail: usize,
+    landed: bool,
+) -> Vec<Span<'static>> {
     let c = &n.commit;
-    let faded = is_faded(n.preview);
+    let faded = is_faded(n.preview) || landed;
     let mut spans = vec![];
     if c.is_wc {
         spans.push(Span::raw(" "));
@@ -266,9 +342,13 @@ fn node_line_spans(n: &Node, prs: &HashMap<String, PrInfo>, avail: usize) -> Vec
     spans
 }
 
-fn glyph_style(n: &Node) -> Style {
+fn glyph_style(n: &Node, landed: bool) -> Style {
     if n.preview.is_some() {
         return preview_style(n.preview).remove_modifier(Modifier::CROSSED_OUT);
+    }
+    if landed {
+        // Landed trunk history: a gray diamond for context, not action.
+        return Style::default().fg(Color::DarkGray);
     }
     let c = &n.commit;
     if c.is_wc {
@@ -293,12 +373,15 @@ pub fn render(
     prs: &HashMap<String, PrInfo>,
     marks: &HashMap<String, Mark>,
     width: usize,
+    theme: &Theme,
 ) -> Rendered {
     let laid = graph::layout(dag);
+    let landed = dag.landed();
     let mut lines = Vec::with_capacity(laid.len());
     let mut node_line = HashMap::new();
     for (i, l) in laid.iter().enumerate() {
         let n = &dag.nodes[&l.owner];
+        let is_landed = n.preview.is_none() && landed.contains(&l.owner);
         let mut spans: Vec<Span<'static>> = vec![];
         match (l.kind, l.node_at) {
             (Kind::Node, Some(at)) => {
@@ -308,13 +391,16 @@ pub fn render(
                     chars[..at].iter().collect::<String>(),
                     Style::default().fg(Color::DarkGray),
                 ));
-                spans.push(Span::styled(chars[at].to_string(), glyph_style(n)));
+                spans.push(Span::styled(
+                    chars[at].to_string(),
+                    glyph_style(n, is_landed),
+                ));
                 spans.push(Span::styled(
                     chars[at + 1..].iter().collect::<String>(),
                     Style::default().fg(Color::DarkGray),
                 ));
                 let avail = width.saturating_sub(l.graph.chars().count());
-                spans.extend(node_line_spans(n, prs, avail));
+                spans.extend(node_line_spans(n, prs, avail, is_landed));
             }
             _ => {
                 node_line.entry(l.owner.clone()).or_insert(i);
@@ -328,9 +414,9 @@ pub fn render(
         if l.kind != Kind::Connector {
             if let Some(mark) = marks.get(&l.owner) {
                 line = line.style(match mark {
-                    Mark::Cursor => Style::default().bg(Color::Rgb(40, 52, 80)),
-                    Mark::Source => Style::default().bg(Color::Rgb(70, 55, 20)),
-                    Mark::Target => Style::default().bg(Color::Rgb(25, 70, 45)),
+                    Mark::Cursor => Style::default().bg(theme.cursor),
+                    Mark::Source => Style::default().bg(theme.source),
+                    Mark::Target => Style::default().bg(theme.target),
                 });
             }
         }
@@ -371,4 +457,18 @@ pub fn diff_lines(text: &str) -> Vec<Line<'static>> {
             Line::styled(l.to_string(), style)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_override_parses() {
+        assert_eq!(parse_override("light"), Some(Theme::light()));
+        assert_eq!(parse_override(" DARK "), Some(Theme::dark()));
+        assert_eq!(parse_override("nope"), None);
+        // Light and dark must never collapse into one palette.
+        assert_ne!(Theme::light().cursor, Theme::dark().cursor);
+    }
 }
