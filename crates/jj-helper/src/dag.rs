@@ -615,6 +615,16 @@ impl Dag {
         Ok(())
     }
 
+    /// `jj describe` + `jj new rev`: describing the working copy seals it as
+    /// a normal commit, and a fresh `@` opens on top so later work stacks on
+    /// the new `@` instead of the finished change.
+    pub fn describe_and_seal(&mut self, rev: &str, message: &str) -> TResult {
+        self.node(rev)?;
+        self.describe(rev, message)?;
+        self.new_on(rev)?;
+        Ok(())
+    }
+
     /// `jj new -A rev`
     pub fn new_after(&mut self, rev: &str) -> TResult {
         self.node(rev)?;
@@ -1030,6 +1040,19 @@ pub mod tests {
         d.edit("a").unwrap();
         assert!(d.nodes["a"].commit.is_wc);
         assert!(d.edit("T").is_err());
+    }
+
+    #[test]
+    fn describe_and_seal_reopens_wc() {
+        let mut d = sample();
+        d.describe_and_seal("c", "finished work").unwrap();
+        let sealed = &d.nodes["c"];
+        assert_eq!(sealed.commit.description, "finished work");
+        assert!(!sealed.commit.is_wc);
+        // The fresh @ is a child of the sealed change.
+        assert_eq!(parents(&d, NEW_WC_ID), vec!["c"]);
+        assert!(d.nodes[NEW_WC_ID].commit.is_wc);
+        assert_topo(&d);
     }
 
     #[test]

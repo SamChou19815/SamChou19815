@@ -17,16 +17,17 @@ Below your work, the last few commits that already landed on the trunk branch re
 context (capped at 5, so the graph never outgrows the pane); your stack's dashed connector shows
 which of them you're based on.
 
-| Key       | Command                                                                | Key | Command                        |
-| --------- | ---------------------------------------------------------------------- | --- | ------------------------------ |
-| `r`       | rebase… (`Tab`: onto / insert after / before, `s`: `-s` / `-r` / `-b`) | `e` | edit                           |
-| `s`       | squash into parent                                                     | `n` | new change here                |
-| `x`       | split…                                                                 | `d` | describe (`Ctrl-E`: `$EDITOR`) |
-| `a`       | abandon…                                                               | `b` | set branch here…               |
-| `c`       | Create Request (PR) / Update Request (PR)                              | `m` | Ship Request (PR) (+ below)    |
-| `o`       | open PR on GitHub                                                      | `i` | interdiff since push / review  |
-| `f` / `p` | fetch / push (all branches)                                            | `u` | undo                           |
-| `Space`   | diff                                                                   | `?` | help                           |
+| Key       | Command                                                                | Key     | Command             |
+| --------- | ---------------------------------------------------------------------- | ------- | ------------------- |
+| `r`       | rebase… (`Tab`: onto / insert after / before, `s`: `-s` / `-r` / `-b`) | `e`     | edit                |
+| `s`       | squash into parent                                                     | `n`     | new change here     |
+| `w`       | wrap up `@` (describe if needed, new `@` on top)                       | `x`     | split…              |
+| `d`       | describe (`Ctrl-E`: `$EDITOR`)                                         | `a`     | abandon…            |
+| `b`       | set branch here…                                                       | `c`     | Create Request (PR) |
+| `m`       | Ship Request (PR) (+ below)                                            | `o`     | open PR on GitHub   |
+| `i`       | interdiff since push / review                                          | `u`     | undo                |
+| `f` / `p` | fetch / push (all branches)                                            | `Space` | diff                |
+| `?`       | help                                                                   |         |                     |
 
 Everything else — insert change before/after, squash into…, duplicate, revert onto…,
 abandon with descendants, redo, clean up shipped requests, refresh — lives in the

@@ -174,7 +174,18 @@ impl Op {
             Op::NewAfter { rev } => vec![s(&["new", "-A", rev])],
             Op::NewBefore { rev } => vec![s(&["new", "-B", rev])],
             Op::Edit { rev } => vec![s(&["edit", rev])],
-            Op::Describe { rev, message } => vec![s(&["describe", rev, "-m", message])],
+            Op::Describe { rev, message } => {
+                if dag.get(rev).is_some_and(|n| n.commit.is_wc) {
+                    // Describing @ seals it as a normal commit with a fresh
+                    // working copy on top. `jj commit` is the atomic
+                    // describe + new; chaining `jj describe` then `jj new`
+                    // would pass the pre-rewrite commit id, build on the
+                    // abandoned original and leave a divergent duplicate.
+                    vec![s(&["commit", "-m", message])]
+                } else {
+                    vec![s(&["describe", rev, "-m", message])]
+                }
+            }
             Op::Duplicate { rev } => vec![s(&["duplicate", rev])],
             Op::Revert { rev, onto } => vec![s(&["revert", "-r", rev, "-o", onto])],
             Op::BookmarkSet { name, target } => {
@@ -232,7 +243,13 @@ impl Op {
             Op::NewAfter { rev } => d.new_after(rev)?,
             Op::NewBefore { rev } => d.new_before(rev)?,
             Op::Edit { rev } => d.edit(rev)?,
-            Op::Describe { rev, message } => d.describe(rev, message)?,
+            Op::Describe { rev, message } => {
+                if dag.get(rev).is_some_and(|n| n.commit.is_wc) {
+                    d.describe_and_seal(rev, message)?
+                } else {
+                    d.describe(rev, message)?
+                }
+            }
             Op::Duplicate { rev } => d.duplicate(rev)?,
             Op::Revert { rev, onto } => d.revert(rev, onto)?,
             Op::BookmarkSet { name, target } => d.bookmark_set(name, target)?,
@@ -284,7 +301,13 @@ impl Op {
             Op::NewAfter { rev } => format!("Insert new change after {}", sh(rev)),
             Op::NewBefore { rev } => format!("Insert new change before {}", sh(rev)),
             Op::Edit { rev } => format!("Edit {}", sh(rev)),
-            Op::Describe { rev, .. } => format!("Describe {}", sh(rev)),
+            Op::Describe { rev, .. } => {
+                if dag.get(rev).is_some_and(|n| n.commit.is_wc) {
+                    format!("Describe {} — seals @, new @ on top", sh(rev))
+                } else {
+                    format!("Describe {}", sh(rev))
+                }
+            }
             Op::Duplicate { rev } => format!("Duplicate {}", sh(rev)),
             Op::Revert { rev, onto } => format!("Revert {} onto {}", sh(rev), sh(onto)),
             Op::BookmarkSet { name, target } => format!("Set bookmark {name} to {}", sh(target)),
@@ -390,6 +413,31 @@ mod tests {
         );
         assert_eq!(cmds[0][5], "-m");
         assert_eq!(cmds[0][6], "commit b\n\ncommit c");
+    }
+
+    #[test]
+    fn describe_seals_the_working_copy() {
+        let d = graph(&[("@c", &["b"]), ("b", &["a"]), ("a", &["T"]), ("T", &[])]);
+        // Describing @ seals it atomically via `jj commit`.
+        let op = Op::Describe {
+            rev: "c".into(),
+            message: "seal it".into(),
+        };
+        assert_eq!(op.commands(&d), vec![s(&["commit", "-m", "seal it"])]);
+        assert_eq!(op.title(&d), "Describe c — seals @, new @ on top");
+        let preview = op.preview(&d, false).unwrap();
+        assert!(!preview.nodes["c"].commit.is_wc);
+        assert!(preview.nodes[crate::dag::NEW_WC_ID].commit.is_wc);
+        // Describing a non-wc commit stays a plain describe.
+        let op = Op::Describe {
+            rev: "b".into(),
+            message: "retitle".into(),
+        };
+        assert_eq!(
+            op.commands(&d),
+            vec![s(&["describe", "b", "-m", "retitle"])]
+        );
+        assert_eq!(op.title(&d), "Describe b");
     }
 
     #[test]
