@@ -230,25 +230,6 @@ export function slotTargetUsage(target: TargetSet, slot: GearSlot): Map<Affix, n
   return countAffixes(target[slot] ?? []);
 }
 
-/**
- * The ids of the worn set's rolled 词条 that count toward graduation: the
- * first ones of each 词条, in slot order, up to how many the target set asks
- * for. The rest are surplus.
- */
-export function countedAffixIds(data: WwmGearTrackerData): ReadonlySet<string> {
-  const left = targetUsage(data.target);
-  const counted = new Set<string>();
-  for (const gear of equippedGears(data)) {
-    for (const rolled of gear.affixes) {
-      const n = left.get(rolled.affix) ?? 0;
-      if (n <= 0) continue;
-      left.set(rolled.affix, n - 1);
-      counted.add(rolled.id);
-    }
-  }
-  return counted;
-}
-
 /** How one slot's worn piece stands against the target set's 词条 for it. */
 export type SlotComparison = {
   slot: GearSlot;
@@ -291,6 +272,35 @@ export function compareToTarget(data: WwmGearTrackerData): SlotComparison[] {
   return GEAR_SLOTS.map((slot) =>
     compareSlot(slot, worn.get(slot) ?? null, data.target[slot] ?? []),
   );
+}
+
+/**
+ * The ids of the worn set's rolled 词条 that count toward graduation: the
+ * first ones of each 词条, up to how many the target set asks for. Pieces are
+ * checked most-matching first — the piece matching its slot's target best has
+ * its 词条 counted before pieces that match worse — so the rest are surplus.
+ */
+export function countedAffixIds(data: WwmGearTrackerData): ReadonlySet<string> {
+  const left = targetUsage(data.target);
+  const counted = new Set<string>();
+  // Only one piece is worn per slot, so each worn piece's matching against the
+  // optimal one is its slot comparison's matched count.
+  const worn = equippedGears(data)
+    .map((gear) => ({
+      gear,
+      matched: compareSlot(gear.slot, gear, data.target[gear.slot] ?? []).matched.length,
+    }))
+    // Most matches first; the stable sort keeps slot order among equals.
+    .sort((x, y) => y.matched - x.matched);
+  for (const { gear } of worn) {
+    for (const rolled of gear.affixes) {
+      const n = left.get(rolled.affix) ?? 0;
+      if (n <= 0) continue;
+      left.set(rolled.affix, n - 1);
+      counted.add(rolled.id);
+    }
+  }
+  return counted;
 }
 
 /** How one target 词条 stands across the worn set. */
