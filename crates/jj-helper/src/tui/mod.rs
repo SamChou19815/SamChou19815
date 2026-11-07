@@ -2,7 +2,7 @@
 //! a command, and (for commands with a destination) picking the target while
 //! a live "after" preview shows the resulting graph next to the current one.
 
-mod render;
+pub(crate) mod render;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -10,7 +10,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
@@ -54,6 +57,7 @@ enum Cmd {
     Revert,
     Bookmark,
     Diff,
+    FileDiff,
     Interdiff,
     Submit,
     Ship,
@@ -71,14 +75,15 @@ enum Cmd {
 
 const COMMANDS: &[(&str, char, Cmd, &str)] = &[
     ("Change", 'e', Cmd::Edit, "Edit this change (@ moves here)"),
-    ("Change", 'n', Cmd::New, "New change on top"),
+    ("Change", 'n', Cmd::New, "New change here"),
     ("Change", 'N', Cmd::NewBefore, "Insert new change before"),
     ("Change", 'I', Cmd::NewAfter, "Insert new change after"),
     ("Change", 'd', Cmd::Describe, "Describe…"),
-    ("Change", 'b', Cmd::Bookmark, "Set / move bookmark…"),
+    ("Change", 'b', Cmd::Bookmark, "Set branch here…"),
     ("Change", 'D', Cmd::Diff, "Show diff"),
+    ("Change", 'F', Cmd::FileDiff, "Show diff per file…"),
     ("Shape", 'r', Cmd::Rebase, "Rebase… (pick destination)"),
-    ("Shape", 't', Cmd::RebaseTrunk, "Rebase stack onto trunk"),
+    ("Shape", 't', Cmd::RebaseTrunk, "Rebase on main"),
     ("Shape", 's', Cmd::Squash, "Squash into parent"),
     (
         "Shape",
@@ -86,33 +91,43 @@ const COMMANDS: &[(&str, char, Cmd, &str)] = &[
         Cmd::SquashInto,
         "Squash into… (pick destination)",
     ),
-    ("Shape", 'x', Cmd::Split, "Split (interactive)"),
+    ("Shape", 'x', Cmd::Split, "Split…"),
     ("Shape", 'y', Cmd::Duplicate, "Duplicate"),
     ("Shape", 'v', Cmd::Revert, "Revert onto… (pick destination)"),
-    ("Shape", 'a', Cmd::Abandon, "Abandon"),
+    ("Shape", 'a', Cmd::Abandon, "Abandon…"),
     (
         "Shape",
         'A',
         Cmd::AbandonSubtree,
         "Abandon with descendants",
     ),
-    ("GitHub", 'P', Cmd::Submit, "Create / update request (PR)"),
+    (
+        "GitHub",
+        'P',
+        Cmd::Submit,
+        "Create Request (PR) / Update Request (PR)",
+    ),
     (
         "GitHub",
         'M',
         Cmd::Ship,
-        "Ship (merge) PR + everything below",
+        "Ship Request (PR) (+ everything below)",
     ),
-    ("GitHub", 'o', Cmd::OpenPr, "Open PR in browser"),
+    ("GitHub", 'o', Cmd::OpenPr, "Open PR on GitHub"),
     (
         "GitHub",
         'i',
         Cmd::Interdiff,
         "Interdiff since push / review",
     ),
-    ("GitHub", 'c', Cmd::Cleanup, "Clean up shipped commits"),
+    ("GitHub", 'c', Cmd::Cleanup, "Clean up shipped request (PR)"),
     ("Repo", 'f', Cmd::Fetch, "Fetch (+ safe auto-rebase if on)"),
-    ("Repo", 'p', Cmd::Push, "Push all bookmarks (VisualJJ Push)"),
+    (
+        "Repo",
+        'p',
+        Cmd::Push,
+        "Push (all branches, deletions included)",
+    ),
     ("Repo", 'u', Cmd::Undo, "Undo last jj operation"),
     ("Repo", 'U', Cmd::Redo, "Redo"),
     ("Repo", 'R', Cmd::Refresh, "Refresh"),
@@ -142,6 +157,12 @@ enum Choice {
     Interdiff {
         from: String,
         to: String,
+        title: String,
+    },
+    /// One file's diff inside one change.
+    FileDiff {
+        rev: String,
+        path: String,
         title: String,
     },
 }
@@ -233,6 +254,16 @@ pub struct App {
     last_refresh: Instant,
     last_pr_load: Option<Instant>,
     preview: Option<PreviewState>,
+    /// Graph rows that mouse clicks can select (content line → node id).
+    click_rows: HashMap<u16, String>,
+    /// Content area of the graph pane, for hit-testing.
+    click_area: ratatui::layout::Rect,
+    /// Last click, for double-click detection.
+    last_click: Option<(String, Instant)>,
+    /// Toolbar buttons on screen (x range → command), for mouse clicks.
+    toolbar: Vec<(u16, u16, Cmd)>,
+    /// File rows in the details pane (screen y → change, path).
+    file_rows: HashMap<u16, (String, String)>,
     files_cache: HashMap<String, String>,
     interactive: Option<Vec<String>>,
     root: String,
@@ -293,6 +324,11 @@ pub fn run(jj: Jj, cfg: Config) -> Result<()> {
         last_refresh: Instant::now(),
         last_pr_load: None,
         preview: None,
+        click_rows: HashMap::new(),
+        click_area: ratatui::layout::Rect::default(),
+        last_click: None,
+        toolbar: vec![],
+        file_rows: HashMap::new(),
         files_cache: HashMap::new(),
         interactive: None,
         root: String::new(),
@@ -316,7 +352,9 @@ pub fn run(jj: Jj, cfg: Config) -> Result<()> {
     }
 
     let mut terminal = ratatui::init();
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture);
     let result = app.event_loop(&mut terminal);
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result
 }
@@ -326,17 +364,19 @@ impl App {
         loop {
             terminal.draw(|f| self.draw(f))?;
             if event::poll(Duration::from_millis(120))? {
-                if let Event::Key(k) = event::read()? {
-                    if k.kind == KeyEventKind::Press {
-                        self.on_key(k);
-                    }
+                match event::read()? {
+                    Event::Key(k) if k.kind == KeyEventKind::Press => self.on_key(k),
+                    Event::Mouse(m) => self.on_mouse(m),
+                    _ => {}
                 }
             }
             self.tick();
             if let Some(cmd) = self.interactive.take() {
+                let _ = ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture);
                 ratatui::restore();
                 let result = self.jj.run_interactive(&cmd);
                 *terminal = ratatui::init();
+                let _ = ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture);
                 terminal.clear()?;
                 match result {
                     Ok(()) => self.set_message(format!("✓ jj {}", shell_join(&cmd)), Color::Green),
@@ -487,7 +527,7 @@ impl App {
                     {
                         self.set_message(
                             format!(
-                                "{} commit(s) have merged PRs — press c to clean up",
+                                "{} commit(s) have shipped PRs — press c to clean up",
                                 shipped.len()
                             ),
                             Color::Magenta,
@@ -892,6 +932,47 @@ impl App {
                 let wc = self.dag.wc();
                 self.start_pick(Pick::RevertOnto, rev, wc)
             }
+            Cmd::FileDiff => {
+                let files: Vec<(String, Choice)> = self
+                    .files_cache
+                    .get(&rev)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        self.jj
+                            .run(&["diff", "--ignore-working-copy", "--summary", "-r", &rev])
+                            .map(|o| o.stdout)
+                            .unwrap_or_default()
+                    })
+                    .lines()
+                    .filter_map(|l| {
+                        let (status, path) = l.split_once(' ')?;
+                        Some((
+                            format!("{status} {path}"),
+                            Choice::FileDiff {
+                                rev: rev.clone(),
+                                path: path.to_string(),
+                                title: path.to_string(),
+                            },
+                        ))
+                    })
+                    .collect();
+                match files.len() {
+                    0 => self.set_message("no files in this change", Color::Yellow),
+                    1 => {
+                        let (_, c) = files.into_iter().next().unwrap();
+                        self.choose(c);
+                    }
+                    _ => {
+                        let mut state = ListState::default();
+                        state.select(Some(0));
+                        self.mode = Mode::Choose {
+                            title: format!("Diff {} per file", self.short(&rev)),
+                            items: files,
+                            state,
+                        };
+                    }
+                }
+            }
             Cmd::Diff => match self.jj.diff_text(&rev) {
                 Ok(t) => {
                     let title = format!("diff {}", self.short(&rev));
@@ -920,7 +1001,7 @@ impl App {
                 let shipped = self.shipped_commits();
                 match (shipped.is_empty(), self.dag.trunk()) {
                     (true, _) => self.set_message(
-                        "no commits with merged PRs in view (fetch first?)",
+                        "no commits with shipped PRs in view (fetch first?)",
                         Color::Yellow,
                     ),
                     (false, None) => self.set_message("✗ trunk() is not in view", Color::Red),
@@ -1069,6 +1150,19 @@ impl App {
 
     fn choose(&mut self, choice: Choice) {
         match choice {
+            Choice::FileDiff { rev, path, title } => match self.jj.file_diff_text(&rev, &path) {
+                Ok(t) => {
+                    self.mode = Mode::Text {
+                        title,
+                        lines: diff_lines(&t),
+                        scroll: 0,
+                    };
+                }
+                Err(e) => {
+                    self.mode = Mode::Normal;
+                    self.set_message(format!("✗ {e:#}"), Color::Red)
+                }
+            },
             Choice::Interdiff { from, to, title } => match self.jj.interdiff_text(&from, &to) {
                 Ok(t) => {
                     let body = if !t.contains("diff --git") {
@@ -1156,6 +1250,78 @@ impl App {
         }
         self.cursor = (self.cursor as isize + delta).clamp(0, len - 1) as usize;
         self.rerender();
+    }
+
+    /// Mouse control: wheel moves the selection, click selects a change,
+    /// double-click edits it (VisualJJ's double-click action), right-click
+    /// opens the command menu on that change.
+    fn on_mouse(&mut self, m: MouseEvent) {
+        match m.kind {
+            MouseEventKind::ScrollDown => self.move_cursor(1),
+            MouseEventKind::ScrollUp => self.move_cursor(-1),
+            MouseEventKind::Down(MouseButton::Left) => {
+                if matches!(self.mode, Mode::Normal) {
+                    if let Some((_, _, cmd)) = self
+                        .toolbar
+                        .iter()
+                        .find(|(a, b, _)| m.column >= *a && m.column <= *b)
+                    {
+                        let cmd = *cmd;
+                        self.exec(cmd);
+                        return;
+                    }
+                }
+                if let Some((rev, path)) = self.file_rows.get(&m.row) {
+                    self.choose(Choice::FileDiff {
+                        rev: rev.clone(),
+                        path: path.clone(),
+                        title: path.clone(),
+                    });
+                    return;
+                }
+                let Some(id) = self.row_at(m.column, m.row) else {
+                    return;
+                };
+                self.select_id(&id);
+                let now = Instant::now();
+                let double = self.last_click.as_ref().is_some_and(|(prev, at)| {
+                    prev == &id && at.elapsed() < Duration::from_millis(400)
+                });
+                self.last_click = Some((id.clone(), now));
+                if double && matches!(self.mode, Mode::Normal) {
+                    self.confirm(Op::Edit { rev: id });
+                }
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                if !matches!(self.mode, Mode::Normal) {
+                    return;
+                }
+                if let Some(id) = self.row_at(m.column, m.row) {
+                    self.select_id(&id);
+                    let mut state = ListState::default();
+                    state.select(Some(0));
+                    self.mode = Mode::Menu { state };
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn row_at(&self, x: u16, y: u16) -> Option<String> {
+        let a = self.click_area;
+        if x < a.x || x >= a.x + a.width || y < a.y || y >= a.y + a.height {
+            return None;
+        }
+        self.click_rows
+            .get(&(y - a.y + self.scroll as u16))
+            .cloned()
+    }
+
+    fn select_id(&mut self, id: &str) {
+        if let Some(i) = self.dag.order.iter().position(|o| o == id) {
+            self.cursor = i;
+            self.rerender();
+        }
     }
 
     fn on_key(&mut self, k: KeyEvent) {
@@ -1483,10 +1649,16 @@ impl App {
 
     fn draw(&mut self, f: &mut Frame) {
         let area = f.area();
-        let [main, status] =
-            Layout::vertical([Constraint::Min(3), Constraint::Length(2)]).areas(area);
+        let [bar, main, status] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(2),
+        ])
+        .areas(area);
+        self.draw_toolbar(f, bar);
         let previewing = matches!(self.mode, Mode::Pick { .. } | Mode::Confirm { .. });
         if previewing {
+            self.click_rows = HashMap::new();
             self.draw_preview_layout(f, main);
         } else {
             let wide = main.width >= 110;
@@ -1501,7 +1673,7 @@ impl App {
                 (g, d)
             };
             let focus = self.selected();
-            let title = format!(" {} ", self.root);
+            let title = format!(" Smartlog — {} ", self.root);
             let scroll = scroll_for(
                 &self.rendered,
                 focus.as_deref(),
@@ -1513,6 +1685,14 @@ impl App {
                 .block(Block::default().borders(Borders::ALL).title(title))
                 .scroll((scroll as u16, 0));
             f.render_widget(p, graph_area);
+            // Remember where each change row landed so clicks can select it.
+            self.click_rows = self.rendered.nodes.clone();
+            self.click_area = ratatui::layout::Rect {
+                x: graph_area.x + 1,
+                y: graph_area.y + 1,
+                width: graph_area.width.saturating_sub(2),
+                height: graph_area.height.saturating_sub(2),
+            };
             self.draw_details(f, detail_area);
         }
         self.draw_status(f, status);
@@ -1735,6 +1915,39 @@ impl App {
         );
     }
 
+    /// VisualJJ's panel toolbar: Fetch / Push / Undo / Redo / Refresh /
+    /// Help buttons, clickable with the mouse.
+    fn draw_toolbar(&mut self, f: &mut Frame, area: Rect) {
+        const BUTTONS: &[(char, &str, Cmd)] = &[
+            ('⇩', "Fetch", Cmd::Fetch),
+            ('⇧', "Push", Cmd::Push),
+            ('↶', "Undo", Cmd::Undo),
+            ('↷', "Redo", Cmd::Redo),
+            ('⟳', "Refresh", Cmd::Refresh),
+            ('?', "Help", Cmd::Help),
+        ];
+        let mut spans: Vec<Span<'static>> = vec![];
+        let mut buttons = vec![];
+        let mut x = area.x;
+        for (icon, label, cmd) in BUTTONS {
+            let icon_style = if self.job.is_some() && matches!(cmd, Cmd::Fetch | Cmd::Push) {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            };
+            spans.push(Span::styled(icon.to_string(), icon_style));
+            spans.push(Span::raw(format!(" {label}")));
+            let end = x + 1 + label.len() as u16 + 1;
+            buttons.push((x, end.saturating_sub(1), *cmd));
+            spans.push(Span::raw("  "));
+            x = end + 2;
+        }
+        self.toolbar = buttons;
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
+
     fn draw_details(&mut self, f: &mut Frame, area: Rect) {
         let Some(id) = self.selected() else { return };
         let n = self.dag.nodes[&id].clone();
@@ -1828,6 +2041,7 @@ impl App {
                 lines.push(Line::raw(l.to_string()));
             }
         }
+        let mut file_rows: HashMap<u16, (String, String)> = HashMap::new();
         if !id.contains(':') {
             if !self.files_cache.contains_key(&id) {
                 let summary = self
@@ -1837,9 +2051,13 @@ impl App {
                     .unwrap_or_default();
                 self.files_cache.insert(id.clone(), summary);
             }
-            let files = &self.files_cache[&id];
+            let files = self.files_cache[&id].clone();
             if !files.trim().is_empty() {
                 lines.push(Line::raw(""));
+                lines.push(Line::styled(
+                    "Files — click a file (or F) for its diff",
+                    Style::default().fg(Color::DarkGray),
+                ));
                 for l in files.lines().take(40) {
                     let color = match l.chars().next() {
                         Some('A') => Color::Green,
@@ -1847,14 +2065,19 @@ impl App {
                         Some('M') => Color::Yellow,
                         _ => Color::Cyan,
                     };
+                    // No wrapping: each entry keeps its own screen row, so
+                    // mouse clicks can map straight back to the file.
+                    let y = area.y + 1 + lines.len() as u16;
+                    if let Some((_, path)) = l.split_once(' ') {
+                        file_rows.insert(y, (id.clone(), path.to_string()));
+                    }
                     lines.push(Line::styled(l.to_string(), Style::default().fg(color)));
                 }
             }
         }
+        self.file_rows = file_rows;
         f.render_widget(
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .block(Block::default().borders(Borders::ALL).title(" Details ")),
+            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Details ")),
             area,
         );
     }
@@ -1899,7 +2122,9 @@ impl App {
             Span::styled("s/S", Style::default().fg(Color::Yellow)),
             Span::raw(" squash  "),
             Span::styled("P", Style::default().fg(Color::Yellow)),
-            Span::raw(" PR stack  "),
+            Span::raw(" request  "),
+            Span::styled("f/p", Style::default().fg(Color::Yellow)),
+            Span::raw(" fetch/push  "),
             Span::styled("?", Style::default().fg(Color::Yellow)),
             Span::raw(" help  "),
             Span::styled(

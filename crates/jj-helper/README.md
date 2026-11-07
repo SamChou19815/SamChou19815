@@ -16,13 +16,13 @@ the After pane updates live, so you never type revsets.
 | Key       | Command                                                                | Key             | Command                        |
 | --------- | ---------------------------------------------------------------------- | --------------- | ------------------------------ |
 | `r`       | rebase… (`Tab`: onto / insert after / before, `s`: `-s` / `-r` / `-b`) | `e`             | edit                           |
-| `t`       | rebase stack onto trunk                                                | `n` / `N` / `I` | new / insert before / after    |
+| `t`       | rebase on main                                                         | `n` / `N` / `I` | new change here / insert       |
 | `s` / `S` | squash into parent / into…                                             | `d`             | describe (`Ctrl-E`: `$EDITOR`) |
-| `x`       | split (interactive)                                                    | `b`             | set / move bookmark            |
-| `a` / `A` | abandon / with descendants                                             | `y` / `v`       | duplicate / revert onto…       |
-| `P`       | create / update request (PR) for this change                           | `M`             | ship PR (+ everything below)   |
-| `i`       | interdiff since push / review                                          | `c`             | clean up shipped commits       |
-| `f` / `p` | fetch / push all bookmarks (VisualJJ Push)                             | `u` / `U`       | undo / redo                    |
+| `x`       | split…                                                                 | `b`             | set branch here…               |
+| `a` / `A` | abandon… / with descendants                                            | `y` / `v`       | duplicate / revert onto…       |
+| `P`       | Create Request (PR) / Update Request (PR)                              | `M`             | Ship Request (PR) (+ below)    |
+| `i`       | interdiff since push / review                                          | `c`             | clean up shipped request (PR)  |
+| `f` / `p` | fetch / push (all branches)                                            | `u` / `U`       | undo / redo                    |
 | `Space`   | diff                                                                   | `?`             | help                           |
 
 ## GitHub
