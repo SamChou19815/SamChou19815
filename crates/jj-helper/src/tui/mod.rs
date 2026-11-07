@@ -17,7 +17,9 @@ use ratatui::crossterm::event::{
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap,
+};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::dag::{Dag, Preview};
@@ -73,72 +75,100 @@ enum Cmd {
     Quit,
 }
 
-const COMMANDS: &[(&str, char, Cmd, &str)] = &[
-    ("Change", 'e', Cmd::Edit, "Edit this change (@ moves here)"),
-    ("Change", 'n', Cmd::New, "New change here"),
-    ("Change", 'N', Cmd::NewBefore, "Insert new change before"),
-    ("Change", 'I', Cmd::NewAfter, "Insert new change after"),
-    ("Change", 'd', Cmd::Describe, "Describe…"),
-    ("Change", 'b', Cmd::Bookmark, "Set branch here…"),
-    ("Change", 'D', Cmd::Diff, "Show diff"),
-    ("Change", 'F', Cmd::FileDiff, "Show diff per file…"),
-    ("Shape", 'r', Cmd::Rebase, "Rebase… (pick destination)"),
-    ("Shape", 't', Cmd::RebaseTrunk, "Rebase on main"),
-    ("Shape", 's', Cmd::Squash, "Squash into parent"),
+/// Commands with a `Some(key)` get a global single-key shortcut — lowercase
+/// letters and symbols only, never a shifted twin of another binding. The
+/// rest are menu-only (Enter); rare actions shouldn't own keys.
+const COMMANDS: &[(&str, Option<char>, Cmd, &str)] = &[
+    (
+        "Change",
+        Some('e'),
+        Cmd::Edit,
+        "Edit this change (@ moves here)",
+    ),
+    ("Change", Some('n'), Cmd::New, "New change here"),
+    ("Change", None, Cmd::NewBefore, "Insert new change before"),
+    ("Change", None, Cmd::NewAfter, "Insert new change after"),
+    ("Change", Some('d'), Cmd::Describe, "Describe…"),
+    ("Change", Some('b'), Cmd::Bookmark, "Set branch here…"),
+    ("Change", None, Cmd::Diff, "Show diff (Space)"),
+    ("Change", None, Cmd::FileDiff, "Show diff per file…"),
     (
         "Shape",
-        'S',
+        Some('r'),
+        Cmd::Rebase,
+        "Rebase… (pick destination)",
+    ),
+    ("Shape", None, Cmd::RebaseTrunk, "Rebase on main"),
+    ("Shape", Some('s'), Cmd::Squash, "Squash into parent"),
+    (
+        "Shape",
+        None,
         Cmd::SquashInto,
         "Squash into… (pick destination)",
     ),
-    ("Shape", 'x', Cmd::Split, "Split…"),
-    ("Shape", 'y', Cmd::Duplicate, "Duplicate"),
-    ("Shape", 'v', Cmd::Revert, "Revert onto… (pick destination)"),
-    ("Shape", 'a', Cmd::Abandon, "Abandon…"),
+    ("Shape", Some('x'), Cmd::Split, "Split…"),
+    ("Shape", None, Cmd::Duplicate, "Duplicate"),
     (
         "Shape",
-        'A',
+        None,
+        Cmd::Revert,
+        "Revert onto… (pick destination)",
+    ),
+    ("Shape", Some('a'), Cmd::Abandon, "Abandon…"),
+    (
+        "Shape",
+        None,
         Cmd::AbandonSubtree,
         "Abandon with descendants",
     ),
     (
         "GitHub",
-        'P',
+        Some('c'),
         Cmd::Submit,
         "Create Request (PR) / Update Request (PR)",
     ),
     (
         "GitHub",
-        'M',
+        Some('m'),
         Cmd::Ship,
         "Ship Request (PR) (+ everything below)",
     ),
-    ("GitHub", 'o', Cmd::OpenPr, "Open PR on GitHub"),
+    ("GitHub", Some('o'), Cmd::OpenPr, "Open PR on GitHub"),
     (
         "GitHub",
-        'i',
+        Some('i'),
         Cmd::Interdiff,
         "Interdiff since push / review",
     ),
-    ("GitHub", 'c', Cmd::Cleanup, "Clean up shipped request (PR)"),
-    ("Repo", 'f', Cmd::Fetch, "Fetch (+ safe auto-rebase if on)"),
+    (
+        "GitHub",
+        None,
+        Cmd::Cleanup,
+        "Clean up shipped request (PR)",
+    ),
     (
         "Repo",
-        'p',
+        Some('f'),
+        Cmd::Fetch,
+        "Fetch (+ safe auto-rebase if on)",
+    ),
+    (
+        "Repo",
+        Some('p'),
         Cmd::Push,
         "Push (all branches, deletions included)",
     ),
-    ("Repo", 'u', Cmd::Undo, "Undo last jj operation"),
-    ("Repo", 'U', Cmd::Redo, "Redo"),
-    ("Repo", 'R', Cmd::Refresh, "Refresh"),
+    ("Repo", Some('u'), Cmd::Undo, "Undo last jj operation"),
+    ("Repo", None, Cmd::Redo, "Redo"),
+    ("Repo", None, Cmd::Refresh, "Refresh"),
     (
         "Repo",
-        'T',
+        None,
         Cmd::ToggleAutoRebase,
         "Toggle auto-rebase after fetch",
     ),
-    ("Repo", '?', Cmd::Help, "Help"),
-    ("Repo", 'q', Cmd::Quit, "Quit"),
+    ("Repo", Some('?'), Cmd::Help, "Help"),
+    ("Repo", Some('q'), Cmd::Quit, "Quit"),
 ];
 
 enum Action {
@@ -238,6 +268,8 @@ pub struct App {
     repo: RepoGraph,
     dag: Dag,
     rendered: Rendered,
+    /// Inner width the rows were rendered for (right-aligned metadata).
+    render_width: u16,
     cursor: usize,
     scroll: usize,
     preview_scroll: usize,
@@ -301,13 +333,14 @@ pub fn run(jj: Jj, cfg: Config) -> Result<()> {
         Err(e) => (None, Some(format!("{e:#}"))),
     };
     let dag = Dag::from_repo(&repo);
-    let rendered = render::render(&dag, &HashMap::new(), &HashMap::new());
+    let rendered = render::render(&dag, &HashMap::new(), &HashMap::new(), 0);
     let mut app = App {
         jj,
         cfg,
         repo,
         dag,
         rendered,
+        render_width: 0,
         cursor: 0,
         scroll: 0,
         preview_scroll: 0,
@@ -337,7 +370,8 @@ pub fn run(jj: Jj, cfg: Config) -> Result<()> {
     app.root = app
         .jj
         .workspace_root()
-        .map(|p| p.display().to_string())
+        .ok()
+        .and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()))
         .unwrap_or_default();
     app.cursor = app
         .dag
@@ -434,7 +468,7 @@ impl App {
                 marks.insert(id, Mark::Source);
             }
         }
-        self.rendered = render::render(&self.dag, &self.prs, &marks);
+        self.rendered = render::render(&self.dag, &self.prs, &marks, self.render_width as usize);
         self.update_preview();
     }
 
@@ -527,7 +561,7 @@ impl App {
                     {
                         self.set_message(
                             format!(
-                                "{} commit(s) have shipped PRs — press c to clean up",
+                                "{} commit(s) have shipped PRs — Clean up in the command menu",
                                 shipped.len()
                             ),
                             Color::Magenta,
@@ -667,7 +701,7 @@ impl App {
             if last.trim() == "Nothing changed." {
                 // jj means no bookmark moved; unnamed changes never push.
                 last = "nothing to push — only bookmarks reach the remote; \
-                        P submits this change (bookmark + PR), b names one"
+                        c submits this change (bookmark + PR), b names one"
                     .to_string();
             }
             Ok(Outcome::Message(last))
@@ -708,7 +742,7 @@ impl App {
                 action: Action::Op(_),
             } => {
                 let op = self.current_action_op().expect("op for pick/confirm");
-                let key = format!("{op:?}{}", self.ghosts);
+                let key = format!("{op:?}{}{}", self.ghosts, self.render_width);
                 if self.preview.as_ref().is_some_and(|p| p.key == key) {
                     return;
                 }
@@ -733,7 +767,7 @@ impl App {
             Mode::Confirm {
                 action: Action::Submit(plan),
             } => {
-                let key = format!("submit{}", plan.entries.len());
+                let key = format!("submit{}{}", plan.entries.len(), self.render_width);
                 if self.preview.as_ref().is_some_and(|p| p.key == key) {
                     return;
                 }
@@ -767,7 +801,7 @@ impl App {
             Mode::Confirm {
                 action: Action::Ship { pr, commit_id },
             } => {
-                let key = format!("ship{}", pr.number);
+                let key = format!("ship{}{}", pr.number, self.render_width);
                 if self.preview.as_ref().is_some_and(|p| p.key == key) {
                     return;
                 }
@@ -811,7 +845,9 @@ impl App {
         };
         self.preview = built.map(|(result, focus, commands, title)| PreviewState {
             key,
-            result: result.map(|d| render::render(&d, &self.prs, &HashMap::new())),
+            result: result.map(|d| {
+                render::render(&d, &self.prs, &HashMap::new(), self.render_width as usize)
+            }),
             focus,
             commands,
             title,
@@ -1070,7 +1106,7 @@ impl App {
                 self.rerender();
             }
             Some(pr) => self.set_message(format!("PR #{} is not open", pr.number), Color::Yellow),
-            None => self.set_message("no PR for this commit (P creates one)", Color::Yellow),
+            None => self.set_message("no PR for this commit (c creates one)", Color::Yellow),
         }
     }
 
@@ -1349,7 +1385,7 @@ impl App {
                     let i = state.selected().unwrap_or(0).min(COMMANDS.len() - 1);
                     self.exec(COMMANDS[i].2);
                 }
-                KeyCode::Char(c) => match COMMANDS.iter().find(|x| x.1 == c) {
+                KeyCode::Char(c) => match COMMANDS.iter().find(|x| x.1 == Some(c)) {
                     Some(x) => self.exec(x.2),
                     None => self.mode = Mode::Menu { state },
                 },
@@ -1380,7 +1416,7 @@ impl App {
                     KeyCode::PageDown => target = (target + 10).min(len.saturating_sub(1)),
                     KeyCode::PageUp => target = target.saturating_sub(10),
                     KeyCode::Home | KeyCode::Char('g') => target = 0,
-                    KeyCode::End | KeyCode::Char('G') => target = len.saturating_sub(1),
+                    KeyCode::End => target = len.saturating_sub(1),
                     KeyCode::Char('@') => {
                         target = self
                             .dag
@@ -1412,9 +1448,11 @@ impl App {
                         }
                     }
                     KeyCode::Char('h') => self.ghosts = !self.ghosts,
-                    KeyCode::Char('J') => self.preview_scroll += 1,
-                    KeyCode::Char('K') => {
-                        self.preview_scroll = self.preview_scroll.saturating_sub(1)
+                    KeyCode::Char('d') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.preview_scroll += 5
+                    }
+                    KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.preview_scroll = self.preview_scroll.saturating_sub(5)
                     }
                     _ => {}
                 }
@@ -1431,12 +1469,12 @@ impl App {
                     self.mode = Mode::Confirm { action };
                     self.rerender();
                 }
-                KeyCode::Char('J') => {
-                    self.preview_scroll += 1;
+                KeyCode::Char('d') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.preview_scroll += 5;
                     self.mode = Mode::Confirm { action };
                 }
-                KeyCode::Char('K') => {
-                    self.preview_scroll = self.preview_scroll.saturating_sub(1);
+                KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.preview_scroll = self.preview_scroll.saturating_sub(5);
                     self.mode = Mode::Confirm { action };
                 }
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {
@@ -1581,7 +1619,7 @@ impl App {
             KeyCode::Home | KeyCode::Char('g') => {
                 self.move_cursor(-(self.dag.order.len() as isize))
             }
-            KeyCode::End | KeyCode::Char('G') => self.move_cursor(self.dag.order.len() as isize),
+            KeyCode::End => self.move_cursor(self.dag.order.len() as isize),
             KeyCode::Char('@') => {
                 if let Some(i) = self.dag.wc().and_then(|w| self.index_of(&w)) {
                     self.cursor = i;
@@ -1600,7 +1638,7 @@ impl App {
                 let state = if self.ghosts { "shown" } else { "hidden" };
                 self.set_message(format!("old positions in previews: {state}"), Color::Cyan);
             }
-            KeyCode::Char('L') => {
+            KeyCode::Char('l') => {
                 if let Some(job) = &self.job {
                     let lines = job.log.iter().map(|l| Line::raw(l.clone())).collect();
                     self.mode = Mode::Text {
@@ -1611,7 +1649,7 @@ impl App {
                 }
             }
             KeyCode::Char(c) if !ctrl => {
-                if let Some(x) = COMMANDS.iter().find(|x| x.1 == c) {
+                if let Some(x) = COMMANDS.iter().find(|x| x.1 == Some(c)) {
                     self.exec(x.2);
                 }
             }
@@ -1654,6 +1692,7 @@ impl App {
             Constraint::Min(3),
             Constraint::Length(2),
         ])
+        .spacing(1)
         .areas(area);
         self.draw_toolbar(f, bar);
         let previewing = matches!(self.mode, Mode::Pick { .. } | Mode::Confirm { .. });
@@ -1665,33 +1704,47 @@ impl App {
             let (graph_area, detail_area) = if wide {
                 let [g, d] =
                     Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)])
+                        .spacing(1)
                         .areas(main);
                 (g, d)
             } else {
-                let [g, d] =
-                    Layout::vertical([Constraint::Min(5), Constraint::Length(9)]).areas(main);
+                let [g, d] = Layout::vertical([Constraint::Min(5), Constraint::Length(10)])
+                    .spacing(1)
+                    .areas(main);
                 (g, d)
             };
             let focus = self.selected();
             let title = format!(" Smartlog — {} ", self.root);
+            // Re-render when the pane width changes, so the right-aligned
+            // time / change-id column tracks the pane edge.
+            let inner_w = graph_area.width.saturating_sub(4);
+            if inner_w != self.render_width {
+                self.render_width = inner_w;
+                self.rerender();
+            }
             let scroll = scroll_for(
                 &self.rendered,
                 focus.as_deref(),
-                graph_area.height.saturating_sub(2) as usize,
+                graph_area.height.saturating_sub(3) as usize,
                 self.scroll,
             );
             self.scroll = scroll;
             let p = Paragraph::new(self.rendered.lines.clone())
-                .block(Block::default().borders(Borders::ALL).title(title))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(title)
+                        .padding(Padding::new(1, 1, 1, 0)),
+                )
                 .scroll((scroll as u16, 0));
             f.render_widget(p, graph_area);
             // Remember where each change row landed so clicks can select it.
             self.click_rows = self.rendered.nodes.clone();
             self.click_area = ratatui::layout::Rect {
-                x: graph_area.x + 1,
-                y: graph_area.y + 1,
-                width: graph_area.width.saturating_sub(2),
-                height: graph_area.height.saturating_sub(2),
+                x: graph_area.x + 2,
+                y: graph_area.y + 2,
+                width: graph_area.width.saturating_sub(4),
+                height: graph_area.height.saturating_sub(3),
             };
             self.draw_details(f, detail_area);
         }
@@ -1706,13 +1759,17 @@ impl App {
                 let items: Vec<ListItem> = COMMANDS
                     .iter()
                     .map(|(group, key, _, label)| {
-                        ListItem::new(Line::from(vec![
-                            Span::styled(
-                                format!(" {key} "),
+                        let key_span = match key {
+                            Some(k) => Span::styled(
+                                format!("{k} "),
                                 Style::default()
                                     .fg(Color::Yellow)
                                     .add_modifier(Modifier::BOLD),
                             ),
+                            None => Span::raw("  "),
+                        };
+                        ListItem::new(Line::from(vec![
+                            key_span,
                             Span::raw(label.to_string()),
                             Span::styled(
                                 format!("  {group}"),
@@ -1724,7 +1781,12 @@ impl App {
                 let rect = centered(area, 56, (COMMANDS.len() + 2) as u16);
                 f.render_widget(Clear, rect);
                 let list = List::new(items)
-                    .block(Block::default().borders(Borders::ALL).title(menu_title))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(menu_title)
+                            .padding(Padding::horizontal(1)),
+                    )
                     .highlight_style(
                         Style::default()
                             .bg(Color::Rgb(40, 52, 80))
@@ -1739,7 +1801,7 @@ impl App {
             } => {
                 let list_items: Vec<ListItem> = items
                     .iter()
-                    .map(|(l, _)| ListItem::new(format!(" {l}")))
+                    .map(|(l, _)| ListItem::new(l.clone()))
                     .collect();
                 let rect = centered(area, 70, (items.len() + 2) as u16);
                 f.render_widget(Clear, rect);
@@ -1747,7 +1809,8 @@ impl App {
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title(format!(" {title} ")),
+                            .title(format!(" {title} "))
+                            .padding(Padding::horizontal(1)),
                     )
                     .highlight_style(
                         Style::default()
@@ -1766,7 +1829,8 @@ impl App {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(format!(" {prompt} ")),
+                        .title(format!(" {prompt} "))
+                        .padding(Padding::horizontal(1)),
                 );
                 f.render_widget(p, rect);
             }
@@ -1781,7 +1845,8 @@ impl App {
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title(format!(" {title} — j/k scroll · q close ")),
+                            .title(format!(" {title} — j/k scroll · q close "))
+                            .padding(Padding::horizontal(1)),
                     )
                     .scroll((*scroll as u16, 0));
                 f.render_widget(p, rect);
@@ -1794,7 +1859,8 @@ impl App {
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title(" jj-helper — keys (any other key closes) "),
+                            .title(" jj-helper — keys (any other key closes) ")
+                            .padding(Padding::horizontal(1)),
                     )
                     .scroll((*scroll as u16, 0));
                 f.render_widget(p, rect);
@@ -1811,6 +1877,7 @@ impl App {
             .unwrap_or(0);
         let [panes, info] =
             Layout::vertical([Constraint::Min(5), Constraint::Length(shown as u16 + 4)])
+                .spacing(1)
                 .areas(area);
         let dir = if panes.width >= 120 {
             Direction::Horizontal
@@ -1820,13 +1887,21 @@ impl App {
         let [before, after] = Layout::default()
             .direction(dir)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .spacing(1)
             .areas(panes);
 
         let focus = match &self.mode {
             Mode::Pick { target, .. } => self.dag.order.get(*target).cloned(),
             _ => self.selected(),
         };
-        let h = before.height.saturating_sub(2) as usize;
+        // Re-render when the pane width changes, so the right-aligned
+        // time / change-id column tracks the pane edge.
+        let inner_w = before.width.saturating_sub(4);
+        if inner_w != self.render_width {
+            self.render_width = inner_w;
+            self.rerender();
+        }
+        let h = before.height.saturating_sub(3) as usize;
         let scroll = scroll_for(&self.rendered, focus.as_deref(), h, self.scroll);
         self.scroll = scroll;
         let before_title = match &self.mode {
@@ -1835,13 +1910,18 @@ impl App {
         };
         f.render_widget(
             Paragraph::new(self.rendered.lines.clone())
-                .block(Block::default().borders(Borders::ALL).title(before_title))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(before_title)
+                        .padding(Padding::new(1, 1, 1, 0)),
+                )
                 .scroll((scroll as u16, 0)),
             before,
         );
 
         let Some(preview) = &self.preview else { return };
-        let ah = after.height.saturating_sub(2) as usize;
+        let ah = after.height.saturating_sub(3) as usize;
         match &preview.result {
             Ok(r) => {
                 let base = scroll_for(r, preview.focus.as_deref(), ah, 0);
@@ -1849,12 +1929,15 @@ impl App {
                 f.render_widget(
                     Paragraph::new(r.lines.clone())
                         .block(
-                            Block::default().borders(Borders::ALL).title(Span::styled(
-                                " After (preview) ",
-                                Style::default()
-                                    .fg(Color::Green)
-                                    .add_modifier(Modifier::BOLD),
-                            )),
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title(Span::styled(
+                                    " After (preview) ",
+                                    Style::default()
+                                        .fg(Color::Green)
+                                        .add_modifier(Modifier::BOLD),
+                                ))
+                                .padding(Padding::new(1, 1, 1, 0)),
                         )
                         .scroll((s as u16, 0)),
                     after,
@@ -1862,14 +1945,15 @@ impl App {
             }
             Err(e) => {
                 f.render_widget(
-                    Paragraph::new(vec![
-                        Line::raw(""),
-                        Line::styled(format!("  ✗ {e}"), Style::default().fg(Color::Red)),
-                    ])
+                    Paragraph::new(vec![Line::styled(
+                        format!("✗ {e}"),
+                        Style::default().fg(Color::Red),
+                    )])
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title(Span::styled(" After ", Style::default().fg(Color::Red))),
+                            .title(Span::styled(" After ", Style::default().fg(Color::Red)))
+                            .padding(Padding::new(1, 1, 1, 0)),
                     ),
                     after,
                 );
@@ -1897,10 +1981,12 @@ impl App {
         }
         let hints = match &self.mode {
             Mode::Pick { pick: Pick::Rebase { .. }, .. } => {
-                "Enter run · Tab onto/after/before · s scope (-s/-r/-b) · h old positions · J/K scroll after · Esc cancel"
+                "Enter run · Tab onto/after/before · s scope (-s/-r/-b) · h old positions · Ctrl-d/u scroll after · Esc cancel"
             }
-            Mode::Pick { .. } => "Enter run · j/k choose destination · h old positions · Esc cancel",
-            _ => "Enter/y run · h old positions · J/K scroll after · Esc/n cancel",
+            Mode::Pick { .. } => {
+                "Enter run · j/k choose destination · h old positions · Ctrl-d/u scroll after · Esc cancel"
+            }
+            _ => "Enter/y run · h old positions · Ctrl-d/u scroll after · Esc/n cancel",
         };
         let ok = preview.result.is_ok();
         lines.push(Line::styled(
@@ -1908,15 +1994,17 @@ impl App {
             Style::default().fg(if ok { Color::Yellow } else { Color::Red }),
         ));
         f.render_widget(
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .block(Block::default().borders(Borders::TOP)),
+            Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .padding(Padding::horizontal(1)),
+            ),
             info,
         );
     }
 
-    /// VisualJJ's panel toolbar: Fetch / Push / Undo / Redo / Refresh /
-    /// Help buttons, clickable with the mouse.
+    /// VisualJJ's panel toolbar: Fetch / Push / Undo / Redo / Refresh
+    /// buttons, Help off to the far right, clickable with the mouse.
     fn draw_toolbar(&mut self, f: &mut Frame, area: Rect) {
         const BUTTONS: &[(char, &str, Cmd)] = &[
             ('⇩', "Fetch", Cmd::Fetch),
@@ -1926,24 +2014,53 @@ impl App {
             ('⟳', "Refresh", Cmd::Refresh),
             ('?', "Help", Cmd::Help),
         ];
+        let button_w = |label: &str| label.len() as u16 + 4; // " icon label "
+        let busy = |cmd: Cmd| {
+            self.job.as_ref().is_some_and(|j| !j.background)
+                && matches!(cmd, Cmd::Fetch | Cmd::Push)
+        };
+        // Filled pill: one cell of fill each side, the icon as the accent,
+        // white label — reads as a button, not floating text. While a
+        // foreground command runs, Fetch/Push flatten to disabled text.
+        let push = |spans: &mut Vec<Span<'static>>, icon: char, label: &str, dim: bool| {
+            if dim {
+                spans.push(Span::styled(
+                    format!(" {icon} {label} "),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            } else {
+                let pill = Style::default().bg(Color::Rgb(64, 72, 90));
+                spans.push(Span::styled(" ", pill));
+                spans.push(Span::styled(
+                    icon.to_string(),
+                    pill.fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(format!(" {label} "), pill.fg(Color::White)));
+            }
+        };
         let mut spans: Vec<Span<'static>> = vec![];
         let mut buttons = vec![];
-        let mut x = area.x;
-        for (icon, label, cmd) in BUTTONS {
-            let icon_style = if self.job.is_some() && matches!(cmd, Cmd::Fetch | Cmd::Push) {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            };
-            spans.push(Span::styled(icon.to_string(), icon_style));
-            spans.push(Span::raw(format!(" {label}")));
-            let end = x + 1 + label.len() as u16 + 1;
+        spans.push(Span::raw(" "));
+        let mut x = area.x + 1;
+        // split_last gives (last, rest): Help is the system action parked
+        // at the far right; the rest flow from the left.
+        let (last, head) = BUTTONS.split_last().expect("non-empty buttons");
+        for (icon, label, cmd) in head {
+            push(&mut spans, *icon, label, busy(*cmd));
+            let end = x + button_w(label);
             buttons.push((x, end.saturating_sub(1), *cmd));
             spans.push(Span::raw("  "));
             x = end + 2;
         }
+        let tw = button_w(last.1);
+        let spacer = (area.x + area.width)
+            .saturating_sub(tw + 1)
+            .saturating_sub(x)
+            .max(2);
+        spans.push(Span::raw(" ".repeat(spacer as usize)));
+        x = area.x + area.width - tw - 1;
+        push(&mut spans, last.0, last.1, busy(last.2));
+        buttons.push((x, x + tw - 1, last.2));
         self.toolbar = buttons;
         f.render_widget(Paragraph::new(Line::from(spans)), area);
     }
@@ -1955,21 +2072,24 @@ impl App {
         let mut lines: Vec<Line<'static>> = vec![];
         lines.push(Line::from(vec![
             Span::styled("Change ", Style::default().fg(Color::DarkGray)),
-            Span::styled(c.change_id.clone(), Style::default().fg(Color::Magenta)),
+            Span::styled(c.short_change.clone(), Style::default().fg(Color::Magenta)),
         ]));
         lines.push(Line::from(vec![
             Span::styled("Commit ", Style::default().fg(Color::DarkGray)),
-            Span::styled(c.commit_id.clone(), Style::default().fg(Color::Blue)),
+            Span::styled(self.short(&id), Style::default().fg(Color::Blue)),
         ]));
         lines.push(Line::from(vec![
             Span::styled("Author ", Style::default().fg(Color::DarkGray)),
             Span::raw(format!(
-                "{} <{}> · {}",
+                "{} · {}",
                 c.author_name,
-                c.author_email,
                 relative_time(&c.timestamp)
             )),
         ]));
+        lines.push(Line::styled(
+            format!("  {}", c.author_email),
+            Style::default().fg(Color::DarkGray),
+        ));
         let mut flags = vec![];
         if c.is_wc {
             flags.push("working copy");
@@ -2021,7 +2141,7 @@ impl App {
             }
             if pr.is_open() && pr.head_oid != c.commit_id {
                 lines.push(Line::styled(
-                    "local commit differs from PR head — P to push",
+                    "local commit differs from PR head — c to push",
                     Style::default().fg(Color::Yellow),
                 ));
             }
@@ -2055,7 +2175,7 @@ impl App {
             if !files.trim().is_empty() {
                 lines.push(Line::raw(""));
                 lines.push(Line::styled(
-                    "Files — click a file (or F) for its diff",
+                    "Files — click for a diff",
                     Style::default().fg(Color::DarkGray),
                 ));
                 for l in files.lines().take(40) {
@@ -2067,7 +2187,7 @@ impl App {
                     };
                     // No wrapping: each entry keeps its own screen row, so
                     // mouse clicks can map straight back to the file.
-                    let y = area.y + 1 + lines.len() as u16;
+                    let y = area.y + 2 + lines.len() as u16;
                     if let Some((_, path)) = l.split_once(' ') {
                         file_rows.insert(y, (id.clone(), path.to_string()));
                     }
@@ -2077,7 +2197,12 @@ impl App {
         }
         self.file_rows = file_rows;
         f.render_widget(
-            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Details ")),
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Details ")
+                    .padding(Padding::new(1, 1, 1, 0)),
+            ),
             area,
         );
     }
@@ -2089,12 +2214,14 @@ impl App {
         for job in [&self.job, &self.pr_job].into_iter().flatten() {
             let i = (job.started.elapsed().as_millis() / 100) as usize % spinner.len();
             let last = job.log.last().cloned().unwrap_or_default();
+            spans.push(Span::raw(" "));
             spans.push(Span::styled(
                 format!("{} {} {last}  ", spinner[i], job.title),
                 Style::default().fg(Color::Cyan),
             ));
         }
         if spans.is_empty() {
+            spans.push(Span::raw(" "));
             spans.push(Span::styled(
                 self.message.0.clone(),
                 Style::default().fg(self.message.1),
@@ -2114,28 +2241,34 @@ impl App {
         } else {
             "no GitHub".into()
         };
-        let hints = Line::from(vec![
+        let mut hints = vec![
             Span::styled(" Enter", Style::default().fg(Color::Yellow)),
             Span::raw(" commands  "),
             Span::styled("r", Style::default().fg(Color::Yellow)),
             Span::raw(" rebase  "),
-            Span::styled("s/S", Style::default().fg(Color::Yellow)),
+            Span::styled("s", Style::default().fg(Color::Yellow)),
             Span::raw(" squash  "),
-            Span::styled("P", Style::default().fg(Color::Yellow)),
+            Span::styled("c", Style::default().fg(Color::Yellow)),
             Span::raw(" request  "),
             Span::styled("f/p", Style::default().fg(Color::Yellow)),
             Span::raw(" fetch/push  "),
             Span::styled("?", Style::default().fg(Color::Yellow)),
-            Span::raw(" help  "),
-            Span::styled(
-                format!(
-                    "│ {gh} · {auto} · fetched {} ago",
-                    fmt_dur(self.last_fetch.elapsed())
-                ),
-                Style::default().fg(Color::DarkGray),
+            Span::raw(" help"),
+        ];
+        // Repo state (PRs, auto-fetch) sits at the right edge, clear of
+        // the key hints.
+        let info = Span::styled(
+            format!(
+                "{gh} · {auto} · fetched {} ago ",
+                fmt_dur(self.last_fetch.elapsed())
             ),
-        ]);
-        f.render_widget(Paragraph::new(hints), l2);
+            Style::default().fg(Color::DarkGray),
+        );
+        let used: usize = hints.iter().map(|s| s.width()).sum::<usize>() + info.width();
+        let pad = (l2.width as usize).saturating_sub(used).max(2);
+        hints.push(Span::raw(" ".repeat(pad)));
+        hints.push(info);
+        f.render_widget(Paragraph::new(Line::from(hints)), l2);
     }
 }
 
@@ -2204,10 +2337,11 @@ fn help_lines() -> Vec<Line<'static>> {
                 Style::default().fg(Color::Cyan).bold(),
             ));
         }
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {key:<3}"), Style::default().fg(Color::Yellow)),
-            Span::raw(label.to_string()),
-        ]));
+        let key_span = match key {
+            Some(k) => Span::styled(format!("  {k:<3}"), Style::default().fg(Color::Yellow)),
+            None => Span::raw("     "),
+        };
+        lines.push(Line::from(vec![key_span, Span::raw(label.to_string())]));
     }
     lines.extend([
         Line::raw(""),

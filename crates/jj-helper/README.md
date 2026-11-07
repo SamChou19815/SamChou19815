@@ -13,17 +13,20 @@ the graph opens a **Before / After** view; nothing runs until you press `Enter`.
 destination — rebase, squash into, revert onto, move bookmark — let you move a target cursor while
 the After pane updates live, so you never type revsets.
 
-| Key       | Command                                                                | Key             | Command                        |
-| --------- | ---------------------------------------------------------------------- | --------------- | ------------------------------ |
-| `r`       | rebase… (`Tab`: onto / insert after / before, `s`: `-s` / `-r` / `-b`) | `e`             | edit                           |
-| `t`       | rebase on main                                                         | `n` / `N` / `I` | new change here / insert       |
-| `s` / `S` | squash into parent / into…                                             | `d`             | describe (`Ctrl-E`: `$EDITOR`) |
-| `x`       | split…                                                                 | `b`             | set branch here…               |
-| `a` / `A` | abandon… / with descendants                                            | `y` / `v`       | duplicate / revert onto…       |
-| `P`       | Create Request (PR) / Update Request (PR)                              | `M`             | Ship Request (PR) (+ below)    |
-| `i`       | interdiff since push / review                                          | `c`             | clean up shipped request (PR)  |
-| `f` / `p` | fetch / push (all branches)                                            | `u` / `U`       | undo / redo                    |
-| `Space`   | diff                                                                   | `?`             | help                           |
+| Key       | Command                                                                | Key | Command                        |
+| --------- | ---------------------------------------------------------------------- | --- | ------------------------------ |
+| `r`       | rebase… (`Tab`: onto / insert after / before, `s`: `-s` / `-r` / `-b`) | `e` | edit                           |
+| `s`       | squash into parent                                                     | `n` | new change here                |
+| `x`       | split…                                                                 | `d` | describe (`Ctrl-E`: `$EDITOR`) |
+| `a`       | abandon…                                                               | `b` | set branch here…               |
+| `c`       | Create Request (PR) / Update Request (PR)                              | `m` | Ship Request (PR) (+ below)    |
+| `o`       | open PR on GitHub                                                      | `i` | interdiff since push / review  |
+| `f` / `p` | fetch / push (all branches)                                            | `u` | undo                           |
+| `Space`   | diff                                                                   | `?` | help                           |
+
+Everything else — insert change before/after, squash into…, duplicate, revert onto…,
+abandon with descendants, redo, clean up shipped requests, refresh — lives in the
+`Enter` command menu, with no single-key shortcut of its own.
 
 ## GitHub
 
