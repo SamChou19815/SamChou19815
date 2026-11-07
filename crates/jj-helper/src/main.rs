@@ -312,9 +312,14 @@ pub fn plain_graph(dag: &Dag, prs: &HashMap<String, github::PrInfo>) -> String {
     let mut out = String::new();
     for l in graph::layout(dag) {
         let n = &dag.nodes[&l.owner];
+        // One VisualJJ-style line per change: pills, then the description,
+        // then the change-id chip.
         let text = match l.kind {
             graph::Kind::Node => {
-                let mut parts = vec![n.commit.short_change.clone()];
+                let mut parts = vec![];
+                if n.commit.is_wc {
+                    parts.push("You are here · editing".to_string());
+                }
                 parts.extend(n.commit.bookmarks.iter().cloned());
                 let pr = n.commit.bookmarks.iter().filter_map(|b| prs.get(b)).next();
                 if let Some(pr) = pr {
@@ -324,19 +329,17 @@ pub fn plain_graph(dag: &Dag, prs: &HashMap<String, github::PrInfo>) -> String {
                     }
                     parts.push(badge);
                 }
-                parts.push(n.commit.short_commit.clone());
+                parts.push(if n.commit.title().is_empty() {
+                    "Describe…".to_string()
+                } else {
+                    n.commit.title().to_string()
+                });
+                parts.push(tui::render::relative_time(&n.commit.timestamp));
+                parts.push(n.commit.short_change.clone());
                 if let Some(note) = &n.note {
                     parts.push(format!("◀ {note}"));
                 }
                 parts.join(" ")
-            }
-            graph::Kind::Detail => {
-                let t = n.commit.title();
-                if t.is_empty() {
-                    "(no description set)".to_string()
-                } else {
-                    t.to_string()
-                }
             }
             graph::Kind::Connector => String::new(),
         };

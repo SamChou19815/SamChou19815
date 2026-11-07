@@ -25,6 +25,8 @@ pub struct Rendered {
     pub lines: Vec<Line<'static>>,
     /// First line index of each node.
     pub node_line: HashMap<String, usize>,
+    /// Change rows by line index, for mouse hit-testing.
+    pub nodes: HashMap<u16, String>,
 }
 
 pub fn relative_time(ts: &str) -> String {
@@ -101,7 +103,7 @@ pub fn pr_for<'a>(n: &Node, prs: &'a HashMap<String, PrInfo>) -> Option<&'a PrIn
 pub fn pr_badge(pr: &PrInfo) -> Vec<Span<'static>> {
     let mut spans = vec![];
     let (label, color) = match (pr.state, pr.draft) {
-        (PrState::Merged, _) => (format!("#{} merged", pr.number), Color::Magenta),
+        (PrState::Merged, _) => (format!("#{} shipped", pr.number), Color::Magenta),
         (PrState::Closed, _) => (format!("#{} closed", pr.number), Color::Red),
         (PrState::Open, true) => (format!("#{} draft", pr.number), Color::Gray),
         (PrState::Open, false) => (format!("#{}", pr.number), Color::Green),
@@ -133,19 +135,89 @@ pub fn pr_badge(pr: &PrInfo) -> Vec<Span<'static>> {
     spans
 }
 
+/// One VisualJJ-style row: pills (You are here, branches, PR) first, the
+/// description as the primary text, then the time and the change-id chip.
 fn node_line_spans(n: &Node, prs: &HashMap<String, PrInfo>) -> Vec<Span<'static>> {
     let c = &n.commit;
     let faded = is_faded(n.preview);
     let mut spans = vec![];
-    let prefix_len = c.change_prefix_len.min(c.short_change.len());
-    if c.short_change == "(new)" {
+    if c.is_wc {
+        spans.push(Span::raw(" "));
         spans.push(Span::styled(
-            "(new)",
+            "You are here · editing",
             Style::default()
-                .fg(Color::Green)
+                .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ));
+    }
+    // Branch pills (VisualJJ renders them blue).
+    for b in &c.bookmarks {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            b.clone(),
+            Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    // Remote bookmarks without a same-named local one (others' branches).
+    for rb in &c.remote_bookmarks {
+        let name = rb.split('@').next().unwrap_or(rb);
+        if !c.bookmarks.iter().any(|b| b == name) {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                rb.clone(),
+                Style::default().fg(Color::Blue).add_modifier(Modifier::DIM),
+            ));
+        }
+    }
+    for t in &c.tags {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(t.clone(), Style::default().fg(Color::Yellow)));
+    }
+    if !faded {
+        if let Some(pr) = pr_for(n, prs) {
+            spans.push(Span::raw(" "));
+            spans.extend(pr_badge(pr));
+        }
+    }
+    // The description is the primary text; an undescribed change gets
+    // VisualJJ's inline "Describe" affordance.
+    spans.push(Span::raw(" "));
+    if c.title().is_empty() {
+        spans.push(Span::styled(
+            "Describe…",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::DIM),
+        ));
     } else {
+        let mut title = String::new();
+        if c.empty && n.preview != Some(Preview::New) {
+            title.push_str("(empty) ");
+        }
+        title.push_str(c.title());
+        spans.push(Span::styled(
+            title,
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+    }
+    if c.conflict {
+        spans.push(" conflict".red().bold());
+    }
+    if c.divergent {
+        spans.push(" divergent".red());
+    }
+    let when = relative_time(&c.timestamp);
+    if !when.is_empty() {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(when, Style::default().fg(Color::Cyan)));
+    }
+    // Change-id chip at the end of the row; author and commit hash stay in
+    // the details pane, like VisualJJ.
+    if c.short_change != "(new)" {
+        let prefix_len = c.change_prefix_len.min(c.short_change.len());
+        spans.push(Span::raw(" "));
         spans.push(Span::styled(
             c.short_change[..prefix_len].to_string(),
             Style::default()
@@ -156,92 +228,21 @@ fn node_line_spans(n: &Node, prs: &HashMap<String, PrInfo>) -> Vec<Span<'static>
             c.short_change[prefix_len..].to_string(),
             Style::default().fg(Color::DarkGray),
         ));
-    }
-    if !c.author_email.is_empty() {
-        let who = c.author_email.split('@').next().unwrap_or("").to_string();
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(who, Style::default().fg(Color::Yellow)));
-    }
-    let when = relative_time(&c.timestamp);
-    if !when.is_empty() {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(when, Style::default().fg(Color::Cyan)));
-    }
-    for b in &c.bookmarks {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(b.clone(), Style::default().fg(Color::Magenta)));
-    }
-    // Remote bookmarks without a same-named local one (others' branches).
-    for rb in &c.remote_bookmarks {
-        let name = rb.split('@').next().unwrap_or(rb);
-        if !c.bookmarks.iter().any(|b| b == name) {
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                rb.clone(),
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::DIM),
-            ));
-        }
-    }
-    for t in &c.tags {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(t.clone(), Style::default().fg(Color::Yellow)));
-    }
-    for w in &c.working_copies {
+    } else {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
-            format!("{w}@"),
-            Style::default().fg(Color::Green),
+            "(new)",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ));
     }
-    if !faded {
-        if let Some(pr) = pr_for(n, prs) {
-            spans.push(Span::raw(" "));
-            spans.extend(pr_badge(pr));
-        }
-    }
-    if !c.short_commit.is_empty() {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(
-            c.short_commit.clone(),
-            Style::default().fg(Color::Blue),
-        ));
-    }
-    if c.conflict {
-        spans.push(" conflict".red().bold());
-    }
-    if c.divergent {
-        spans.push(" divergent".red());
+    if c.is_wc {
+        spans.push(Span::styled("@", Style::default().fg(Color::Magenta)));
     }
     if faded {
         for s in &mut spans {
             s.style = s.style.add_modifier(Modifier::DIM);
-        }
-    }
-    spans
-}
-
-fn detail_spans(n: &Node) -> Vec<Span<'static>> {
-    let c = &n.commit;
-    let mut spans = vec![];
-    if c.empty && n.preview != Some(Preview::New) {
-        spans.push(Span::styled("(empty) ", Style::default().fg(Color::Green)));
-    }
-    if c.title().is_empty() {
-        spans.push(Span::styled(
-            "(no description set)",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::DIM),
-        ));
-    } else {
-        spans.push(Span::raw(c.title().to_string()));
-    }
-    let style = preview_style(n.preview);
-    if is_faded(n.preview) {
-        for s in &mut spans {
-            s.style = s.style.patch(style);
         }
     }
     spans
@@ -253,13 +254,15 @@ fn glyph_style(n: &Node) -> Style {
     }
     let c = &n.commit;
     if c.is_wc {
+        // VisualJJ's working-copy node is a filled blue circle.
         Style::default()
-            .fg(Color::Green)
+            .fg(Color::Blue)
             .add_modifier(Modifier::BOLD)
     } else if c.conflict {
         Style::default().fg(Color::Red)
     } else if c.immutable {
-        Style::default().fg(Color::Cyan)
+        // VisualJJ's trunk diamond is green.
+        Style::default().fg(Color::Green)
     } else {
         Style::default()
     }
@@ -293,13 +296,6 @@ pub fn render(dag: &Dag, prs: &HashMap<String, PrInfo>, marks: &HashMap<String, 
                     spans.push(Span::styled(format!("◀ {note}"), st));
                 }
             }
-            (Kind::Detail, _) => {
-                spans.push(Span::styled(
-                    l.graph.clone(),
-                    Style::default().fg(Color::DarkGray),
-                ));
-                spans.extend(detail_spans(n));
-            }
             _ => {
                 node_line.entry(l.owner.clone()).or_insert(i);
                 spans.push(Span::styled(
@@ -322,12 +318,18 @@ pub fn render(dag: &Dag, prs: &HashMap<String, PrInfo>, marks: &HashMap<String, 
     }
     // Node line index should point at the node line itself, not a merge
     // connector preceding it.
+    let mut nodes = HashMap::new();
     for (i, l) in laid.iter().enumerate() {
         if l.kind == Kind::Node {
             node_line.insert(l.owner.clone(), i);
+            nodes.insert(i as u16, l.owner.clone());
         }
     }
-    Rendered { lines, node_line }
+    Rendered {
+        lines,
+        node_line,
+        nodes,
+    }
 }
 
 /// Diff text with git-style coloring.

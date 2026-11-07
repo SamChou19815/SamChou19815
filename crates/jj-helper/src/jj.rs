@@ -397,6 +397,34 @@ impl Jj {
         }
     }
 
+    /// One file's diff inside a revision (stat + git format), for the
+    /// details pane's per-file diff view.
+    pub fn file_diff_text(&self, rev: &str, path: &str) -> Result<String> {
+        let stat = self
+            .run(&[
+                "diff",
+                "--ignore-working-copy",
+                "-r",
+                rev,
+                "--stat",
+                "--",
+                path,
+            ])?
+            .stdout;
+        let diff = self
+            .run(&[
+                "diff",
+                "--ignore-working-copy",
+                "-r",
+                rev,
+                "--git",
+                "--",
+                path,
+            ])?
+            .stdout;
+        Ok(format!("{stat}\n{diff}"))
+    }
+
     pub fn diff_text(&self, rev: &str) -> Result<String> {
         let stat = self
             .run(&["diff", "--ignore-working-copy", "-r", rev, "--stat"])?

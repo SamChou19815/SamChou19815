@@ -1,13 +1,12 @@
 //! Lane-based layout of a [`Dag`] into text lines with box-drawing edges,
-//! in the spirit of `jj log`'s graph. Each commit gets a node line and a
-//! detail line; connector lines are inserted where lanes merge or fork.
+//! in the spirit of `jj log`'s graph — one line per change, like VisualJJ's
+//! rows; connector lines are inserted where lanes merge or fork.
 
 use crate::dag::{Dag, Node, Preview};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Node,
-    Detail,
     Connector,
 }
 
@@ -141,9 +140,11 @@ fn glyph(d: &Dirs) -> char {
 
 pub fn node_glyph(n: &Node) -> char {
     match n.preview {
+        // VisualJJ's node icons: filled circle for the working copy, green
+        // diamond for immutable, open circle for everything else.
         Some(Preview::Ghost) | Some(Preview::SquashSource) => '◌',
         Some(Preview::Hidden) => '⊘',
-        _ if n.commit.is_wc => '@',
+        _ if n.commit.is_wc => '●',
         Some(Preview::New) => '+',
         _ if n.commit.conflict => '×',
         _ if n.commit.immutable => '◆',
@@ -251,24 +252,24 @@ pub fn layout(dag: &Dag) -> Vec<Line> {
             forks.push(k);
         }
 
-        let mut g = Grid::new(lanes.len());
-        for (i, dashed) in occupied(&lanes) {
-            if !forks.contains(&i) {
-                g.vert(i, dashed);
+        // The history continues past the cut: a `~` row under the node.
+        if node.parents.is_empty() && node.truncated {
+            let mut g = Grid::new(lanes.len());
+            for (i, dashed) in occupied(&lanes) {
+                if !forks.contains(&i) {
+                    g.vert(i, dashed);
+                }
             }
-        }
-        let show_tilde = node.parents.is_empty() && node.truncated;
-        if show_tilde {
             g.ensure(col);
             g.tilde = Some(col);
+            let (graph, _) = g.render();
+            lines.push(Line {
+                owner: id.clone(),
+                kind: Kind::Connector,
+                graph,
+                node_at: None,
+            });
         }
-        let (graph, _) = g.render();
-        lines.push(Line {
-            owner: id.clone(),
-            kind: Kind::Detail,
-            graph,
-            node_at: None,
-        });
 
         if !forks.is_empty() || !joins.is_empty() {
             let mut g = Grid::new(lanes.len());
@@ -327,10 +328,9 @@ mod tests {
             ("T", &[]),
         ]);
         let out = render(&d);
-        assert_eq!(
-            out, "@ c\n│\n○ b\n│\n○ a\n│\n│ ○ x\n│ │\n├─╯\n◆ T",
-            "\n{out}"
-        );
+        // One line per change (VisualJJ-style rows), connectors only where
+        // lanes merge or fork.
+        assert_eq!(out, "● c\n○ b\n○ a\n│ ○ x\n├─╯\n◆ T", "\n{out}");
     }
 
     #[test]
