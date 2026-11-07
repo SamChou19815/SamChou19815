@@ -29,7 +29,8 @@ pub struct Config {
     pub revset: String,
     pub remote: String,
     pub submit: SubmitOptions,
-    pub merge_method: String,
+    /// `None`: use the viewer's GitHub default, like VisualJJ's ship-pr.
+    pub merge_method: Option<String>,
     pub auto_fetch: Option<Duration>,
     pub auto_rebase: bool,
     pub refresh: Option<Duration>,
@@ -95,7 +96,7 @@ const COMMANDS: &[(&str, char, Cmd, &str)] = &[
         Cmd::AbandonSubtree,
         "Abandon with descendants",
     ),
-    ("GitHub", 'P', Cmd::Submit, "Create / update stacked PRs"),
+    ("GitHub", 'P', Cmd::Submit, "Create / update request (PR)"),
     (
         "GitHub",
         'M',
@@ -111,7 +112,7 @@ const COMMANDS: &[(&str, char, Cmd, &str)] = &[
     ),
     ("GitHub", 'c', Cmd::Cleanup, "Clean up shipped commits"),
     ("Repo", 'f', Cmd::Fetch, "Fetch (+ safe auto-rebase if on)"),
-    ("Repo", 'p', Cmd::Push, "Push this stack's bookmarks"),
+    ("Repo", 'p', Cmd::Push, "Push all bookmarks (VisualJJ Push)"),
     ("Repo", 'u', Cmd::Undo, "Undo last jj operation"),
     ("Repo", 'U', Cmd::Redo, "Redo"),
     ("Repo", 'R', Cmd::Refresh, "Refresh"),
@@ -595,6 +596,44 @@ impl App {
         }));
     }
 
+    /// VisualJJ's Push button: `jj branching push --all`, with its
+    /// "Refusing to push: GitHub would act on open PRs" judgement when
+    /// native stacks are on (the protection doesn't run when they're off).
+    fn push_all(&mut self) {
+        // The "GitHub would act on open PRs" judgement only runs while
+        // native stacks are on (VisualJJ skips it when they're off).
+        let gh = self.gh.clone().filter(|_| self.cfg.submit.native_stack);
+        let op = Op::Push {
+            remote: self.cfg.remote.clone(),
+        };
+        let cmds = op.commands(&self.dag);
+        let title = op.title(&self.dag);
+        let jj = self.jj.clone();
+        let remote = self.cfg.remote.clone();
+        self.mode = Mode::Normal;
+        self.job = Some(spawn_job(title, false, move |log| {
+            if let Some(gh) = &gh {
+                stack::push_all_safety(&jj, gh, &remote, log)?;
+            }
+            let mut last = String::new();
+            for cmd in cmds {
+                log(format!("$ jj {}", shell_join(&cmd)));
+                let out = jj.run(&cmd)?;
+                last = out.summary();
+                for l in last.lines() {
+                    log(l.to_string());
+                }
+            }
+            if last.trim() == "Nothing changed." {
+                // jj means no bookmark moved; unnamed changes never push.
+                last = "nothing to push — only bookmarks reach the remote; \
+                        P submits this change (bookmark + PR), b names one"
+                    .to_string();
+            }
+            Ok(Outcome::Message(last))
+        }));
+    }
+
     fn shipped_commits(&self) -> Vec<String> {
         self.dag
             .order
@@ -662,7 +701,9 @@ impl App {
                 for e in &plan.entries {
                     if d.get(&e.commit.commit_id).is_some() {
                         d.annotate(&e.commit.commit_id, Preview::Submit, plan.note_for(e));
-                        if e.set_bookmark {
+                        if matches!(e.action, stack::Action::Create { .. })
+                            && !e.commit.bookmarks.contains(&e.bookmark)
+                        {
                             if let Some(n) = d.nodes.get_mut(&e.commit.commit_id) {
                                 n.commit.bookmarks.push(e.bookmark.clone());
                             }
@@ -670,16 +711,18 @@ impl App {
                     }
                 }
                 let focus = plan.entries.last().map(|e| e.commit.commit_id.clone());
-                let title = format!("Submit {} PR(s) as a stack", plan.entries.len());
-                (
-                    key,
-                    Some((
-                        Ok(d),
-                        focus,
-                        plan.describe(self.cfg.submit.native_stack),
-                        title,
-                    )),
-                )
+                let n = plan.entries.len();
+                let title = if n == 1 {
+                    match &plan.entries[0].action {
+                        stack::Action::Create { .. } => "Create request (PR)".to_string(),
+                        stack::Action::Update { number } => {
+                            format!("Update request (PR #{number})")
+                        }
+                    }
+                } else {
+                    format!("Submit {n} change(s), bottom first")
+                };
+                (key, Some((Ok(d), focus, plan.commands(), title)))
             }
             Mode::Confirm {
                 action: Action::Ship { pr, commit_id },
@@ -712,7 +755,10 @@ impl App {
                 let title = format!(
                     "Ship PR #{} via merge-async ({}){}",
                     pr.number,
-                    self.cfg.merge_method,
+                    self.cfg
+                        .merge_method
+                        .as_deref()
+                        .unwrap_or("your GitHub default merge method"),
                     if lines.len() > 1 {
                         format!(", including {} PRs below it", lines.len() - 1)
                     } else {
@@ -882,13 +928,7 @@ impl App {
                 }
             }
             Cmd::Fetch => self.start_fetch(false),
-            Cmd::Push => {
-                let op = Op::Push {
-                    revset: format!("trunk()..({rev})"),
-                    remote: self.cfg.remote.clone(),
-                };
-                self.run_op(op);
-            }
+            Cmd::Push => self.push_all(),
             Cmd::Undo => self.run_op(Op::Undo),
             Cmd::Redo => self.run_op(Op::Redo),
             Cmd::Refresh => {
@@ -916,17 +956,23 @@ impl App {
         let jj = self.jj.clone();
         let rev = rev.to_string();
         let trunk = self.trunk_branch.clone();
-        self.job = Some(spawn_job("planning PR stack", false, move |_| {
-            let commits = stack::stack_commits(&jj, &rev)?;
-            let mut branches: Vec<String> =
-                commits.iter().flat_map(|c| c.bookmarks.clone()).collect();
-            branches.extend(
-                commits
-                    .iter()
-                    .map(|c| stack::default_bookmark(&c.change_id)),
-            );
+        let remote = self.cfg.remote.clone();
+        self.job = Some(spawn_job("planning PR", false, move |_| {
+            // One VisualJJ submit per change: create the PR for this change,
+            // or push updates if it already has one.
+            let commits = jj.log_commits(&rev)?;
+            let [commit] = commits.as_slice() else {
+                anyhow::bail!("{rev} must resolve to exactly one commit")
+            };
+            let mut branches = commit.bookmarks.clone();
+            branches.push(stack::default_bookmark(&commit.change_id));
             let prs = gh.prs_for_branches(&branches)?;
-            Ok(Outcome::Plan(Box::new(stack::plan(commits, &prs, &trunk))))
+            Ok(Outcome::Plan(Box::new(stack::plan(
+                vec![commit.clone()],
+                &prs,
+                &trunk,
+                &remote,
+            )?)))
         }));
     }
 
@@ -1070,10 +1116,9 @@ impl App {
                 let gh = self.gh.clone().expect("gh present for submit");
                 let jj = self.jj.clone();
                 let opts = self.cfg.submit.clone();
-                self.job = Some(spawn_job("submit PR stack", false, move |log| {
-                    let numbers = stack::execute(&jj, &gh, &plan, &opts, log)?;
-                    let list: Vec<String> = numbers.iter().map(|n| format!("#{n}")).collect();
-                    Ok(Outcome::Message(format!("PRs {}", list.join(" ← "))))
+                self.job = Some(spawn_job("submit PR", false, move |log| {
+                    let lines = stack::execute(&jj, &gh, &plan, &opts, log)?;
+                    Ok(Outcome::Message(lines.join(", ")))
                 }));
             }
             Action::Ship { pr, commit_id } => {
@@ -1086,6 +1131,12 @@ impl App {
                     format!("ship #{}", pr.number),
                     false,
                     move |log| {
+                        // No explicit method: the viewer's GitHub default,
+                        // like VisualJJ's ship-pr.
+                        let method = match method {
+                            Some(m) => m,
+                            None => gh.viewer_default_merge_method()?.to_lowercase(),
+                        };
                         Ok(Outcome::Message(stack::ship(
                             &jj, &gh, &pr, &commit, &method, &remote, log,
                         )?))

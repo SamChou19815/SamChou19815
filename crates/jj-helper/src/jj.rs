@@ -378,6 +378,25 @@ impl Jj {
         "main".to_string()
     }
 
+    /// A boolean jj config value, if set (VisualJJ's stacking settings live
+    /// in the repo config, e.g. `visualjj.stacking-github-stacks`).
+    pub fn config_bool(&self, key: &str) -> Option<bool> {
+        let out = self
+            .command()
+            .args(["config", "get", key])
+            .stdin(Stdio::null())
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        match String::from_utf8_lossy(&out.stdout).trim() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }
+    }
+
     pub fn diff_text(&self, rev: &str) -> Result<String> {
         let stat = self
             .run(&["diff", "--ignore-working-copy", "-r", rev, "--stat"])?

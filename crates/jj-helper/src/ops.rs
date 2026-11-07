@@ -106,9 +106,9 @@ pub enum Op {
     },
     Undo,
     Redo,
-    /// Push every bookmark on `revset`.
+    /// Push every bookmark, deletions included — VisualJJ's Push button
+    /// (`jj branching push --all`).
     Push {
-        revset: String,
         remote: String,
     },
 }
@@ -202,9 +202,7 @@ impl Op {
             }
             Op::Undo => vec![s(&["undo"])],
             Op::Redo => vec![s(&["redo"])],
-            Op::Push { revset, remote } => {
-                vec![s(&["git", "push", "--remote", remote, "-r", revset])]
-            }
+            Op::Push { remote } => vec![s(&["git", "push", "--remote", remote, "--all"])],
         }
     }
 
@@ -293,7 +291,7 @@ impl Op {
             Op::Cleanup { shipped, .. } => format!("Clean up {} shipped commit(s)", shipped.len()),
             Op::Undo => "Undo last operation".into(),
             Op::Redo => "Redo".into(),
-            Op::Push { remote, .. } => format!("Push this stack's bookmarks to {remote}"),
+            Op::Push { remote } => format!("Push all bookmarks to {remote}"),
         }
     }
 }
@@ -407,5 +405,17 @@ mod tests {
             s(&["rebase", "-s", "children(a) ~ (a)", "-o", "T"])
         );
         assert_eq!(cmds[1], s(&["abandon", "a"]));
+    }
+
+    #[test]
+    fn push_is_visualjjs_push_all() {
+        let d = graph(&[("a", &["T"]), ("T", &[])]);
+        let op = Op::Push {
+            remote: "origin".into(),
+        };
+        assert_eq!(
+            op.commands(&d),
+            vec![s(&["git", "push", "--remote", "origin", "--all"])]
+        );
     }
 }
