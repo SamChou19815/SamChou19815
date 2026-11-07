@@ -1,6 +1,6 @@
 //! jj-helper: a terminal take on VisualJJ. Shape commits visually (every
 //! rebase/squash/abandon is previewed as an after-graph before it runs) and
-//! drive GitHub stacked PRs, including GitHub's native PR stacks.
+//! drive GitHub (stacked) PRs the way VisualJJ's `jj branching` commands do.
 
 mod dag;
 mod github;
@@ -46,21 +46,32 @@ struct Cli {
     )]
     remote: String,
 
-    /// Don't link PRs into a GitHub native stack (keeps plain base-chained PRs).
-    #[arg(long, global = true, env = "JJ_HELPER_NO_NATIVE_STACK")]
+    /// Link PRs into a GitHub native stack (overrides the repo's
+    /// `visualjj.stacking-github-stacks`).
+    #[arg(long, global = true, overrides_with = "no_native_stack")]
+    native_stack: bool,
+
+    /// Don't link PRs into a GitHub native stack (overrides the repo's
+    /// `visualjj.stacking-github-stacks`).
+    #[arg(long, global = true, overrides_with = "native_stack")]
     no_native_stack: bool,
 
+    /// Write the stack list into PR descriptions (overrides the repo's
+    /// `visualjj.stacking-update-description`).
+    #[arg(long, global = true, overrides_with = "no_stack_info")]
+    stack_info: bool,
+
     /// Don't write the stack list into PR descriptions.
-    #[arg(long, global = true)]
-    no_stack_footer: bool,
+    #[arg(long, global = true, overrides_with = "stack_info")]
+    no_stack_info: bool,
 
     /// Open new PRs as drafts.
     #[arg(long, global = true)]
     draft: bool,
 
-    /// Merge method used when shipping.
-    #[arg(long, global = true, value_enum, default_value_t = MergeMethod::Squash, env = "JJ_HELPER_MERGE_METHOD")]
-    merge_method: MergeMethod,
+    /// Merge method used when shipping (defaults to your GitHub default).
+    #[arg(long, global = true, value_enum, env = "JJ_HELPER_MERGE_METHOD")]
+    merge_method: Option<MergeMethod>,
 
     /// Fetch automatically every N minutes in the TUI (0 disables).
     #[arg(long, default_value_t = 5, env = "JJ_HELPER_AUTO_FETCH")]
@@ -96,19 +107,36 @@ impl MergeMethod {
     }
 }
 
+fn flag_or(left: bool, right: bool) -> Option<bool> {
+    match (left, right) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Interactive TUI (default).
     Tui,
     /// Print the commit graph with PR status.
     Log,
-    /// Create/update one PR per commit from trunk to REV and link them as a stack.
+    /// Create/update the PR for REV (VisualJJ's Create/Update Request).
     Submit {
         #[arg(default_value = "@")]
         rev: String,
+        /// Submit every change from trunk to REV, bottom up.
+        #[arg(long)]
+        stack: bool,
         /// Only print the plan.
         #[arg(long)]
         dry_run: bool,
+        /// Title for the PR (defaults to the description's first line).
+        #[arg(long)]
+        title: Option<String>,
+        /// Create the bookmark with this exact name.
+        #[arg(long)]
+        new_bookmark: Option<String>,
     },
     /// Merge REV's PR (and everything below it in its stack) via merge-async.
     Ship {
@@ -125,12 +153,13 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let jj = Jj::new(cli.repository.clone());
-    let submit = SubmitOptions {
-        remote: cli.remote.clone(),
-        native_stack: !cli.no_native_stack,
-        footer: !cli.no_stack_footer,
-        draft: cli.draft,
-    };
+    let submit = SubmitOptions::resolve(
+        &jj,
+        cli.remote.clone(),
+        flag_or(cli.native_stack, cli.no_native_stack),
+        flag_or(cli.stack_info, cli.no_stack_info),
+        cli.draft,
+    );
     match cli.command.unwrap_or(Command::Tui) {
         Command::Tui => {
             let minutes = |m: u64| (m > 0).then(|| Duration::from_secs(m * 60));
@@ -141,7 +170,7 @@ fn main() -> Result<()> {
                     revset: cli.revisions,
                     remote: cli.remote,
                     submit,
-                    merge_method: cli.merge_method.as_str().to_string(),
+                    merge_method: cli.merge_method.map(|m| m.as_str().to_string()),
                     auto_fetch: minutes(cli.auto_fetch),
                     auto_rebase: cli.auto_rebase,
                     refresh: secs(cli.refresh),
@@ -149,9 +178,25 @@ fn main() -> Result<()> {
             )
         }
         Command::Log => print_log(&jj, &cli.revisions, &cli.remote),
-        Command::Submit { rev, dry_run } => {
+        Command::Submit {
+            rev,
+            stack,
+            dry_run,
+            title,
+            new_bookmark,
+        } => {
             let gh = GitHub::for_remote(&jj, &cli.remote)?;
-            let commits = stack::stack_commits(&jj, &rev)?;
+            let trunk = jj.trunk_branch();
+            let commits = if stack {
+                stack_commits(&jj, &rev)?
+            } else {
+                let commits = jj.log_commits(&rev)?;
+                match commits.len() {
+                    1 => commits,
+                    0 => bail!("{rev} resolved to nothing"),
+                    _ => bail!("{rev} must resolve to exactly one commit"),
+                }
+            };
             let mut branches: Vec<String> =
                 commits.iter().flat_map(|c| c.bookmarks.clone()).collect();
             branches.extend(
@@ -160,20 +205,43 @@ fn main() -> Result<()> {
                     .map(|c| stack::default_bookmark(&c.change_id)),
             );
             let prs = gh.prs_for_branches(&branches)?;
-            let plan = stack::plan(commits, &prs, &jj.trunk_branch());
-            for l in plan.describe(submit.native_stack) {
+            let mut plan = stack::plan(commits, &prs, &trunk, &cli.remote)?;
+            if let (Some(title), Some(e)) = (title.as_deref(), plan.entries.last_mut()) {
+                if let stack::Action::Create { title: t, .. } = &mut e.action {
+                    *t = title.to_string();
+                }
+            }
+            if let (Some(name), Some(e)) = (new_bookmark.as_deref(), plan.entries.last_mut()) {
+                if let stack::Action::Create {
+                    new_bookmark: n, ..
+                } = &mut e.action
+                {
+                    *n = Some(name.to_string());
+                    e.bookmark = name.to_string();
+                }
+            }
+            for l in plan.describe() {
                 println!("{l}");
+            }
+            for c in plan.commands() {
+                println!("  {c}");
             }
             if dry_run {
                 return Ok(());
             }
             let numbers = stack::execute(&jj, &gh, &plan, &submit, &mut |l| eprintln!("{l}"))?;
-            let list: Vec<String> = numbers.iter().map(|n| format!("#{n}")).collect();
-            println!("PRs (bottom first): {}", list.join(" ← "));
+            for n in &numbers {
+                println!("{n}");
+            }
             Ok(())
         }
         Command::Ship { rev } => {
             let gh = GitHub::for_remote(&jj, &cli.remote)?;
+            let method = match cli.merge_method {
+                Some(m) => m.as_str().to_string(),
+                // VisualJJ ships with the viewer's default merge method.
+                None => gh.viewer_default_merge_method()?.to_lowercase(),
+            };
             let commits = jj.log_commits(&rev)?;
             let [commit] = commits.as_slice() else {
                 bail!("{rev} must resolve to exactly one commit")
@@ -187,15 +255,9 @@ fn main() -> Result<()> {
             else {
                 bail!("no open PR for {}", commit.short_change);
             };
-            let msg = stack::ship(
-                &jj,
-                &gh,
-                pr,
-                commit,
-                cli.merge_method.as_str(),
-                &cli.remote,
-                &mut |l| eprintln!("{l}"),
-            )?;
+            let msg = stack::ship(&jj, &gh, pr, commit, &method, &cli.remote, &mut |l| {
+                eprintln!("{l}")
+            })?;
             println!("{msg}");
             Ok(())
         }
@@ -208,6 +270,22 @@ fn main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Changes from trunk (exclusive) to `rev`, bottom first — for `--stack`.
+fn stack_commits(jj: &Jj, rev: &str) -> Result<Vec<crate::jj::Commit>> {
+    let mut commits = jj.log_commits(&format!("trunk()..({rev})"))?;
+    commits.reverse();
+    while commits
+        .last()
+        .is_some_and(|c| c.empty && c.description.trim().is_empty())
+    {
+        commits.pop();
+    }
+    if commits.is_empty() {
+        bail!("nothing between trunk and this commit to submit");
+    }
+    Ok(commits)
 }
 
 fn print_log(jj: &Jj, revset: &str, remote: &str) -> Result<()> {

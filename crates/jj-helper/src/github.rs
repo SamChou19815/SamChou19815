@@ -104,6 +104,8 @@ pub struct Review {
 #[derive(Clone, Debug)]
 pub struct PrInfo {
     pub number: u64,
+    /// GraphQL node id, needed by `updatePullRequest`.
+    pub node_id: String,
     pub title: String,
     pub url: String,
     pub body: String,
@@ -160,6 +162,11 @@ impl PrInfo {
             .unwrap_or_default();
         Some(PrInfo {
             number: v.get("number")?.as_u64()?,
+            node_id: v
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
             title: s("title"),
             url: s("url"),
             body: s("body"),
@@ -234,6 +241,14 @@ impl Stack {
 pub enum MergeOutcome {
     Merged(Option<String>),
     Enqueued,
+}
+
+/// The live state `branching push` reads before pushing a PR branch.
+#[derive(Debug, Clone, Default)]
+pub struct PushPrecheck {
+    pub head_prs: Vec<PrInfo>,
+    pub base_prs: Vec<PrInfo>,
+    pub trunk_oid: Option<String>,
 }
 
 pub struct GitHub {
@@ -420,33 +435,6 @@ impl GitHub {
         Ok(out)
     }
 
-    pub fn create_pr(
-        &self,
-        head: &str,
-        base: &str,
-        title: &str,
-        body: &str,
-        draft: bool,
-    ) -> Result<(u64, String)> {
-        let (_, v) = self.rest(
-            Method::POST,
-            "/pulls",
-            Some(
-                json!({ "head": head, "base": base, "title": title, "body": body, "draft": draft }),
-            ),
-        )?;
-        let number = v
-            .get("number")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| anyhow!("PR response without number"))?;
-        let url = v
-            .get("html_url")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        Ok((number, url))
-    }
-
     pub fn update_pr(&self, number: u64, fields: Value) -> Result<()> {
         self.rest(Method::PATCH, &format!("/pulls/{number}"), Some(fields))?;
         Ok(())
@@ -457,19 +445,290 @@ impl GitHub {
         Ok(serde_json::from_value(v)?)
     }
 
+    // ---- The calls VisualJJ's `jj branching` commands make --------------------
+
+    /// `query($owner, $name) { repository { id } }` — the id every
+    /// `createPullRequest` input needs.
+    pub fn repository_id(&self) -> Result<String> {
+        let v = self.graphql(
+            "query($owner: String!, $name: String!) {\n  repository(owner: $owner, name: $name) {\n    id\n  }\n}",
+            json!({ "owner": self.repo.owner, "name": self.repo.name }),
+        )?;
+        v.pointer("/data/repository/id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("repository query returned no id"))
+    }
+
+    /// `mutation createPullRequest` — how VisualJJ opens PRs (`branching
+    /// submit`). Base is always the trunk branch at creation; the stack
+    /// stage retargets afterwards.
+    pub fn create_pull_request(
+        &self,
+        repository_id: &str,
+        base: &str,
+        head: &str,
+        title: &str,
+        body: &str,
+        draft: bool,
+    ) -> Result<PrInfo> {
+        let query = "mutation($input: CreatePullRequestInput!) {\n  createPullRequest(input: $input) {\n    pullRequest { ...Pr }\n  }\n}\n".to_string() + &pr_fragment(false);
+        let v = self.graphql(
+            &query,
+            json!({ "input": {
+                "repositoryId": repository_id,
+                "baseRefName": base,
+                "headRefName": head,
+                "title": title,
+                "body": body,
+                "draft": draft,
+            }}),
+        )?;
+        let pr = v
+            .pointer("/data/createPullRequest/pullRequest")
+            .cloned()
+            .ok_or_else(|| anyhow!("createPullRequest returned no pullRequest"))?;
+        PrInfo::from_graphql(&pr)
+            .ok_or_else(|| anyhow!("createPullRequest returned an unusable PR"))
+    }
+
+    /// `mutation updatePullRequest` — how VisualJJ rewrites PR bodies
+    /// (the stack-info stage).
+    pub fn update_pull_request_body(&self, node_id: &str, body: &str) -> Result<()> {
+        self.graphql(
+            "mutation($input: UpdatePullRequestInput!) {\n  updatePullRequest(input: $input) {\n    pullRequest { number url }\n  }\n}",
+            json!({ "input": { "pullRequestId": node_id, "body": body } }),
+        )?;
+        Ok(())
+    }
+
+    /// Retarget a PR's base branch (the stack stage). REST, exactly like
+    /// VisualJJ's "Retargeted PR #n: from -> to".
+    pub fn set_pr_base(&self, number: u64, base: &str) -> Result<()> {
+        self.update_pr(number, json!({ "base": base }))
+    }
+
+    /// `repository { viewerDefaultMergeMethod }` — the merge method
+    /// `branching ship-pr` uses unless overridden.
+    pub fn viewer_default_merge_method(&self) -> Result<String> {
+        let v = self.graphql(
+            "query($repoOwner: String!, $repoName: String!) {\n  repository(owner: $repoOwner, name: $repoName) {\n    viewerDefaultMergeMethod\n  }\n}",
+            json!({ "repoOwner": self.repo.owner, "repoName": self.repo.name }),
+        )?;
+        v.pointer("/data/repository/viewerDefaultMergeMethod")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("repository query returned no viewerDefaultMergeMethod"))
+    }
+
+    /// Open PRs of the repo, oldest first — the set VisualJJ keeps in
+    /// `reviews.json` and feeds to every stack stage.
+    pub fn open_prs(&self) -> Result<Vec<PrInfo>> {
+        let mut out = vec![];
+        let mut cursor: Option<String> = None;
+        loop {
+            let v = self.graphql(
+                "query($repoOwner: String!, $repoName: String!, $cursor: String) {\n  repository(owner: $repoOwner, name: $repoName) {\n    pullRequests(first: 100, after: $cursor, states: OPEN, orderBy: {field: CREATED_AT, direction: ASC}) {\n      pageInfo { endCursor hasNextPage }\n      nodes { number headRefName }\n    }\n  }\n}",
+                json!({ "repoOwner": self.repo.owner, "repoName": self.repo.name, "cursor": cursor }),
+            )?;
+            let nodes = v
+                .pointer("/data/repository/pullRequests/nodes")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if nodes.is_empty() {
+                break;
+            }
+            out.extend(nodes.iter().filter_map(|n| {
+                Some(PrInfo {
+                    number: n.get("number")?.as_u64()?,
+                    node_id: String::new(),
+                    title: String::new(),
+                    url: String::new(),
+                    body: String::new(),
+                    state: PrState::Open,
+                    draft: false,
+                    head_ref: n.get("headRefName").and_then(Value::as_str)?.to_string(),
+                    base_ref: String::new(),
+                    head_oid: String::new(),
+                    review_decision: None,
+                    reviews: vec![],
+                    checks: None,
+                    merge_queue: None,
+                    stack: None,
+                })
+            }));
+            let page = v.pointer("/data/repository/pullRequests/pageInfo").cloned();
+            let has_next = page
+                .as_ref()
+                .and_then(|p| p.get("hasNextPage"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            cursor =
+                page.and_then(|p| p.get("endCursor").and_then(Value::as_str).map(String::from));
+            if !has_next {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// The live read every stack stage starts with: one aliased
+    /// `rN: pullRequest(number: N)` per PR, exactly VisualJJ's query.
+    pub fn live_prs(&self, numbers: &[u64]) -> Result<Vec<PrInfo>> {
+        if numbers.is_empty() {
+            return Ok(vec![]);
+        }
+        let aliases: Vec<String> = numbers
+            .iter()
+            .map(|n| format!("r{n}: pullRequest(number: {n}) {{ id body state baseRefName headRefOid stack {{ number size }} stackEntry {{ position }} }}"))
+            .collect();
+        let query = format!(
+            "query($repoOwner: String!, $repoName: String!) {{\n  repository(owner: $repoOwner, name: $repoName) {{\n{}\n  }}\n}}",
+            aliases.join("\n")
+        );
+        let v = self.graphql(
+            &query,
+            json!({ "repoOwner": self.repo.owner, "repoName": self.repo.name }),
+        )?;
+        let mut out = vec![];
+        for n in numbers {
+            let pr = v
+                .pointer(&format!("/data/repository/r{n}"))
+                .cloned()
+                .ok_or_else(|| anyhow!("live PR read returned no data for PR #{n}"))?;
+            if pr.is_null() {
+                continue;
+            }
+            let state = match pr.get("state").and_then(Value::as_str) {
+                Some("OPEN") => PrState::Open,
+                Some("MERGED") => PrState::Merged,
+                _ => PrState::Closed,
+            };
+            let stack = match (
+                pr.pointer("/stack/number").and_then(Value::as_u64),
+                pr.pointer("/stack/size").and_then(Value::as_u64),
+                pr.pointer("/stackEntry/position").and_then(Value::as_u64),
+            ) {
+                (Some(number), Some(size), Some(position)) => Some(StackInfo {
+                    number,
+                    size,
+                    position,
+                }),
+                _ => None,
+            };
+            out.push(PrInfo {
+                number: *n,
+                node_id: pr
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                title: String::new(),
+                url: String::new(),
+                body: pr
+                    .get("body")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                state,
+                draft: false,
+                // The live read (like VisualJJ's) doesn't return headRefName;
+                // callers know which branch they asked about.
+                head_ref: String::new(),
+                base_ref: pr
+                    .get("baseRefName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                head_oid: pr
+                    .get("headRefOid")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                review_decision: None,
+                reviews: vec![],
+                checks: None,
+                merge_queue: None,
+                stack,
+            });
+        }
+        Ok(out)
+    }
+
+    /// The pre-push judgement (`branching push`): PRs whose head is the
+    /// branch being pushed, PRs based on it, and the trunk ref's tip.
+    pub fn push_precheck(&self, branch: &str, trunk_branch: &str) -> Result<PushPrecheck> {
+        let query = format!(
+            "query($repoOwner: String!, $repoName: String!) {{\n  repository(owner: $repoOwner, name: $repoName) {{\n    h0: pullRequests(states: OPEN, headRefName: \"{branch}\", first: 20) {{ totalCount nodes {{ number headRefName headRefOid baseRefName stack {{ number size }} headRepository {{ nameWithOwner }} }} }}\n    b0: pullRequests(states: OPEN, baseRefName: \"{branch}\", first: 50) {{ totalCount nodes {{ number headRefName headRefOid baseRefName stack {{ number size }} headRepository {{ nameWithOwner }} }} }}\n    trunkRef: ref(qualifiedName: \"refs/heads/{trunk_branch}\") {{ target {{ oid }} }}\n  }}\n}}",
+        );
+        let v = self.graphql(
+            &query,
+            json!({ "repoOwner": self.repo.owner, "repoName": self.repo.name }),
+        )?;
+        let parse = |nodes: Option<&Value>| -> Vec<PrInfo> {
+            nodes
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|n| {
+                            let stack = match (n.pointer("/stack/number"), n.pointer("/stack/size"))
+                            {
+                                (Some(s), Some(sz)) => Some(StackInfo {
+                                    number: s.as_u64()?,
+                                    size: sz.as_u64()?,
+                                    position: 0,
+                                }),
+                                _ => None,
+                            };
+                            Some(PrInfo {
+                                number: n.get("number")?.as_u64()?,
+                                node_id: String::new(),
+                                title: String::new(),
+                                url: String::new(),
+                                body: String::new(),
+                                state: PrState::Open,
+                                draft: false,
+                                head_ref: n
+                                    .get("headRefName")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string(),
+                                base_ref: n
+                                    .get("baseRefName")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string(),
+                                head_oid: n
+                                    .get("headRefOid")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string(),
+                                review_decision: None,
+                                reviews: vec![],
+                                checks: None,
+                                merge_queue: None,
+                                stack,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Ok(PushPrecheck {
+            head_prs: parse(v.pointer("/data/repository/h0/nodes")),
+            base_prs: parse(v.pointer("/data/repository/b0/nodes")),
+            trunk_oid: v
+                .pointer("/data/repository/trunkRef/target/oid")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        })
+    }
+
     pub fn create_stack(&self, prs: &[u64]) -> Result<Stack> {
         let (_, v) = self.rest(
             Method::POST,
             "/stacks",
-            Some(json!({ "pull_requests": prs })),
-        )?;
-        Ok(serde_json::from_value(v)?)
-    }
-
-    pub fn add_to_stack(&self, stack: u64, prs: &[u64]) -> Result<Stack> {
-        let (_, v) = self.rest(
-            Method::POST,
-            &format!("/stacks/{stack}/add"),
             Some(json!({ "pull_requests": prs })),
         )?;
         Ok(serde_json::from_value(v)?)
