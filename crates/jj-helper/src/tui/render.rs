@@ -136,8 +136,9 @@ pub fn pr_badge(pr: &PrInfo) -> Vec<Span<'static>> {
 }
 
 /// One VisualJJ-style row: pills (You are here, branches, PR) first, the
-/// description as the primary text, then the time and the change-id chip.
-fn node_line_spans(n: &Node, prs: &HashMap<String, PrInfo>) -> Vec<Span<'static>> {
+/// description as the primary text, then the time and the change-id chip
+/// right-aligned at the pane's right edge when `avail` leaves room for it.
+fn node_line_spans(n: &Node, prs: &HashMap<String, PrInfo>, avail: usize) -> Vec<Span<'static>> {
     let c = &n.commit;
     let faded = is_faded(n.preview);
     let mut spans = vec![];
@@ -183,7 +184,7 @@ fn node_line_spans(n: &Node, prs: &HashMap<String, PrInfo>) -> Vec<Span<'static>
     }
     // The description is the primary text; an undescribed change gets
     // VisualJJ's inline "Describe" affordance.
-    spans.push(Span::raw(" "));
+    spans.push(Span::raw("  "));
     if c.title().is_empty() {
         spans.push(Span::styled(
             "Describe…",
@@ -208,29 +209,33 @@ fn node_line_spans(n: &Node, prs: &HashMap<String, PrInfo>) -> Vec<Span<'static>
     if c.divergent {
         spans.push(" divergent".red());
     }
+    if let Some(note) = &n.note {
+        spans.push(Span::raw("  "));
+        let st = preview_style(n.preview).remove_modifier(Modifier::CROSSED_OUT | Modifier::DIM);
+        spans.push(Span::styled(format!("◀ {note}"), st));
+    }
+    // Time and the change-id chip live at the end of the row; author and
+    // commit hash stay in the details pane, like VisualJJ.
+    let mut right = vec![];
     let when = relative_time(&c.timestamp);
     if !when.is_empty() {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(when, Style::default().fg(Color::Cyan)));
+        right.push(Span::styled(when, Style::default().fg(Color::Cyan)));
+        right.push(Span::raw("  "));
     }
-    // Change-id chip at the end of the row; author and commit hash stay in
-    // the details pane, like VisualJJ.
     if c.short_change != "(new)" {
         let prefix_len = c.change_prefix_len.min(c.short_change.len());
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(
+        right.push(Span::styled(
             c.short_change[..prefix_len].to_string(),
             Style::default()
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(
+        right.push(Span::styled(
             c.short_change[prefix_len..].to_string(),
             Style::default().fg(Color::DarkGray),
         ));
     } else {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(
+        right.push(Span::styled(
             "(new)",
             Style::default()
                 .fg(Color::Green)
@@ -238,7 +243,20 @@ fn node_line_spans(n: &Node, prs: &HashMap<String, PrInfo>) -> Vec<Span<'static>
         ));
     }
     if c.is_wc {
-        spans.push(Span::styled("@", Style::default().fg(Color::Magenta)));
+        right.push(Span::styled("@", Style::default().fg(Color::Magenta)));
+    }
+    if !right.is_empty() {
+        let left_w: usize = spans.iter().map(|s| s.width()).sum();
+        let right_w: usize = right.iter().map(|s| s.width()).sum();
+        // Right-align against the pane edge minus one cell of extra air;
+        // at least two spaces before the block, and rows that overflow
+        // simply clip at the pane edge.
+        let pad = avail
+            .saturating_sub(1)
+            .saturating_sub(left_w + right_w)
+            .max(2);
+        spans.push(Span::raw(" ".repeat(pad)));
+        spans.extend(right);
     }
     if faded {
         for s in &mut spans {
@@ -268,7 +286,14 @@ fn glyph_style(n: &Node) -> Style {
     }
 }
 
-pub fn render(dag: &Dag, prs: &HashMap<String, PrInfo>, marks: &HashMap<String, Mark>) -> Rendered {
+/// `width` is the inner width the rows will be rendered into (0 when
+/// unknown); the time and change-id chip are right-aligned against it.
+pub fn render(
+    dag: &Dag,
+    prs: &HashMap<String, PrInfo>,
+    marks: &HashMap<String, Mark>,
+    width: usize,
+) -> Rendered {
     let laid = graph::layout(dag);
     let mut lines = Vec::with_capacity(laid.len());
     let mut node_line = HashMap::new();
@@ -288,13 +313,8 @@ pub fn render(dag: &Dag, prs: &HashMap<String, PrInfo>, marks: &HashMap<String, 
                     chars[at + 1..].iter().collect::<String>(),
                     Style::default().fg(Color::DarkGray),
                 ));
-                spans.extend(node_line_spans(n, prs));
-                if let Some(note) = &n.note {
-                    spans.push(Span::raw("  "));
-                    let st = preview_style(n.preview)
-                        .remove_modifier(Modifier::CROSSED_OUT | Modifier::DIM);
-                    spans.push(Span::styled(format!("◀ {note}"), st));
-                }
+                let avail = width.saturating_sub(l.graph.chars().count());
+                spans.extend(node_line_spans(n, prs, avail));
             }
             _ => {
                 node_line.entry(l.owner.clone()).or_insert(i);
