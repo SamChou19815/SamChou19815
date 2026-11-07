@@ -129,12 +129,8 @@ const COMMANDS: &[(&str, Option<char>, Cmd, &str)] = &[
         Cmd::Submit,
         "Create Request (PR) / Update Request (PR)",
     ),
-    (
-        "GitHub",
-        Some('m'),
-        Cmd::Ship,
-        "Ship Request (PR) (+ everything below)",
-    ),
+    // No Ship entry: landing a PR belongs to the Land button in the details
+    // pane — deliberate, never a menu item or shortcut key.
     ("GitHub", Some('o'), Cmd::OpenPr, "Open PR on GitHub"),
     (
         "GitHub",
@@ -299,6 +295,8 @@ pub struct App {
     toolbar: Vec<(u16, u16, Cmd)>,
     /// File rows in the details pane (screen y → change, path).
     file_rows: HashMap<u16, (String, String)>,
+    /// The Land button's screen rect in the details pane `(y, x0, x1)`.
+    land_button: Option<(u16, u16, u16)>,
     files_cache: HashMap<String, String>,
     interactive: Option<Vec<String>>,
     root: String,
@@ -370,6 +368,7 @@ pub fn run(jj: Jj, cfg: Config) -> Result<()> {
         last_click: None,
         toolbar: vec![],
         file_rows: HashMap::new(),
+        land_button: None,
         files_cache: HashMap::new(),
         interactive: None,
         root: String::new(),
@@ -1339,6 +1338,16 @@ impl App {
                         return;
                     }
                 }
+                // The Land button in the details pane (Normal mode only, so
+                // a stray click mid-preview can't start a ship confirm).
+                if matches!(self.mode, Mode::Normal) {
+                    if let Some((by, bx0, bx1)) = self.land_button {
+                        if m.row == by && m.column >= bx0 && m.column <= bx1 {
+                            self.exec(Cmd::Ship);
+                            return;
+                        }
+                    }
+                }
                 if let Some((rev, path)) = self.file_rows.get(&m.row) {
                     self.choose(Choice::FileDiff {
                         rev: rev.clone(),
@@ -1730,6 +1739,7 @@ impl App {
         let previewing = matches!(self.mode, Mode::Pick { .. } | Mode::Confirm { .. });
         if previewing {
             self.click_rows = HashMap::new();
+            self.land_button = None;
             self.draw_preview_layout(f, main);
         } else {
             let wide = main.width >= 110;
@@ -2102,6 +2112,7 @@ impl App {
     }
 
     fn draw_details(&mut self, f: &mut Frame, area: Rect) {
+        self.land_button = None;
         let Some(id) = self.selected() else { return };
         let n = self.dag.nodes[&id].clone();
         let c = &n.commit;
@@ -2156,10 +2167,10 @@ impl App {
                 Span::styled(all.join(" "), Style::default().fg(Color::Magenta)),
             ]));
         }
-        if let Some(pr) = pr_for(&n, &self.prs) {
+        if let Some(pr) = pr_for(&n, &self.prs).cloned() {
             lines.push(Line::raw(""));
             let mut spans = vec![Span::styled("PR ", Style::default().fg(Color::DarkGray))];
-            spans.extend(pr_badge(pr));
+            spans.extend(pr_badge(&pr));
             lines.push(Line::from(spans));
             lines.push(Line::raw(pr.title.clone()).bold());
             lines.push(Line::styled(
@@ -2174,6 +2185,28 @@ impl App {
                     ),
                     Style::default().fg(Color::Blue),
                 ));
+            }
+            if pr.is_open() {
+                // The Land button — the only way to ship a PR: never a menu
+                // entry or shortcut key, just this pill. Click opens the
+                // usual Before/After confirm; nothing merges until Enter.
+                let pill = Style::default().bg(self.theme.pill);
+                let btn = vec![
+                    Span::styled(
+                        " ⇧ ",
+                        pill.fg(self.theme.pill_accent).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("Land #{} ", pr.number),
+                        pill.fg(self.theme.pill_text),
+                    ),
+                ];
+                let w: u16 = btn.iter().map(|s| s.width() as u16).sum();
+                let y = area.y + 2 + lines.len() as u16;
+                let x0 = area.x + 2;
+                self.land_button = Some((y, x0, x0 + w - 1));
+                lines.push(Line::from(btn));
+                lines.push(Line::raw(""));
             }
             if pr.is_open() {
                 // The signals behind the row badges: who reviewed (and on
