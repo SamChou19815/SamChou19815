@@ -68,9 +68,9 @@ impl Grid {
         self.ensure(hi);
         self.cells[lo].right = true;
         self.cells[hi].left = true;
-        for i in lo + 1..hi {
-            self.cells[i].left = true;
-            self.cells[i].right = true;
+        for cell in self.cells[lo..hi].iter_mut().skip(1) {
+            cell.left = true;
+            cell.right = true;
         }
         for f in &mut self.fill[lo..hi] {
             *f = true;
