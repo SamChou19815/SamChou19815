@@ -1,7 +1,9 @@
 // The 燕云十六声 gear tracker's whole state, persisted as one JSON document per
 // user in the shared random_small_apps table. The game's 词条 and 部位 are
-// hardcoded below; the user configures the set they aim for (目标配装) and
-// enters their own pieces. The target set is the only source of truth for what
+// hardcoded below; the user enters their own pieces and tracks any number of
+// gear sets (配装), each with the set it aims for (目标配装), the pieces it
+// wears and its DPS panel. Pieces are shared: several sets can wear one. Within
+// a set, the target set is the only source of truth for what
 // is needed: across all slots, it asks for some number of each 词条. The worn
 // set satisfies those counts together, wherever its 词条 sit; extra 词条 of one
 // kind never make up for a shortfall in another.
@@ -87,8 +89,12 @@ export type Gear = {
  */
 export type TargetSet = Partial<Record<GearSlot, Affix[]>>;
 
+/**
+ * One gear set as the rest of the app sees it: its target, every piece (marked
+ * worn when this set wears it) and its DPS settings. Derived from the stored
+ * document with `setView` and written back with `applySetView`.
+ */
 export type WwmGearTrackerData = {
-  version: 4;
   target: TargetSet;
   gears: Gear[];
   // The build, level and in-game panel (with the worn set on) that every 词条
@@ -96,12 +102,48 @@ export type WwmGearTrackerData = {
   dps: DpsSettings;
 };
 
+/** A piece as stored: which sets wear it is kept on the sets. */
+export type StoredGear = Omit<Gear, "equipped">;
+
+/** One gear set (配装): what it aims for, what it wears and how it is priced. */
+export type GearSet = {
+  id: string;
+  name: string;
+  target: TargetSet;
+  // Ids of the pieces this set wears, at most one per slot.
+  worn: string[];
+  dps: DpsSettings;
+};
+
+/**
+ * The persisted document: any number of gear sets sharing one inventory of
+ * pieces, so a piece can be worn by several sets.
+ */
+export type WwmGearTrackerDocument = {
+  version: 5;
+  activeSetId: string;
+  sets: GearSet[];
+  gears: StoredGear[];
+};
+
 export function newId(): string {
   return crypto.randomUUID();
 }
 
-export function emptyWwmGearTrackerData(): WwmGearTrackerData {
-  return { version: 4, target: {}, gears: [], dps: defaultDpsSettings() };
+/** The name a set gets when it has none, e.g. "配装 2". */
+export function defaultSetName(index: number): string {
+  return `配装 ${index + 1}`;
+}
+
+export function emptyGearSet(name: string, level?: number): GearSet {
+  const dps = defaultDpsSettings();
+  if (level != null) dps.level = level;
+  return { id: newId(), name, target: {}, worn: [], dps };
+}
+
+export function emptyWwmGearTrackerDocument(): WwmGearTrackerDocument {
+  const set = emptyGearSet(defaultSetName(0));
+  return { version: 5, activeSetId: set.id, sets: [set], gears: [] };
 }
 
 function normalizeName(value: unknown): string {
@@ -127,41 +169,31 @@ export function enforceSingleEquipped(gears: Gear[], winnerId: string | null = n
   }
 }
 
-/**
- * Coerces whatever the row holds (or nothing) into well-formed data. 词条 and
- * 部位 the game does not have are dropped. Documents from the first version,
- * which kept a user-defined affix pool, keep the rolled affixes whose names
- * match a real 词条. The per-词条 quotas of earlier versions are dropped: the
- * target set replaced them.
- */
-export function normalizeWwmGearTrackerData(raw: unknown): WwmGearTrackerData {
-  if (typeof raw !== "object" || raw == null) return emptyWwmGearTrackerData();
-  const source = raw as Record<string, unknown>;
-
+function normalizeTarget(raw: unknown): TargetSet {
   const target: TargetSet = {};
-  if (typeof source.target === "object" && source.target != null) {
-    for (const [slot, affixes] of Object.entries(source.target as Record<string, unknown>)) {
-      if (!isGearSlot(slot) || !Array.isArray(affixes)) continue;
-      const valid = affixes.filter(isAffix).slice(0, MAX_AFFIXES);
-      if (valid.length > 0) target[slot] = valid;
-    }
+  if (typeof raw !== "object" || raw == null) return target;
+  for (const [slot, affixes] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isGearSlot(slot) || !Array.isArray(affixes)) continue;
+    const valid = affixes.filter(isAffix).slice(0, MAX_AFFIXES);
+    if (valid.length > 0) target[slot] = valid;
   }
+  return target;
+}
 
-  // Version 1 referenced its own pool entries by id.
-  const legacyNames = new Map<string, string>();
-  if (Array.isArray(source.affixPool)) {
-    for (const entry of source.affixPool) {
-      if (typeof entry !== "object" || entry == null) continue;
-      const { id, name } = entry as Record<string, unknown>;
-      if (typeof id === "string") legacyNames.set(id, normalizeName(name));
-    }
-  }
-
+/**
+ * Well-formed pieces from whatever `rawGears` holds, with duplicate ids
+ * replaced. `legacyNames` maps version 1's affix pool ids to their names.
+ * Pieces without a stored `equipped` are returned in `unknownEquipped`.
+ */
+function normalizeGears(
+  rawGears: unknown,
+  legacyNames: ReadonlyMap<string, string> = new Map(),
+): { gears: Gear[]; unknownEquipped: Set<Gear> } {
   const gears: Gear[] = [];
-  // Pieces saved before `equipped` existed: the first of each slot is worn.
   const unknownEquipped = new Set<Gear>();
-  if (Array.isArray(source.gears)) {
-    for (const entry of source.gears) {
+  const seenIds = new Set<string>();
+  if (Array.isArray(rawGears)) {
+    for (const entry of rawGears) {
       if (typeof entry !== "object" || entry == null) continue;
       const gear = entry as Record<string, unknown>;
       const affixes: RolledAffix[] = [];
@@ -179,8 +211,11 @@ export function normalizeWwmGearTrackerData(raw: unknown): WwmGearTrackerData {
       const affixCount = Number.isFinite(rawCount)
         ? Math.min(MAX_AFFIXES, Math.max(1, Math.round(rawCount)))
         : MAX_AFFIXES;
+      let id = normalizeId(gear.id);
+      if (seenIds.has(id)) id = newId();
+      seenIds.add(id);
       const normalized: Gear = {
-        id: normalizeId(gear.id),
+        id,
         name: normalizeName(gear.name),
         slot: isGearSlot(gear.slot) ? gear.slot : GEAR_SLOTS[0],
         equipped: gear.equipped === true,
@@ -191,12 +226,155 @@ export function normalizeWwmGearTrackerData(raw: unknown): WwmGearTrackerData {
       gears.push(normalized);
     }
   }
+  return { gears, unknownEquipped };
+}
+
+/**
+ * Coerces a document from before version 5 — a single set, with the worn
+ * pieces marked on the pieces themselves — into one set's data. 词条 and 部位
+ * the game does not have are dropped. Documents from the first version, which
+ * kept a user-defined affix pool, keep the rolled affixes whose names match a
+ * real 词条. The per-词条 quotas of earlier versions are dropped: the target
+ * set replaced them.
+ */
+function normalizeSingleSetData(source: Record<string, unknown>): WwmGearTrackerData {
+  // Version 1 referenced its own pool entries by id.
+  const legacyNames = new Map<string, string>();
+  if (Array.isArray(source.affixPool)) {
+    for (const entry of source.affixPool) {
+      if (typeof entry !== "object" || entry == null) continue;
+      const { id, name } = entry as Record<string, unknown>;
+      if (typeof id === "string") legacyNames.set(id, normalizeName(name));
+    }
+  }
+
+  const { gears, unknownEquipped } = normalizeGears(source.gears, legacyNames);
   enforceSingleEquipped(gears);
+  // Pieces saved before `equipped` existed: the first of each slot is worn.
   for (const gear of unknownEquipped) {
     if (!gears.some((other) => other.equipped && other.slot === gear.slot)) gear.equipped = true;
   }
   // Documents before version 4 had no DPS settings: they start from the preset.
-  return { version: 4, target, gears, dps: normalizeDpsSettings(source.dps) };
+  return {
+    target: normalizeTarget(source.target),
+    gears,
+    dps: normalizeDpsSettings(source.dps),
+  };
+}
+
+function storedGear({ id, name, slot, affixCount, affixes }: Gear): StoredGear {
+  return { id, name, slot, affixCount, affixes };
+}
+
+/**
+ * `ids` limited to pieces in `gears`, without repeats and with at most one per
+ * slot — the first one listed wins.
+ */
+function validWorn(gears: readonly StoredGear[], ids: readonly unknown[]): string[] {
+  const slotOf = new Map(gears.map(({ id, slot }) => [id, slot]));
+  const taken = new Set<GearSlot>();
+  const worn: string[] = [];
+  for (const id of ids) {
+    if (typeof id !== "string") continue;
+    const slot = slotOf.get(id);
+    if (slot == null || taken.has(slot)) continue;
+    taken.add(slot);
+    worn.push(id);
+  }
+  return worn;
+}
+
+/**
+ * Coerces whatever the row holds (or nothing) into a well-formed document.
+ * Documents from before version 5 become a document with one set.
+ */
+export function normalizeWwmGearTrackerDocument(raw: unknown): WwmGearTrackerDocument {
+  if (typeof raw !== "object" || raw == null) return emptyWwmGearTrackerDocument();
+  const source = raw as Record<string, unknown>;
+
+  if (!Array.isArray(source.sets)) {
+    const single = normalizeSingleSetData(source);
+    const gears = single.gears.map(storedGear);
+    const set: GearSet = {
+      // Fixed, so normalizing the same legacy row twice gives the same document.
+      id: "default",
+      name: defaultSetName(0),
+      target: single.target,
+      worn: single.gears.filter(({ equipped }) => equipped).map(({ id }) => id),
+      dps: single.dps,
+    };
+    return { version: 5, activeSetId: set.id, sets: [set], gears };
+  }
+
+  const gears = normalizeGears(source.gears).gears.map(storedGear);
+  const sets: GearSet[] = [];
+  const seenIds = new Set<string>();
+  for (const entry of source.sets) {
+    if (typeof entry !== "object" || entry == null) continue;
+    const set = entry as Record<string, unknown>;
+    let id = normalizeId(set.id);
+    if (seenIds.has(id)) id = newId();
+    seenIds.add(id);
+    const name = normalizeName(set.name);
+    sets.push({
+      id,
+      name: name === "" ? defaultSetName(sets.length) : name,
+      target: normalizeTarget(set.target),
+      worn: validWorn(gears, Array.isArray(set.worn) ? set.worn : []),
+      dps: normalizeDpsSettings(set.dps),
+    });
+  }
+  if (sets.length === 0) sets.push(emptyGearSet(defaultSetName(0)));
+  const activeSetId = sets.find(({ id }) => id === source.activeSetId)?.id ?? sets[0]?.id ?? "";
+  return { version: 5, activeSetId, sets, gears };
+}
+
+/** The set being viewed: the active one, or the first if it is gone. */
+export function activeSet(doc: WwmGearTrackerDocument): GearSet {
+  const set = doc.sets.find(({ id }) => id === doc.activeSetId) ?? doc.sets[0];
+  if (set == null) throw new Error("A gear tracker document always has a set.");
+  return set;
+}
+
+/** A fresh copy of one set's data, with the pieces it wears marked worn. */
+export function setView(doc: WwmGearTrackerDocument, set: GearSet): WwmGearTrackerData {
+  const worn = new Set(set.worn);
+  return {
+    target: structuredClone(set.target),
+    gears: doc.gears.map((gear) => ({
+      ...gear,
+      affixes: gear.affixes.map((rolled) => ({ ...rolled })),
+      equipped: worn.has(gear.id),
+    })),
+    dps: structuredClone(set.dps),
+  };
+}
+
+/**
+ * `doc` with set `setId` replaced by `view`. Pieces are shared, so `view`'s
+ * pieces become every set's; other sets drop pieces that are gone or now clash
+ * in a slot. The character level is shared too.
+ */
+export function applySetView(
+  doc: WwmGearTrackerDocument,
+  setId: string,
+  view: WwmGearTrackerData,
+): WwmGearTrackerDocument {
+  const gears = view.gears.map(storedGear);
+  const wornHere = view.gears.filter(({ equipped }) => equipped).map(({ id }) => id);
+  return {
+    ...doc,
+    gears,
+    sets: doc.sets.map((set) =>
+      set.id === setId
+        ? { ...set, target: view.target, worn: validWorn(gears, wornHere), dps: view.dps }
+        : {
+            ...set,
+            worn: validWorn(gears, set.worn),
+            dps: { ...set.dps, level: view.dps.level },
+          },
+    ),
+  };
 }
 
 /** Pieces in slot order, keeping entry order within a slot. */
