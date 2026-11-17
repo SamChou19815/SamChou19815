@@ -5,25 +5,30 @@ import {
   AFFIX_GROUPS,
   GEAR_SLOTS,
   MAX_AFFIXES,
+  activeSet,
   affixFills,
   affixUsage,
+  applySetView,
   compareToTarget,
-  emptyWwmGearTrackerData,
+  defaultSetName,
+  emptyGearSet,
+  emptyWwmGearTrackerDocument,
   enforceSingleEquipped,
   equippedGears,
   formatRate,
   countedAffixIds,
   newId,
-  normalizeWwmGearTrackerData,
+  normalizeWwmGearTrackerDocument,
   setStats,
+  setView,
   slotTargetUsage,
   targetUsage,
   type Affix,
   type Gear,
   type GearSlot,
   type RolledAffix,
-  type TargetSet,
   type WwmGearTrackerData,
+  type WwmGearTrackerDocument,
 } from "./types";
 import { BUILDS, type AnyBuild } from "./builds";
 import {
@@ -145,7 +150,7 @@ function RateFigure({ rate }: { rate: string }): React.JSX.Element {
 // both keeps its last row whole.
 const HERO_GRID_MULTIPLE = 6;
 
-function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
+function Hero({ data, setName }: { data: WwmGearTrackerData; setName: string }): React.JSX.Element {
   const stats = setStats(data);
   const fills = affixFills(data);
   const dps = currentDps(data);
@@ -162,10 +167,12 @@ function Hero({ data }: { data: WwmGearTrackerData }): React.JSX.Element {
         <p className="mt-3 max-w-2xl text-sm text-slate-300">
           在「配装对比」中设定每个部位想要的词条，记录每件装备调律出的词条。毕业率按当前穿戴的装备计算：
           整套目标配装每种词条共需几条，由所有穿戴装备共同满足，不论在哪个部位；超出的部分不计，也不能弥补其他词条的缺口。
+          可以追踪多套配装：每套各有目标、穿戴与面板，装备共用。
         </p>
 
         <div className="mt-8 flex flex-wrap items-end justify-between gap-x-12 gap-y-6">
           <div>
+            <p className="mb-3 text-sm font-semibold text-slate-300">{setName}</p>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
               <RateFigure rate={formatRate(stats.filled, stats.required)} />
               <span className="text-lg text-slate-400">毕业率</span>
@@ -612,11 +619,15 @@ function GearCard({
   neededBy,
   countedIds,
   swap,
+  alsoWornBy,
   onToggleEquipped,
   onEdit,
   onDelete,
 }: {
   gear: Gear;
+  // Names of the other gear sets that wear this piece, or null when there is
+  // only one set.
+  alsoWornBy: readonly string[] | null;
   // For a spare piece: what wearing it instead of the worn one does to DPS.
   swap: DpsChange | null;
   // How many of each 词条 the whole target set asks for.
@@ -703,6 +714,12 @@ function GearCard({
           </span>
         )}
       </p>
+      {alsoWornBy != null && (
+        // Kept even when empty, so cards line up.
+        <p className={`truncate text-xs ${mutedCls}`} title={alsoWornBy.join("、")}>
+          {alsoWornBy.length > 0 ? `也穿戴于 ${alsoWornBy.join("、")}` : " "}
+        </p>
+      )}
 
       <div className="mt-3">
         <AffixStack rows={rows} />
@@ -725,9 +742,13 @@ function GearCard({
 
 function GearTab({
   draft,
+  wornElsewhere,
   updateDraft,
 }: {
   draft: WwmGearTrackerData;
+  // For each piece, the names of the other gear sets that wear it, or null
+  // when there is only one set.
+  wornElsewhere: ReadonlyMap<string, readonly string[]> | null;
   updateDraft: (mutate: (data: WwmGearTrackerData) => void) => void;
 }): React.JSX.Element {
   // The slot a piece is being added to, or null when not adding.
@@ -850,6 +871,7 @@ function GearTab({
                     gear={gear}
                     neededBy={neededBy}
                     countedIds={countedIds}
+                    alsoWornBy={wornElsewhere == null ? null : (wornElsewhere.get(gear.id) ?? [])}
                     swap={
                       gear.equipped ? null : wearChange(draft, gear.affixes, wornIn(draft, slot))
                     }
@@ -1379,6 +1401,170 @@ function PayoffTab({
   );
 }
 
+/** The first default set name not yet taken, e.g. "配装 3". */
+function nextSetName(doc: WwmGearTrackerDocument, base?: string): string {
+  const taken = new Set(doc.sets.map(({ name }) => name));
+  if (base != null) {
+    for (let n = 1; ; n++) {
+      const name = n === 1 ? `${base} 副本` : `${base} 副本 ${n}`;
+      if (!taken.has(name)) return name;
+    }
+  }
+  for (let i = doc.sets.length; ; i++) {
+    const name = defaultSetName(i);
+    if (!taken.has(name)) return name;
+  }
+}
+
+/** The tracked gear sets: pick the one to view, and add, copy, rename or delete them. */
+function GearSetBar({
+  doc,
+  updateDoc,
+}: {
+  doc: WwmGearTrackerDocument;
+  updateDoc: (mutate: (doc: WwmGearTrackerDocument) => void) => void;
+}): React.JSX.Element {
+  // The name being typed while renaming the active set, or null.
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const active = activeSet(doc);
+  const summaries = useMemo(
+    () =>
+      doc.sets.map((set) => {
+        const view = setView(doc, set);
+        const stats = setStats(view);
+        return {
+          set,
+          rate: formatRate(stats.filled, stats.required),
+          build: currentBuild(set.dps).name,
+          dpsRate: currentDps(view).graduationRate,
+        };
+      }),
+    [doc],
+  );
+
+  const select = (id: string) => {
+    setRenaming(null);
+    updateDoc((d) => {
+      d.activeSetId = id;
+    });
+  };
+  const addEmpty = () =>
+    updateDoc((d) => {
+      const from = activeSet(d);
+      const set = emptyGearSet(nextSetName(d), from.dps.level);
+      // Sets often share a 流派 (e.g. 小外 and 大外 variants of one build).
+      set.dps.build = from.dps.build;
+      d.sets.push(set);
+      d.activeSetId = set.id;
+    });
+  const copyActive = () =>
+    updateDoc((d) => {
+      const from = activeSet(d);
+      const set = { ...structuredClone(from), id: newId(), name: nextSetName(d, from.name) };
+      d.sets.splice(d.sets.indexOf(from) + 1, 0, set);
+      d.activeSetId = set.id;
+    });
+  const commitRename = () => {
+    const name = renaming?.trim() ?? "";
+    if (name !== "") {
+      updateDoc((d) => {
+        activeSet(d).name = name;
+      });
+    }
+    setRenaming(null);
+  };
+  const deleteActive = () => {
+    if (!window.confirm(`删除配装「${active.name}」？装备本身不会被删除。`)) return;
+    updateDoc((d) => {
+      const index = d.sets.findIndex(({ id }) => id === d.activeSetId);
+      if (index < 0 || d.sets.length <= 1) return;
+      d.sets.splice(index, 1);
+      d.activeSetId = (d.sets[Math.min(index, d.sets.length - 1)] ?? d.sets[0])?.id ?? "";
+    });
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="配装">
+        {summaries.map(({ set, rate, build, dpsRate }) => {
+          const isActive = set.id === active.id;
+          return (
+            <button
+              key={set.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => select(set.id)}
+              className={`flex min-w-0 flex-col items-start rounded border px-3 py-2 text-left transition-colors duration-200 ${
+                isActive
+                  ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/30"
+                  : "border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+              }`}
+            >
+              <span className="max-w-48 truncate text-sm font-bold">{set.name}</span>
+              <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400">
+                {`毕业率 ${rate} · ${build} ${dpsRate.toFixed(1)}%`}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {renaming != null ? (
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            commitRename();
+          }}
+        >
+          <input
+            value={renaming}
+            onChange={(e) => setRenaming(e.target.value)}
+            aria-label="配装名称"
+            autoFocus
+            className={`${inputCls} w-40`}
+          />
+          <button type="submit" className={primaryButtonCls}>
+            完成
+          </button>
+          <button type="button" onClick={() => setRenaming(null)} className={secondaryButtonCls}>
+            取消
+          </button>
+        </form>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={addEmpty} className={secondaryButtonCls}>
+            新建配装
+          </button>
+          <button
+            type="button"
+            onClick={copyActive}
+            className={secondaryButtonCls}
+            title="复制当前配装的目标、穿戴与面板"
+          >
+            复制
+          </button>
+          <button
+            type="button"
+            onClick={() => setRenaming(active.name)}
+            className={secondaryButtonCls}
+          >
+            重命名
+          </button>
+          <button
+            type="button"
+            onClick={deleteActive}
+            disabled={doc.sets.length <= 1}
+            className={secondaryButtonCls}
+          >
+            删除
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SaveStatus({
   saving,
   dirty,
@@ -1428,8 +1614,8 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     userId != null && loaded?.userId === userId ? loaded.state : "loading";
   const [reloadNonce, setReloadNonce] = useState(0);
   // The persisted document, and the (possibly edited) working copy.
-  const [saved, setSaved] = useState<WwmGearTrackerData | null>(null);
-  const [draft, setDraft] = useState<WwmGearTrackerData | null>(null);
+  const [saved, setSaved] = useState<WwmGearTrackerDocument | null>(null);
+  const [draft, setDraft] = useState<WwmGearTrackerDocument | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   // The last failed save: its error, and the document it tried to store, which
@@ -1447,7 +1633,7 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
         setLoadError(error);
         return;
       }
-      const normalized = normalizeWwmGearTrackerData(data);
+      const normalized = normalizeWwmGearTrackerDocument(data);
       setSaved(normalized);
       setDraft(normalized);
       setLoaded({ userId, state: "ready" });
@@ -1463,9 +1649,22 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
   // What the draft stores as, normalized so it is exactly what loads back —
   // comparing that, not the raw draft, keeps a save from re-triggering itself.
   const pending = useMemo(
-    () => (draft == null ? null : normalizeWwmGearTrackerData(draft)),
+    () => (draft == null ? null : normalizeWwmGearTrackerDocument(draft)),
     [draft],
   );
+  // The active set as the tabs see it.
+  const view = useMemo(() => (draft == null ? null : setView(draft, activeSet(draft))), [draft]);
+  // For each piece, the other sets wearing it; null with a single set.
+  const wornElsewhere = useMemo(() => {
+    if (draft == null || draft.sets.length <= 1) return null;
+    const active = activeSet(draft);
+    const byGear = new Map<string, string[]>();
+    for (const set of draft.sets) {
+      if (set === active) continue;
+      for (const id of set.worn) byGear.set(id, [...(byGear.get(id) ?? []), set.name]);
+    }
+    return byGear;
+  }, [draft]);
   const pendingJson = pending == null ? null : JSON.stringify(pending);
   const dirty = pendingJson != null && saved != null && pendingJson !== JSON.stringify(saved);
 
@@ -1497,23 +1696,24 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, saving]);
 
-  /** Applies `mutate` to a deep copy of the draft, so edits never alias `saved`. */
-  const updateDraft = (mutate: (data: WwmGearTrackerData) => void) => {
+  /** Applies `mutate` to a deep copy of the document, so edits never alias `saved`. */
+  const updateDoc = (mutate: (doc: WwmGearTrackerDocument) => void) => {
     setDraft((prev) => {
-      const base = prev ?? saved ?? emptyWwmGearTrackerData();
-      const next: WwmGearTrackerData = {
-        version: 4,
-        target: Object.fromEntries(
-          Object.entries(base.target).map(([slot, affixes]) => [slot, [...affixes]]),
-        ) as TargetSet,
-        gears: base.gears.map((gear) => ({
-          ...gear,
-          affixes: gear.affixes.map((rolled) => ({ ...rolled })),
-        })),
-        dps: structuredClone(base.dps),
-      };
+      const next = structuredClone(prev ?? saved ?? emptyWwmGearTrackerDocument());
       mutate(next);
       return next;
+    });
+  };
+
+  /** Applies `mutate` to a copy of the active set's data and stores it back. */
+  const updateDraft = (mutate: (data: WwmGearTrackerData) => void) => {
+    setDraft((prev) => {
+      const base = prev ?? saved ?? emptyWwmGearTrackerDocument();
+      const set = activeSet(base);
+      // `setView` copies, so mutating it leaves `base` alone.
+      const next = setView(base, set);
+      mutate(next);
+      return applySetView(base, set.id, next);
     });
   };
 
@@ -1527,7 +1727,7 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     );
   }
 
-  if (loadState === "error" || draft == null || saved == null) {
+  if (loadState === "error" || draft == null || saved == null || view == null) {
     return (
       <div className="mx-auto w-full max-w-6xl px-6 py-12">
         <Card>
@@ -1551,11 +1751,13 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
     );
   }
 
+  const active = activeSet(draft);
   return (
     <div>
-      <Hero data={draft} />
+      <Hero data={view} setName={active.name} />
 
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10">
+        <GearSetBar doc={draft} updateDoc={updateDoc} />
         <TabBar
           tab={tab}
           onSelect={setTab}
@@ -1568,12 +1770,18 @@ export default function WwmGearTrackerApp(): React.JSX.Element {
             />
           }
         />
+        {/* Keyed by set, so switching sets closes open forms. */}
         {tab === "gear" ? (
-          <GearTab draft={draft} updateDraft={updateDraft} />
+          <GearTab
+            key={active.id}
+            draft={view}
+            wornElsewhere={wornElsewhere}
+            updateDraft={updateDraft}
+          />
         ) : tab === "compare" ? (
-          <CompareTab draft={draft} updateDraft={updateDraft} />
+          <CompareTab key={active.id} draft={view} updateDraft={updateDraft} />
         ) : (
-          <PayoffTab draft={draft} updateDraft={updateDraft} />
+          <PayoffTab key={active.id} draft={view} updateDraft={updateDraft} />
         )}
       </div>
     </div>
